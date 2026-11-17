@@ -117,6 +117,39 @@ pub struct NodeConfig {
     pub hit_rate: f64,
     /// Cost per instance per hour (any currency unit).
     pub cost_per_hour: f64,
+    /// Horizontal autoscaling (Kubernetes HPA); `instances` is the start count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub autoscale: Option<Autoscale>,
+}
+
+/// HPA-like autoscaler: every `eval_every_ms`, desired replicas =
+/// `ceil(current × utilization / target)` within `[min, max]`, ignoring
+/// changes within ±10 %. Scale-up is immediate but new instances take
+/// `pod_start_ms` before receiving traffic; scale-down uses the highest
+/// recommendation of the last `stabilization_ms`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Autoscale {
+    pub min: u32,
+    pub max: u32,
+    /// Target utilization of slots (`threads`) or CPU (`cpu`), 0..1.
+    pub target_utilization: f64,
+    pub eval_every_ms: f64,
+    pub stabilization_ms: f64,
+    pub pod_start_ms: f64,
+}
+
+impl Default for Autoscale {
+    fn default() -> Self {
+        Self {
+            min: 1,
+            max: 10,
+            target_utilization: 0.6,
+            eval_every_ms: 15_000.0,
+            stabilization_ms: 60_000.0,
+            pod_start_ms: 10_000.0,
+        }
+    }
 }
 
 impl Default for NodeConfig {
@@ -145,6 +178,7 @@ impl Default for NodeConfig {
             error_rate: 0.0,
             hit_rate: 0.0,
             cost_per_hour: 0.0,
+            autoscale: None,
         }
     }
 }

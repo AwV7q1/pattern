@@ -34,7 +34,8 @@ use serde::Serialize;
 
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput, Slo,
+    Arrival, Autoscale, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
+    Slo,
 };
 use crate::rng::Rng;
 
@@ -131,6 +132,14 @@ enum Ev {
     Chaos {
         index: u32,
     },
+    /// Autoscaler evaluation of `node`.
+    Autoscale {
+        node: u32,
+    },
+    /// A started instance of `node` passed its readiness delay.
+    PodReady {
+        node: u32,
+    },
     /// A branch of a `sequence`/`parallel` fork of `call` is over.
     BranchDone {
         call: u32,
@@ -175,11 +184,32 @@ struct Inst {
     gc_count: u32,
 }
 
+/// Autoscaler state of one node.
+struct HpaRt {
+    cfg: Autoscale,
+    /// Busy and capacity areas since the last evaluation.
+    busy: f64,
+    cap: f64,
+    /// Recent recommendations `(at, replicas)` for scale-down stabilization.
+    history: VecDeque<(Time, usize)>,
+}
+
 struct NodeRt {
     kind: NodeKind,
     model: ExecModel,
     balance: Balance,
     instances: f64,
+    /// Instances receiving new work (ready); later ones only drain.
+    ready: usize,
+    /// Desired instances, including those still starting.
+    active: usize,
+    hpa: Option<HpaRt>,
+    cost: f64,
+    /// Instance-time (active × µs), for the cost of autoscaled nodes.
+    inst_area: f64,
+    /// Capacity × time, so utilization stays right when capacity changes.
+    cap_area: f64,
+    cpu_cap_area: f64,
     /// Processes per instance, for per-process connection pools.
     processes: u32,
     insts: Vec<Inst>,
@@ -227,12 +257,29 @@ struct NodeRt {
 
 impl NodeRt {
     fn account(&mut self, now: Time) {
-        self.busy_area += self.busy as f64 * now.saturating_sub(self.last_change) as f64;
+        let dt = now.saturating_sub(self.last_change) as f64;
+        self.busy_area += self.busy as f64 * dt;
+        self.cap_area += self.capacity as f64 * dt;
+        self.inst_area += self.active as f64 * dt;
+        if self.model == ExecModel::Threads {
+            if let Some(h) = self.hpa.as_mut() {
+                h.busy += self.busy as f64 * dt;
+                h.cap += self.capacity as f64 * dt;
+            }
+        }
         self.last_change = now;
     }
 
     fn account_cpu(&mut self, now: Time) {
-        self.cpu_area += self.cpu_busy as f64 * now.saturating_sub(self.cpu_last) as f64;
+        let dt = now.saturating_sub(self.cpu_last) as f64;
+        self.cpu_area += self.cpu_busy as f64 * dt;
+        self.cpu_cap_area += self.cpu_cap as f64 * dt;
+        if self.model == ExecModel::Cpu {
+            if let Some(h) = self.hpa.as_mut() {
+                h.busy += self.cpu_busy as f64 * dt;
+                h.cap += self.cpu_cap as f64 * dt;
+            }
+        }
         self.cpu_last = now;
     }
 
@@ -267,6 +314,8 @@ impl NodeRt {
 
 struct PoolRt {
     cap: u32,
+    /// Connections per caller instance (pool size × processes).
+    per_inst: u32,
     busy: u32,
     timeout: Time,
     /// `(call, gen, wait token, enqueued at)`; stale entries are skipped.
@@ -426,6 +475,10 @@ pub struct NodeWindow {
     pub arrivals: f64,
     pub rejected: u64,
     pub down: bool,
+    /// Instances receiving traffic at the end of the window.
+    pub instances: u32,
+    /// Autoscaled instances still starting (not ready yet).
+    pub starting: u32,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -621,7 +674,19 @@ impl Simulation {
                 let (mu, sigma) = lognormal_params(c.latency_p50_ms, c.latency_p99_ms);
                 let (cpu_mu, cpu_sigma) = lognormal_params(c.cpu_p50_ms, c.cpu_p99_ms);
                 let io = (c.io_p50_ms > 0.0).then(|| lognormal_params(c.io_p50_ms, c.io_p99_ms));
-                let instances = c.instances.max(1);
+                let hpa = c.autoscale.filter(|_| n.kind != NodeKind::Client).map(|a| {
+                    let min = a.min.max(1);
+                    Autoscale {
+                        min,
+                        max: a.max.max(min),
+                        ..a
+                    }
+                });
+                let instances = match hpa {
+                    Some(a) => c.instances.clamp(a.min, a.max),
+                    None => c.instances.max(1),
+                };
+                let allocated = hpa.map_or(instances, |a| a.max.max(instances));
                 if n.kind != NodeKind::Client {
                     cost_per_hour += c.cost_per_hour * instances as f64;
                 }
@@ -645,7 +710,19 @@ impl Simulation {
                     model,
                     balance: c.balance,
                     instances: instances as f64,
-                    insts: (0..instances).map(|_| Inst::default()).collect(),
+                    ready: instances as usize,
+                    active: instances as usize,
+                    hpa: hpa.map(|cfg| HpaRt {
+                        cfg,
+                        busy: 0.0,
+                        cap: 0.0,
+                        history: VecDeque::new(),
+                    }),
+                    cost: c.cost_per_hour,
+                    inst_area: 0.0,
+                    cap_area: 0.0,
+                    cpu_cap_area: 0.0,
+                    insts: (0..allocated).map(|_| Inst::default()).collect(),
                     next_inst: 0,
                     slots,
                     lanes: c.cpu_lanes.max(1),
@@ -717,10 +794,10 @@ impl Simulation {
             nodes[from as usize].out.push(i as u32);
             let pool = e.pool_size.filter(|p| *p > 0).map(|p| {
                 let src = &nodes[from as usize];
+                let per_inst = p.saturating_mul(src.processes);
                 PoolRt {
-                    cap: p
-                        .saturating_mul(src.instances as u32)
-                        .saturating_mul(src.processes),
+                    cap: per_inst.saturating_mul(src.ready as u32),
+                    per_inst,
                     busy: 0,
                     timeout: ms_to_us(e.pool_timeout_ms.max(1.0)),
                     waiters: VecDeque::new(),
@@ -852,6 +929,12 @@ impl Simulation {
             let at = sim.chaos[i].at;
             sim.schedule(at, Ev::Chaos { index: i as u32 });
         }
+        for i in 0..sim.nodes.len() {
+            if let Some(h) = &sim.nodes[i].hpa {
+                let every = ms_to_us(h.cfg.eval_every_ms.max(100.0));
+                sim.schedule(every, Ev::Autoscale { node: i as u32 });
+            }
+        }
         sim.schedule(0, Ev::ClientArrival);
         Ok(sim)
     }
@@ -947,7 +1030,7 @@ impl Simulation {
             p50_ms: us_to_ms(t.hist.percentile(0.5)),
             p95_ms: us_to_ms(t.hist.percentile(0.95)),
             p99_ms,
-            cost_per_hour: self.cost_per_hour,
+            cost_per_hour: self.average_cost_per_hour(),
             slo: self.slo,
             slo_pass: total > 0 && p99_ms <= self.slo.p99_ms && error_rate <= self.slo.error_rate,
             slo_window_ratio: if self.windows_with_traffic > 0 {
@@ -969,6 +1052,113 @@ impl Simulation {
     }
 
     // ---------------------------------------------------------------- internals
+
+    /// Configured cost, with autoscaled nodes counted at their average size.
+    fn average_cost_per_hour(&self) -> f64 {
+        if self.now == 0 || self.nodes.iter().all(|n| n.hpa.is_none()) {
+            return self.cost_per_hour;
+        }
+        self.nodes
+            .iter()
+            .filter(|n| n.kind != NodeKind::Client)
+            .map(|n| match n.hpa {
+                Some(_) => {
+                    let area = n.inst_area + n.active as f64 * self.now.saturating_sub(n.last_change) as f64;
+                    n.cost * area / self.now as f64
+                }
+                None => n.cost * n.instances,
+            })
+            .sum()
+    }
+
+    /// HPA evaluation: replicas = ceil(ready × utilization / target), unready
+    /// instances counted as idle, ±10 % tolerance, stabilized scale-down.
+    fn on_autoscale(&mut self, node: usize) {
+        let now = self.now;
+        let n = &mut self.nodes[node];
+        n.account(now);
+        n.account_cpu(now);
+        let (ready, active) = (n.ready, n.active);
+        let Some(h) = n.hpa.as_mut() else { return };
+        let util = if h.cap > 0.0 { h.busy / h.cap } else { 0.0 };
+        h.busy = 0.0;
+        h.cap = 0.0;
+        let cfg = h.cfg;
+        let target = cfg.target_utilization.clamp(0.01, 1.0);
+        let ratio = util * ready as f64 / active.max(1) as f64 / target;
+        let desired = if (ratio - 1.0).abs() <= 0.1 {
+            active
+        } else {
+            (ready as f64 * util / target).ceil() as usize
+        }
+        .clamp(cfg.min as usize, cfg.max as usize);
+        let stab = ms_to_us(cfg.stabilization_ms.max(0.0));
+        h.history.push_back((now, desired));
+        while h.history.front().is_some_and(|(t, _)| now.saturating_sub(*t) > stab) {
+            h.history.pop_front();
+        }
+        let floor = h.history.iter().map(|x| x.1).max().unwrap_or(desired);
+        if desired > active {
+            let start = ms_to_us(cfg.pod_start_ms.max(0.0));
+            for _ in active..desired {
+                self.schedule(now + start, Ev::PodReady { node: node as u32 });
+            }
+            self.nodes[node].active = desired;
+        } else if floor < active {
+            let n = &mut self.nodes[node];
+            n.active = floor;
+            n.ready = n.ready.min(floor);
+            self.resize(node);
+        }
+        let every = ms_to_us(cfg.eval_every_ms.max(100.0));
+        self.schedule(now + every, Ev::Autoscale { node: node as u32 });
+    }
+
+    fn on_pod_ready(&mut self, node: usize) {
+        let now = self.now;
+        let n = &mut self.nodes[node];
+        if n.ready >= n.active {
+            return; // scaled down while starting
+        }
+        n.account(now);
+        n.account_cpu(now);
+        n.ready += 1;
+        self.resize(node);
+    }
+
+    /// Capacity and caller-side pools follow the number of ready instances.
+    fn resize(&mut self, node: usize) {
+        let now = self.now;
+        let n = &mut self.nodes[node];
+        n.account(now);
+        n.account_cpu(now);
+        n.capacity = (n.ready as u32).saturating_mul(n.slots);
+        n.cpu_cap = (n.ready as u32).saturating_mul(n.lanes);
+        let ready = n.ready as u32;
+        let out = n.out.clone();
+        for e in out {
+            let mut granted = Vec::new();
+            let Some(pool) = self.edges[e as usize].pool.as_mut() else { continue };
+            pool.account(now);
+            pool.cap = pool.per_inst.saturating_mul(ready).max(1);
+            // more connections: hand them to callers already waiting
+            while pool.busy < pool.cap {
+                let Some((call, gen, token, at)) = pool.waiters.pop_front() else { break };
+                let c = &mut self.calls[call as usize];
+                if c.gen != gen || c.pool_wait != token {
+                    continue; // timed out meanwhile
+                }
+                c.pool_wait = 0;
+                pool.busy += 1;
+                pool.wait_sum += (now - at) as f64;
+                pool.wait_n += 1;
+                granted.push(call);
+            }
+            for call in granted {
+                self.dispatch(call, e);
+            }
+        }
+    }
 
     fn schedule(&mut self, t: Time, ev: Ev) {
         self.seq += 1;
@@ -1187,6 +1377,8 @@ impl Simulation {
                 }
             }
             Ev::Chaos { index } => self.on_chaos(index as usize),
+            Ev::Autoscale { node } => self.on_autoscale(node as usize),
+            Ev::PodReady { node } => self.on_pod_ready(node as usize),
             Ev::BranchDone {
                 call,
                 gen,
@@ -1253,7 +1445,7 @@ impl Simulation {
         let node = self.calls[call as usize].node;
         let n = &mut self.nodes[node as usize];
         n.arrivals += 1;
-        let k = n.insts.len();
+        let k = n.ready.clamp(1, n.insts.len());
         let inst = match n.balance {
             _ if k == 1 => 0,
             Balance::RoundRobin => {
@@ -1946,9 +2138,10 @@ impl Simulation {
                     n.account_cpu(end);
                     let span = self.window as f64;
                     let utilization = match n.model {
-                        _ if n.capacity == 0 => 0.0,
-                        ExecModel::Threads => n.busy_area / (n.capacity as f64 * span),
-                        ExecModel::Cpu => n.cpu_area / (n.cpu_cap as f64 * span),
+                        _ if n.slots == 0 => 0.0,
+                        ExecModel::Threads if n.cap_area > 0.0 => n.busy_area / n.cap_area,
+                        ExecModel::Cpu if n.cpu_cap_area > 0.0 => n.cpu_area / n.cpu_cap_area,
+                        _ => 0.0,
                     }
                     .min(1.0);
                     let w = NodeWindow {
@@ -1964,9 +2157,13 @@ impl Simulation {
                         arrivals: n.arrivals as f64 / secs,
                         rejected: n.rejected,
                         down: n.down,
+                        instances: n.ready as u32,
+                        starting: n.active.saturating_sub(n.ready) as u32,
                     };
                     n.busy_area = 0.0;
                     n.cpu_area = 0.0;
+                    n.cap_area = 0.0;
+                    n.cpu_cap_area = 0.0;
                     n.lag_sum = 0.0;
                     n.lag_n = 0;
                     n.rejected = 0;
@@ -2173,6 +2370,84 @@ mod tests {
         let mut sim = Simulation::new(input, false).unwrap();
         sim.run_to_end().unwrap();
         sim.summary()
+    }
+
+    /// One service of 10 slots × 50 ms (200 rps per instance) with an HPA,
+    /// 300 rps then a spike to 1200 rps at 20 s and back at 80 s.
+    fn autoscaled(hpa: Autoscale) -> SimInput {
+        let mut input = single_service(300.0, 10, 50.0);
+        let svc = &mut input.design.nodes[1].config;
+        svc.instances = 2;
+        svc.queue_size = 20;
+        svc.cost_per_hour = 1.0;
+        svc.autoscale = Some(hpa);
+        input.scenario.duration_ms = Some(200_000.0);
+        input.scenario.traffic = vec![
+            TrafficPhase { at_ms: 0.0, rps: 300.0 },
+            TrafficPhase { at_ms: 20_000.0, rps: 1200.0 },
+            TrafficPhase { at_ms: 80_000.0, rps: 300.0 },
+        ];
+        input
+    }
+
+    fn instance_series(input: &SimInput) -> (Vec<WindowMetrics>, Summary) {
+        let mut sim = Simulation::new(input, false).unwrap();
+        sim.run_to_end().unwrap();
+        (sim.take_windows(), sim.summary())
+    }
+
+    #[test]
+    fn hpa_scales_up_after_a_delay_and_back_down_after_stabilization() {
+        let hpa = Autoscale {
+            min: 2,
+            max: 12,
+            target_utilization: 0.6,
+            eval_every_ms: 5_000.0,
+            stabilization_ms: 30_000.0,
+            pod_start_ms: 8_000.0,
+        };
+        let (ws, summary) = instance_series(&autoscaled(hpa));
+        let at = |s: usize| ws[s].nodes[1].instances;
+        // steady at 300 rps: 2 instances are 75 % busy, within reach of the target
+        assert!(at(15) <= 3, "before the spike: {}", at(15));
+        // the spike starts at 20 s; the first evaluation is at 25 s and new
+        // instances need 8 s more: nothing new is ready before 33 s
+        assert!(at(30) <= 3, "pods cannot be ready yet: {}", at(30));
+        assert!(ws[22].nodes[1].rejected > 0 || ws[24].nodes[1].rejected > 0, "spike overloads before scaling");
+        // 1200 rps needs 6 instances at 100 %, ~10 at 60 %
+        assert!(at(70) >= 7, "scaled up during the spike: {}", at(70));
+        assert!(ws.iter().all(|w| w.nodes[1].instances <= 12), "never above max");
+        assert_eq!(ws[70].nodes[1].rejected, 0, "no drops once scaled");
+        // back to 300 rps at 80 s: scale-down waits for the 30 s stabilization window
+        assert!(at(95) >= 7, "still large right after the spike: {}", at(95));
+        assert!(at(190) <= 3, "scaled back down: {}", at(190));
+        // average cost is between the min and max fleet
+        assert!(summary.cost_per_hour > 2.0 && summary.cost_per_hour < 12.0, "cost {}", summary.cost_per_hour);
+    }
+
+    #[test]
+    fn hpa_never_goes_below_min_and_counts_starting_instances() {
+        let hpa = Autoscale {
+            min: 3,
+            max: 4,
+            target_utilization: 0.5,
+            eval_every_ms: 2_000.0,
+            stabilization_ms: 0.0,
+            pod_start_ms: 3_000.0,
+        };
+        let (ws, _) = instance_series(&autoscaled(hpa));
+        assert!(ws.iter().all(|w| w.nodes[1].instances >= 3 && w.nodes[1].instances <= 4));
+        // the start count is clamped into [min, max]
+        assert_eq!(ws[0].nodes[1].instances, 3);
+        assert!(ws.iter().any(|w| w.nodes[1].starting > 0), "starting pods are reported");
+    }
+
+    #[test]
+    fn without_autoscale_results_are_unchanged() {
+        let input = single_service(300.0, 10, 50.0);
+        let (ws, s) = instance_series(&input);
+        assert!(ws.iter().all(|w| w.nodes[1].instances == 1 && w.nodes[1].starting == 0));
+        assert_eq!(s.cost_per_hour, 0.0);
     }
 
     #[test]

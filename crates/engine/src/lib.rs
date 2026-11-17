@@ -16,7 +16,7 @@ pub mod sizing;
 
 pub use level::{default_catalog, level_input, play_level, Level};
 pub use model::{
-    Arrival, ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
+    Arrival, Autoscale, ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
     NodeKind, NodeSpec, Routing, Scenario, SimInput, Slo, TrafficPhase,
 };
 pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, TraceEvent, WindowMetrics};

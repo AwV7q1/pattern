@@ -52,6 +52,17 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
    - **Circuit breaker**: đếm lỗi trong cửa sổ trượt. Vượt ngưỡng thì mở và trả lỗi ngay. Hết `openMs` thì cho một probe qua (half-open).
 5. **Response** đi ngược lại từng edge. Về tới client thì ghi nhận.
 6. **Queue** trả ack cho bên gửi ngay, sau đó message chạy tiếp như một luồng bất đồng bộ riêng.
+7. **Autoscale** (giống Kubernetes HPA, `config.autoscale`): cứ `evalEveryMs` thì tính utilization (slot hoặc CPU) trung bình từ lần xét trước. Số instance mong muốn = `ceil(ready × utilization / targetUtilization)`, giới hạn trong `[min, max]`. Instance đang khởi động được tính là rảnh, và chênh lệch trong ±10% thì bỏ qua.
+   - Scale lên: quyết định ngay, nhưng instance mới chỉ nhận traffic sau `podStartMs` (pull image, khởi động, readiness probe).
+   - Scale xuống: lấy khuyến nghị cao nhất trong `stabilizationMs` gần nhất, để không dao động lên xuống liên tục. Instance bị bỏ không nhận request mới nữa, nhưng vẫn xử lý nốt phần đang làm và đang xếp hàng.
+   - Pool kết nối phía gọi (`poolSize` × process × instance) và chi phí cũng thay đổi theo số instance. Cost trong summary là trung bình theo thời gian.
+   - `NodeWindow.instances` là số instance đang nhận traffic, `starting` là số instance đang khởi động.
+
+   ```json
+   "autoscale": { "min": 2, "max": 10, "targetUtilization": 0.6, "evalEveryMs": 15000, "stabilizationMs": 60000, "podStartMs": 10000 }
+   ```
+
+   Bài học điển hình: HPA phản ứng chậm hơn spike (thời gian chờ lần xét kế tiếp cộng thời gian khởi động pod), nên vài chục giây đầu vẫn có lỗi. Khắc phục bằng cách giữ `min` cao hơn, đặt target thấp, hoặc đặt queue phía trước.
 
 Mô phỏng này chạy nhanh hơn thời gian thực rất nhiều. Ví dụ native chạy 20k rps × 60s (1.2 triệu request) mất khoảng 1.3s.
 
@@ -80,7 +91,7 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- Cold start, autoscaling. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Cold start của từng request (JIT, cache nguội). Autoscaling đã có (mục 2.7), nhưng chỉ dựa trên utilization, chưa có scale theo độ dài queue (KEDA) hay theo custom metric. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
 - Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
 - Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
