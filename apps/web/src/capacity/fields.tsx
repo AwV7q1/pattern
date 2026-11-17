@@ -35,12 +35,12 @@ export function Num({
           onChange={(e) => onChange(Number(e.target.value))}
         />
         {suffix && (
-          <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[11px] text-muted-foreground">
+          <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[12px] text-muted-foreground">
             {suffix}
           </span>
         )}
       </div>
-      {hint && <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p>}
+      {hint && <p className="text-[12px] leading-snug text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -60,7 +60,7 @@ export function Section({ title, desc, children }: { title: string; desc?: React
 export function Stat({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'ok' | 'bad' }) {
   return (
     <div className="rounded-md border bg-muted/30 p-2.5">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="text-[12px] text-muted-foreground">{label}</div>
       <div
         className={cn(
           'font-mono text-lg leading-tight',
@@ -70,7 +70,7 @@ export function Stat({ label, value, sub, tone }: { label: string; value: ReactN
       >
         {value}
       </div>
-      {sub && <div className="text-[11px] text-muted-foreground">{sub}</div>}
+      {sub && <div className="text-[12px] text-muted-foreground">{sub}</div>}
     </div>
   );
 }

@@ -100,7 +100,7 @@ export function ParticleLayer({ client }: { client: SimClient }) {
       {backend !== 'init' && (
         <Badge
           variant="outline"
-          className="absolute top-3 left-3 z-10 bg-background/80 font-mono text-[10px] backdrop-blur"
+          className="absolute top-3 left-3 z-10 bg-background/80 font-mono text-[11px] backdrop-blur"
         >
           {backend === 'webgpu' ? 'WebGPU' : 'Canvas2D fallback'}
         </Badge>

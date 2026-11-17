@@ -136,7 +136,7 @@ export function SizingPanel({ onOpen, onReport }: Props) {
             <div className="flex items-center justify-between">
               <div>
                 <Label className="text-xs">Chịu được mất 1 app server (N+1)</Label>
-                <p className="text-[11px] text-muted-foreground">Ít nhất 2 server, kiểm tra cả kịch bản mất 1 máy</p>
+                <p className="text-[12px] text-muted-foreground">Ít nhất 2 server, kiểm tra cả kịch bản mất 1 máy</p>
               </div>
               <Switch checked={spec.redundancy} onCheckedChange={(v) => set((s) => ((s.redundancy = v), s))} />
             </div>
@@ -147,7 +147,7 @@ export function SizingPanel({ onOpen, onReport }: Props) {
             desc="Giá tham khảo chung chung, hãy sửa theo nhà cung cấp của bạn. vCPU dùng chung bị trừ ~15% hiệu năng và có đuôi latency dày hơn."
           >
             <div className="grid gap-1.5">
-              <div className="grid grid-cols-[1fr_48px_56px_60px_28px_24px] gap-1.5 text-[10px] text-muted-foreground">
+              <div className="grid grid-cols-[1fr_48px_56px_60px_28px_24px] gap-1.5 text-[11px] text-muted-foreground">
                 <span>Tên</span>
                 <span>vCPU</span>
                 <span>RAM GB</span>
@@ -295,7 +295,7 @@ function CandidateCard({ c, recommended }: { c: SizingCandidate; recommended: bo
           {usd(c.monthlyCost)}/th · CPU app {pct(c.appUtilization)} · DB {pct(c.dbUtilization)}
         </span>
       </div>
-      <table className="mt-2 w-full font-mono text-[11px]">
+      <table className="mt-2 w-full font-mono text-[12px]">
         <thead className="text-muted-foreground">
           <tr className="text-left">
             <th className="font-normal">Kịch bản</th>

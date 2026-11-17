@@ -469,7 +469,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
 function Tile({ label, value, tone }: { label: string; value: ReactNode; tone: string }) {
   return (
     <div className="w-28 rounded-xl border-2 p-3">
-      <div className="text-[11px] font-semibold text-muted-foreground uppercase">{label}</div>
+      <div className="text-[12px] font-semibold text-muted-foreground uppercase">{label}</div>
       <div className={cn('text-2xl font-bold', tone)}>{value}</div>
     </div>
   );

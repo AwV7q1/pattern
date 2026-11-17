@@ -42,7 +42,7 @@ export function Palette({ kinds, catalog }: Props) {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{meta.name}</div>
                   {c && (
-                    <div className="font-mono text-[10px] text-muted-foreground">
+                    <div className="font-mono text-[11px] text-muted-foreground">
                       {c.concurrency} slot · {fmt.money(c.costPerHour)}/h
                     </div>
                   )}
@@ -56,7 +56,7 @@ export function Palette({ kinds, catalog }: Props) {
           </Tooltip>
         );
       })}
-      <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
+      <p className="mt-2 px-1 text-[12px] leading-relaxed text-muted-foreground">
         Kéo thả vào canvas, nối từ chấm phải sang chấm trái. Chọn rồi bấm Delete để xoá.
       </p>
     </div>

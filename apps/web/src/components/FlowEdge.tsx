@@ -89,7 +89,7 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
           <div
             title={role.title}
             className={cn(
-              'nodrag nopan pointer-events-auto absolute flex size-[18px] items-center justify-center rounded-full border bg-background font-mono text-[11px] leading-none',
+              'nodrag nopan pointer-events-auto absolute flex size-[18px] items-center justify-center rounded-full border bg-background font-mono text-[12px] leading-none',
               v?.routing === 'sequence' && !ff ? 'border-primary/60 text-primary' : 'text-muted-foreground',
             )}
             style={{ transform: `translate(-50%, -50%) translate(${rx}px, ${ry}px)`, zIndex: 3 }}
@@ -106,7 +106,7 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
               <span
                 key={t.text}
                 className={cn(
-                  'rounded border bg-background/90 px-1 font-mono text-[9px] leading-4 whitespace-nowrap text-muted-foreground',
+                  'rounded border bg-background/90 px-1 font-mono text-[10px] leading-4 whitespace-nowrap text-muted-foreground',
                   t.bad && 'border-destructive text-destructive',
                 )}
               >

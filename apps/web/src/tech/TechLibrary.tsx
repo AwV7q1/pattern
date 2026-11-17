@@ -97,12 +97,12 @@ export function TechLibrary() {
           return (
             <div key={g.id} className="mb-1">
               <button
-                className="flex w-full items-center gap-1 px-1 py-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
+                className="flex w-full items-center gap-1 px-1 py-1 text-[12px] font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
                 onClick={() => setOpen((o) => ({ ...o, [g.id]: !expanded }))}
               >
                 <ChevronRight className={cn('size-3 transition-transform', expanded && 'rotate-90')} />
                 {g.name}
-                <span className="ml-auto font-mono text-[10px] normal-case">{g.items.length}</span>
+                <span className="ml-auto font-mono text-[11px] normal-case">{g.items.length}</span>
               </button>
               {expanded && g.id === 'k8s' && !q && (
                 <div className="mb-1 grid grid-cols-2 gap-1 px-1">
@@ -115,7 +115,7 @@ export function TechLibrary() {
                         e.dataTransfer.effectAllowed = 'move';
                       }}
                       title={`${GROUP_KINDS[k].hint}. Kéo vào canvas, rồi kéo node vào trong khung.`}
-                      className="cursor-grab rounded-md border-2 border-dashed px-2 py-1 text-[11px] select-none hover:bg-accent"
+                      className="cursor-grab rounded-md border-2 border-dashed px-2 py-1 text-[12px] select-none hover:bg-accent"
                       style={{ borderColor: `${GROUP_KINDS[k].color}88`, color: GROUP_KINDS[k].color }}
                     >
                       {GROUP_KINDS[k].name}
@@ -130,7 +130,7 @@ export function TechLibrary() {
         {!q && (
           <div className="mb-1">
             <button
-              className="flex w-full items-center gap-1 px-1 py-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
+              className="flex w-full items-center gap-1 px-1 py-1 text-[12px] font-medium tracking-wide text-muted-foreground uppercase hover:text-foreground"
               onClick={() => setOpen((o) => ({ ...o, generic: !o.generic }))}
             >
               <ChevronRight className={cn('size-3 transition-transform', open.generic && 'rotate-90')} />
@@ -177,7 +177,7 @@ export function TechLibrary() {
           </Button>
         </div>
       )}
-      <p className="px-1 text-[10px] leading-relaxed text-muted-foreground">
+      <p className="px-1 text-[11px] leading-relaxed text-muted-foreground">
         Kéo thả vào canvas · nối chấm phải → chấm trái · <Plus className="inline size-2.5" /> để so sánh
       </p>
     </div>

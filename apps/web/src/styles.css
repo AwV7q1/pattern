@@ -49,6 +49,16 @@
   --ring: oklch(0.552 0.016 285.938);
 }
 
+/* Slightly larger small text than Tailwind's defaults (12 / 14 / 16px) for readability. */
+@theme {
+  --text-xs: 0.8125rem; /* 13px */
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.9375rem; /* 15px */
+  --text-sm--line-height: 1.45;
+  --text-base: 1.0625rem; /* 17px */
+  --text-base--line-height: 1.5;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -84,6 +94,74 @@
     @apply bg-background text-foreground antialiased;
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
+}
+
+/* Custom scrollbars: thin, rounded, themed. */
+:root {
+  --scrollbar-size: 10px;
+  --scrollbar-thumb: oklch(0.552 0.016 285.938 / 35%);
+  --scrollbar-thumb-hover: oklch(0.552 0.016 285.938 / 60%);
+  --scrollbar-thumb-active: oklch(0.552 0.016 285.938 / 80%);
+}
+.dark {
+  --scrollbar-thumb: oklch(1 0 0 / 14%);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 26%);
+  --scrollbar-thumb-active: oklch(1 0 0 / 38%);
+}
+
+/* Chromium / Safari. Chrome 121+ ignores these if scrollbar-color is set, so
+   the standard properties below are only applied where these aren't supported. */
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+  min-height: 32px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-active);
+}
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* Firefox */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+  }
+}
+
+/* Radix ScrollArea thumb matches the native one */
+[data-slot='scroll-area-thumb'] {
+  background-color: var(--scrollbar-thumb);
+  transition: background-color 150ms;
+}
+[data-slot='scroll-area-scrollbar']:hover [data-slot='scroll-area-thumb'] {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* Hide the browser's up/down spinner on number inputs (type or scroll instead) */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* React Flow tweaks so it blends with the theme */

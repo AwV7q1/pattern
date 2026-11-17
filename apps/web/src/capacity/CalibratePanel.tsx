@@ -140,7 +140,7 @@ export function CalibratePanel({
               <FileUp className="size-3.5" /> Hoặc tải file design JSON
               <input type="file" accept=".json" className="hidden" onChange={readDesign} />
             </label>
-            <p className="font-mono text-[11px] text-muted-foreground">
+            <p className="font-mono text-[12px] text-muted-foreground">
               {source.design.nodes.length} node: {source.design.nodes.map((n) => n.id).join(', ')}
             </p>
           </Section>
@@ -206,7 +206,7 @@ export function CalibratePanel({
                 </Button>
               </div>
             ))}
-            {obs.length > 0 && <p className="text-[10px] text-muted-foreground">node · số đo · ở mức rps · giá trị</p>}
+            {obs.length > 0 && <p className="text-[11px] text-muted-foreground">node · số đo · ở mức rps · giá trị</p>}
             <Button
               size="sm"
               variant="outline"
@@ -273,7 +273,7 @@ function delta(sim: number, meas: number | null) {
   if (meas == null || meas <= 0) return null;
   const d = sim / meas - 1;
   return (
-    <span className={cn('ml-1 text-[10px]', Math.abs(d) < 0.15 ? 'text-success' : Math.abs(d) < 0.35 ? 'text-warning' : 'text-destructive')}>
+    <span className={cn('ml-1 text-[11px]', Math.abs(d) < 0.15 ? 'text-success' : Math.abs(d) < 0.35 ? 'text-warning' : 'text-destructive')}>
       {d >= 0 ? '+' : ''}
       {Math.round(d * 100)}%
     </span>
@@ -339,8 +339,8 @@ function CalibrationView({ r, design, onApply, hasObs }: { r: CalibrationResult;
             <div key={p.key} className={cn('rounded-md border p-2 font-mono text-xs', p.atBound && 'border-warning/60')}>
               <div className="text-muted-foreground">{p.key}</div>
               <div className="text-sm">{p.multiplier ? `×${p.after.toFixed(3)}` : p.after.toFixed(3)}</div>
-              {!p.multiplier && <div className="text-[10px] text-muted-foreground">trước: {p.before.toFixed(3)}</div>}
-              {p.atBound && <div className="text-[10px] text-warning">chạm biên khoảng tìm kiếm</div>}
+              {!p.multiplier && <div className="text-[11px] text-muted-foreground">trước: {p.before.toFixed(3)}</div>}
+              {p.atBound && <div className="text-[11px] text-warning">chạm biên khoảng tìm kiếm</div>}
             </div>
           ))}
         </div>
@@ -362,7 +362,7 @@ function CalibrationView({ r, design, onApply, hasObs }: { r: CalibrationResult;
           {rep.levels.map((l) => (
             <tbody key={l.measured.name} className="border-t">
               <tr>
-                <td colSpan={6} className="pt-2 pb-0.5 font-sans text-[11px] text-muted-foreground">
+                <td colSpan={6} className="pt-2 pb-0.5 font-sans text-[12px] text-muted-foreground">
                   {l.measured.name} · {l.measured.offeredRps.toFixed(0)} rps · {(l.measured.durationMs / 1000).toFixed(0)}s · util sau fit:{' '}
                   {nodes.map((n) => `${n.id} ${pct(l.after.nodeUtilization[n.i])}`).join(', ')}
                 </td>
@@ -374,7 +374,7 @@ function CalibrationView({ r, design, onApply, hasObs }: { r: CalibrationResult;
           ))}
         </table>
       </div>
-      <Label className="text-[11px] font-normal leading-relaxed text-muted-foreground">
+      <Label className="text-[12px] font-normal leading-relaxed text-muted-foreground">
         Fit tốt trên các mức đã đo chưa chắc dự đoán đúng điểm gãy: hãy chạy thêm một bước k6 gần mức giới hạn ước tính để xác
         nhận trước khi dùng con số này.
       </Label>

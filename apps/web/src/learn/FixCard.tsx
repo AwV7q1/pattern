@@ -123,7 +123,7 @@ function Goals({ card, baseline, last }: { card: FixCardSpec; baseline: Summary 
           <div key={i} className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <span
               className={cn(
-                'flex size-5 items-center justify-center rounded-full border text-[10px]',
+                'flex size-5 items-center justify-center rounded-full border text-[11px]',
                 ok === true && 'border-emerald-400 bg-emerald-400 text-emerald-950',
                 ok === false && 'border-red-400 bg-red-400 text-red-950',
               )}
@@ -161,7 +161,7 @@ function History({ card, attempts, baseline, wide }: { card: FixCardSpec; attemp
     <div className="grid gap-1 rounded-lg border p-3 text-xs">
       <div className="mb-1 font-semibold text-muted-foreground uppercase">Các lần chạy</div>
       <table className="w-full">
-        <thead className="text-left text-[10px] text-muted-foreground">
+        <thead className="text-left text-[11px] text-muted-foreground">
           <tr>
             <th className="pr-2 font-normal">#</th>
             {wide && <th className="pr-2 font-normal">Thay đổi</th>}
@@ -277,7 +277,7 @@ function KnobControl({
           aria-label={knob.label}
         />
       )}
-      {knob.help && <p className="text-[11px] text-muted-foreground">{knob.help}</p>}
+      {knob.help && <p className="text-[12px] text-muted-foreground">{knob.help}</p>}
     </div>
   );
 }
@@ -490,7 +490,7 @@ function MiniCanvas({
           );
         })}
       </svg>
-      <p className="px-2 pb-1.5 text-[11px] text-muted-foreground">
+      <p className="px-2 pb-1.5 text-[12px] text-muted-foreground">
         Viền xanh nét đứt <span className="text-sky-400">✎</span> = chỗ được phép sửa (bấm để chọn). Chấm xanh dương: request, xanh lá: response.
       </p>
     </div>

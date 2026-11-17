@@ -108,7 +108,7 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
         <div className="flex items-center gap-2 font-medium">
           <Target className="size-3.5" /> Mục tiêu
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[11px]">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-[12px]">
           <span className="text-muted-foreground">p99</span>
           <span>≤ {sc.slo.p99Ms}ms</span>
           <span className="text-muted-foreground">lỗi</span>
@@ -121,7 +121,7 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
         {sc.events && sc.events.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
             {sc.events.map((e, i) => (
-              <span key={i} className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-[10px] text-destructive">
+              <span key={i} className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
                 <Zap className="size-2.5" />
                 {e.atMs / 1000}s {e.node} {CHAOS_LABEL[e.action]}
                 {e.action === 'latency' || e.action === 'errors' ? e.value : ''}
@@ -129,7 +129,7 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
             ))}
           </div>
         )}
-        <p className="mt-1 text-[11px] text-muted-foreground">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           ★ đạt SLO · ★★ trong ngân sách · ★★★ ≥98% thời gian đạt SLO và không tồn backlog
         </p>
       </div>

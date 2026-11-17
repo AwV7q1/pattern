@@ -74,11 +74,11 @@ export function PromptDialog({ project, open, onOpenChange }: Props) {
             </Label>
           </div>
         </div>
-        <pre className="max-h-[56vh] overflow-auto rounded-md border bg-background/60 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
+        <pre className="max-h-[56vh] overflow-auto rounded-md border bg-background/60 p-3 font-mono text-[12px] leading-relaxed whitespace-pre-wrap">
           {text}
         </pre>
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">
+          <span className="text-[12px] text-muted-foreground">
             {text.length.toLocaleString('en')} ký tự · ~{Math.round(text.length / 3.5).toLocaleString('en')} token
           </span>
           <Button

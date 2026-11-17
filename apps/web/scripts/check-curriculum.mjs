@@ -70,7 +70,7 @@ for (const unit of UNITS) {
   }
 }
 // ---------------------------------------------------------------- glossary
-const { GLOSSARY, findTerms } = await import('../src/learn/glossary.ts');
+const { GLOSSARY, findTerms } = await import('../src/learn/glossaryData.ts');
 const unitIds = new Set(UNITS.map((u) => u.id));
 const termIds = new Set();
 const spellings = new Map();

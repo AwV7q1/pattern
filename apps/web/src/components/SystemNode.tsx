@@ -54,16 +54,16 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
         <div className="min-w-0">
           <div className="truncate text-sm leading-tight font-semibold">{data.label}</div>
           {tech && tech.name !== data.label && (
-            <div className="truncate text-[10px] leading-tight text-muted-foreground">{tech.name}</div>
+            <div className="truncate text-[11px] leading-tight text-muted-foreground">{tech.name}</div>
           )}
         </div>
         {data.locked && <Lock className="ml-auto size-3 shrink-0 text-muted-foreground" />}
       </div>
       {isClient ? (
-        <div className="mt-1 text-[11px] text-muted-foreground">nguồn traffic</div>
+        <div className="mt-1 text-[12px] text-muted-foreground">nguồn traffic</div>
       ) : (
         <>
-          <div className="mt-1 truncate text-[11px] text-muted-foreground">
+          <div className="mt-1 truncate text-[12px] text-muted-foreground">
             {c.model === 'cpu'
               ? `${replicas}×${c.cpuLanes} CPU · ${n2(c.cpuP50Ms)}ms CPU${c.ioP50Ms ? ` + ${n2(c.ioP50Ms)}ms I/O` : ''}`
               : `${replicas}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
@@ -78,7 +78,7 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
               style={{ width: `${Math.round(util * 100)}%`, background: utilColor(util) }}
             />
           </div>
-          <div className="mt-1 flex gap-2 font-mono text-[10px] text-muted-foreground">
+          <div className="mt-1 flex gap-2 font-mono text-[11px] text-muted-foreground">
             <span>{Math.round(util * 100)}%</span>
             <span>{fmt.rps(m?.arrivals ?? 0)}/s</span>
             <span>q {(m?.queue ?? 0) + (m?.cpuQueue ?? 0)}</span>
@@ -96,7 +96,7 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
         </>
       )}
       {data.down && (
-        <span className="absolute -top-2.5 right-2 flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-white">
+        <span className="absolute -top-2.5 right-2 flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 text-[11px] font-semibold text-white">
           <PowerOff className="size-2.5" /> DOWN
         </span>
       )}

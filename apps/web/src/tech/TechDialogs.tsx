@@ -84,7 +84,7 @@ function TechSheet({ tech, inCompare }: { tech: Tech; inCompare: boolean }) {
           <TabsContent value="overview" className="grid gap-5">
             <p className="text-sm leading-relaxed">{tech.summary}</p>
             <ScoreBars tech={tech} />
-            <p className="text-[11px] text-muted-foreground">{SCORE_NOTE}</p>
+            <p className="text-[12px] text-muted-foreground">{SCORE_NOTE}</p>
             <div className="grid grid-cols-2 gap-4">
               <Section title="Điểm mạnh">
                 <List items={tech.details.strengths} tone="good" />
@@ -176,7 +176,7 @@ function CompareView({ ids }: { ids: string[] }) {
                 <TechLogo tech={t} className="size-8" />
                 <button className="min-w-0 flex-1 text-left" onClick={() => techUi.openSheet(t.id)}>
                   <div className="truncate text-sm font-semibold hover:underline">{t.name}</div>
-                  <div className="truncate text-[11px] text-muted-foreground">{categoryName(t)}</div>
+                  <div className="truncate text-[12px] text-muted-foreground">{categoryName(t)}</div>
                 </button>
                 <Button size="icon-sm" variant="ghost" aria-label="Bỏ" onClick={() => techUi.toggleCompare(t.id)}>
                   <X />
@@ -226,7 +226,7 @@ function CompareView({ ids }: { ids: string[] }) {
             ))}
             <span className="text-xs text-muted-foreground">Mô phỏng</span>
             {techs.map((t) => (
-              <p key={t.id} className={cn('font-mono text-[11px] text-muted-foreground')}>
+              <p key={t.id} className={cn('font-mono text-[12px] text-muted-foreground')}>
                 {simSummary(t)}
               </p>
             ))}

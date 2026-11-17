@@ -98,7 +98,7 @@ export function VersionHistory({ projectId, open, onOpenChange, onRestore, onSav
                     ) : (
                       <>
                         <div className={cn('truncate', v.auto && 'text-muted-foreground')}>{v.label ?? 'Tự động lưu'}</div>
-                        <div className="text-[11px] text-muted-foreground" title={new Date(v.at).toLocaleString('vi-VN')}>
+                        <div className="text-[12px] text-muted-foreground" title={new Date(v.at).toLocaleString('vi-VN')}>
                           {timeAgo(v.at)} · {v.design.nodes.length} node
                         </div>
                       </>

@@ -8,7 +8,7 @@ import { LESSONS, UNITS, cardByKey, lessonXp } from './curriculum';
 import { DAILY_GOAL, REVIEW_SIZE, dueKeys, isUnlocked, nextLesson, streak, today, useProgress } from './progress';
 import { LessonRunner } from './LessonRunner';
 import { ReviewPanel } from './ReviewPanel';
-import { GLOSSARY } from './glossary';
+import { GLOSSARY } from './glossaryData';
 import { GlossaryButton, GlossaryProvider } from './Glossary';
 import type { Lesson } from './types';
 
@@ -193,7 +193,7 @@ function LearnPageInner({ onBuild, openLesson, onOpened }: Props) {
                         >
                           {open ? <Icon className="size-7" strokeWidth={2.5} /> : <Lock className="size-6" />}
                           {isDone && (progress.done[l.id] ?? 0) > 1 && (
-                            <span className="absolute -right-1 -bottom-1 flex size-5 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-black">
+                            <span className="absolute -right-1 -bottom-1 flex size-5 items-center justify-center rounded-full bg-warning text-[11px] font-bold text-black">
                               {progress.done[l.id]}
                             </span>
                           )}

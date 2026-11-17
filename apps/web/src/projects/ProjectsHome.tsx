@@ -47,7 +47,7 @@ function TechStrip({ design }: { design: StudioDesign }) {
       {techs.slice(0, 6).map((t) => (
         <TechLogo key={t!.id} tech={t!} className="size-4" tile={false} />
       ))}
-      {techs.length > 6 && <span className="text-[10px] text-muted-foreground">+{techs.length - 6}</span>}
+      {techs.length > 6 && <span className="text-[11px] text-muted-foreground">+{techs.length - 6}</span>}
     </div>
   );
 }
@@ -80,7 +80,7 @@ function ProjectCard({ p, onOpen }: { p: Project; onOpen: () => void }) {
               {p.name}
             </button>
           )}
-          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+          <div className="mt-1 flex items-center gap-2 text-[12px] text-muted-foreground">
             <span>Sửa {timeAgo(p.updatedAt)}</span>
             <TechStrip design={p.design} />
           </div>
@@ -240,8 +240,8 @@ export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab }: Pr
                   </div>
                   <div className="grid gap-1 border-t p-3">
                     <div className="truncate text-sm font-medium">{preset.title}</div>
-                    <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{preset.description}</p>
-                    <span className="text-[11px] text-primary opacity-0 group-hover:opacity-100">Tạo dự án từ mẫu này →</span>
+                    <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{preset.description}</p>
+                    <span className="text-[12px] text-primary opacity-0 group-hover:opacity-100">Tạo dự án từ mẫu này →</span>
                   </div>
                 </button>
               ))}

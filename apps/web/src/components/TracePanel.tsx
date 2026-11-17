@@ -221,8 +221,8 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
           </Label>
         </div>
       </div>
-      {!running && <p className="text-[11px] text-warning">Mô phỏng đang dừng: bấm Chạy để request được gửi đi.</p>}
-      {waiting && <p className="text-[11px] text-muted-foreground">Đang chờ request #{traces.at(-1)!.id} hoàn tất…</p>}
+      {!running && <p className="text-[12px] text-warning">Mô phỏng đang dừng: bấm Chạy để request được gửi đi.</p>}
+      {waiting && <p className="text-[12px] text-muted-foreground">Đang chờ request #{traces.at(-1)!.id} hoàn tất…</p>}
 
       {traces.length > 1 && (
         <div className="flex flex-wrap gap-1">
@@ -232,7 +232,7 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
               type="button"
               onClick={() => setPicked(t.id)}
               className={cn(
-                'rounded border px-1.5 py-0.5 font-mono text-[10px]',
+                'rounded border px-1.5 py-0.5 font-mono text-[11px]',
                 t.id === trace?.id ? 'border-primary text-primary' : 'text-muted-foreground',
                 t.end !== undefined && !t.ok && 'border-destructive/60 text-destructive',
               )}
@@ -291,14 +291,14 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
         {trace && trace.end !== undefined && (
           <div className="grid gap-1">
             <div className="text-xs font-semibold">Diễn biến</div>
-            <pre className="overflow-x-auto rounded-md border bg-muted/30 p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap @3xl:text-[11.5px]">
+            <pre className="overflow-x-auto rounded-md border bg-muted/30 p-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap @3xl:text-[12.5px]">
               {narrate(trace, label).join('\n')}
             </pre>
           </div>
         )}
       </div>
 
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
         {(
           [
             ['pool', 'chờ connection'],
@@ -384,8 +384,8 @@ function TraceCompare({ before, after, afterLabel, afterNote }: { before: Pinned
           <Waterfall trace={before.trace} label={beforeLabel} scaleMs={scale} title={<>Trước{before.note && ` · ${before.note}`}</>} muted />
           <Waterfall trace={after} label={afterLabel} scaleMs={scale} title={<>Sau{afterNote && ` · ${afterNote}`}</>} />
         </div>
-        <table className="w-full text-[11px]">
-          <thead className="text-left text-[10px] text-muted-foreground">
+        <table className="w-full text-[12px]">
+          <thead className="text-left text-[11px] text-muted-foreground">
             <tr className="border-b">
               <th className="py-1 pr-2 font-normal">Chặng</th>
               <th className="pr-2 text-right font-normal" title="lúc lời gọi được gửi đi, tính từ đầu request">
@@ -463,7 +463,7 @@ function Waterfall({
   return (
     <div className={cn('grid gap-0.5 rounded-md border p-2', muted && 'opacity-80')}>
       {title && <div className="text-xs font-semibold">{title}</div>}
-      <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
+      <div className="flex justify-between font-mono text-[11px] text-muted-foreground">
         <span>0</span>
         <span>
           request #{trace.id} · {trace.end !== undefined ? fmt.ms(trace.end - t0) : 'chưa xong'}
@@ -472,7 +472,7 @@ function Waterfall({
         <span>{fmt.ms(span)}</span>
       </div>
       {trace.end !== undefined && trace.end < t1 - span * 0.05 && (
-        <div className="text-right text-[10px] text-muted-foreground">
+        <div className="text-right text-[11px] text-muted-foreground">
           vạch đứt = lúc người dùng nhận response; phần sau đó là việc chạy nền
         </div>
       )}
@@ -494,7 +494,7 @@ function Waterfall({
         return (
           <div key={s.id} className="grid grid-cols-[112px_1fr] @3xl:grid-cols-[180px_1fr] items-center gap-2">
             <div
-              className="truncate text-[11px]"
+              className="truncate text-[12px]"
               style={{ paddingLeft: s.depth * 8 }}
               title={`${from} → ${to}`}
             >
@@ -513,7 +513,7 @@ function Waterfall({
                 <div className="absolute inset-y-0 w-0.5 bg-destructive" style={{ left: x(s.timeout) }} title="timeout" />
               )}
               <span
-                className="pointer-events-none absolute top-0.5 font-mono text-[9px] whitespace-nowrap text-foreground/80"
+                className="pointer-events-none absolute top-0.5 font-mono text-[10px] whitespace-nowrap text-foreground/80"
                 style={
                   (spanEnd(s) - t0) / span > 0.8
                     ? { right: `calc(${100 - ((spanEnd(s) - t0) / span) * 100}% + 3px)` }

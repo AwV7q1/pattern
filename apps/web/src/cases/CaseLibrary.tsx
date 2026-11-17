@@ -132,7 +132,7 @@ function CaseReader({ c, onBack, onOpen }: { c: CaseStudy; onBack: () => void; o
               </a>
             ))}
           </section>
-          <p className="flex gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="flex gap-1.5 text-[12px] leading-relaxed text-muted-foreground">
             <Info className="mt-0.5 size-3 shrink-0" /> {DISCLAIMER}
           </p>
         </div>
@@ -169,10 +169,10 @@ export function CaseLibrary({ cases, onOpen }: { cases: CaseStudy[]; onOpen: (p:
                 </span>
               </div>
               <div className="text-sm leading-snug font-medium">{c.title}</div>
-              <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">{c.summary}</p>
+              <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">{c.summary}</p>
               <div className="flex flex-wrap gap-1">
                 {c.tags.map((t) => (
-                  <Badge key={t} variant="outline" className="text-[10px] font-normal">
+                  <Badge key={t} variant="outline" className="text-[11px] font-normal">
                     {t}
                   </Badge>
                 ))}

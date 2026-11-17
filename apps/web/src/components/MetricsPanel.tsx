@@ -15,7 +15,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'go
       >
         {value}
       </div>
-      <div className="text-[10px] text-muted-foreground">{label}</div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
     </div>
   );
 }

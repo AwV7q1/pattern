@@ -1190,7 +1190,7 @@ export function App() {
                       className="min-h-72 font-mono text-xs leading-relaxed"
                     />
                     {project.lastRun && (
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-[12px] text-muted-foreground">
                         Lần mô phỏng gần nhất: {project.lastRun.rps} rps · p99 {fmt.ms(project.lastRun.p99Ms)} · lỗi{' '}
                         {fmt.pct(project.lastRun.errorRate)}
                       </p>
@@ -1277,7 +1277,7 @@ export function App() {
                           </Button>
                         );
                       })()}
-                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                      <p className="text-[12px] leading-relaxed text-muted-foreground">
                         Khung chỉ để tổ chức và sinh manifest Kubernetes trong prompt, không ảnh hưởng mô phỏng. Kéo khung sẽ
                         kéo theo mọi node bên trong.
                       </p>
@@ -1295,7 +1295,7 @@ export function App() {
               </div>
             </ScrollArea>
           </Tabs>
-          <div className="border-t px-3 py-2 font-mono text-[11px] text-muted-foreground">
+          <div className="border-t px-3 py-2 font-mono text-[12px] text-muted-foreground">
             {nodes.length} node · {edges.length} edge · {fmt.money(cost)}/h
             {panelFull && running && <span className="ml-2 text-success">· mô phỏng vẫn đang chạy phía sau</span>}
           </div>

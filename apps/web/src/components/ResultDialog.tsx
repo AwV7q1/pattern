@@ -27,7 +27,7 @@ function Check3({ ok, label, detail }: { ok: boolean; label: string; detail: str
       </span>
       <div>
         <div className="text-sm">{label}</div>
-        <div className="font-mono text-[11px] text-muted-foreground">{detail}</div>
+        <div className="font-mono text-[12px] text-muted-foreground">{detail}</div>
       </div>
     </li>
   );
@@ -83,15 +83,15 @@ export function ResultDialog({
             <div className="grid grid-cols-3 gap-2 text-center font-mono text-xs">
               <div className="rounded border p-2">
                 {fmt.rps(s.throughputRps)}
-                <div className="text-[10px] text-muted-foreground">ok/s</div>
+                <div className="text-[11px] text-muted-foreground">ok/s</div>
               </div>
               <div className="rounded border p-2">
                 {s.retries.toLocaleString()}
-                <div className="text-[10px] text-muted-foreground">retry</div>
+                <div className="text-[11px] text-muted-foreground">retry</div>
               </div>
               <div className="rounded border p-2">
                 {s.timeouts.toLocaleString()}
-                <div className="text-[10px] text-muted-foreground">timeout</div>
+                <div className="text-[11px] text-muted-foreground">timeout</div>
               </div>
             </div>
             <DialogFooter>

@@ -5,7 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { UNITS } from './curriculum';
-import { GLOSSARY, findTerms, fold, type Term } from './glossary';
+import { GLOSSARY, findTerms, fold, type Term } from './glossaryData';
 
 // ---------------------------------------------------------------- context: open the glossary from anywhere in Learn
 

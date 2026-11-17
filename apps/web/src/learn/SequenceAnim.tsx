@@ -116,7 +116,7 @@ export function SequenceAnim({ spec }: { spec: SeqSpec }) {
           );
         })}
       </svg>
-      {spec.caption && <p className="px-1 pt-1 text-[11px] text-muted-foreground">{spec.caption}</p>}
+      {spec.caption && <p className="px-1 pt-1 text-[12px] text-muted-foreground">{spec.caption}</p>}
       {!reduced && (
         <button
           type="button"

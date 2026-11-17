@@ -41,7 +41,7 @@ export function ParticleLegend({ className }: { className?: string }) {
     },
   ];
   return (
-    <div className={cn('grid gap-1 text-[11px] text-muted-foreground', className)}>
+    <div className={cn('grid gap-1 text-[12px] text-muted-foreground', className)}>
       {rows.map((r) => (
         <span key={r.text} className="flex items-center gap-2">
           <span className="flex w-3 justify-center">{r.icon}</span> {r.text}

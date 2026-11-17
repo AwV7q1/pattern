@@ -42,7 +42,7 @@ export const FrameNode = memo(function FrameNode({ data, selected }: NodeProps<F
           <span className="font-semibold">{data.group.label}</span>
           <span className="text-muted-foreground">· {data.members} node</span>
           {data.down && (
-            <span className="ml-1 flex items-center gap-0.5 rounded bg-destructive px-1 text-[10px] font-semibold text-white">
+            <span className="ml-1 flex items-center gap-0.5 rounded bg-destructive px-1 text-[11px] font-semibold text-white">
               <PowerOff className="size-2.5" /> DOWN
             </span>
           )}

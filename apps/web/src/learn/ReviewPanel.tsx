@@ -51,7 +51,7 @@ export function ReviewPanel({ progress, onStart }: Props) {
   return (
     <PopoutPanel icon={<Brain />} title="Ôn tập" className="border-2">
       {(wide) => (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           {entries.length === 0 ? (
             <p className="text-xs leading-relaxed text-muted-foreground">
               Câu nào trả lời sai sẽ được đưa vào đây và hỏi lại sau <b>1, 3, 7, 21 ngày</b>. Trả lời đúng liền 4 lần là thuộc.
@@ -63,7 +63,7 @@ export function ReviewPanel({ progress, onStart }: Props) {
                   <div className={cn('text-3xl font-bold', due.length ? 'text-warning' : 'text-muted-foreground')}>{due.length}</div>
                   <div className="text-xs text-muted-foreground">câu đến hạn hôm nay</div>
                 </div>
-                <div className="text-right text-[11px] text-muted-foreground">
+                <div className="text-right text-[12px] text-muted-foreground">
                   <div>
                     {entries.length - learned} đang học · {learned} đã thuộc
                   </div>
@@ -76,7 +76,7 @@ export function ReviewPanel({ progress, onStart }: Props) {
                 </Button>
               ) : (
                 weak.length > 0 && (
-                  <Button variant="outline" onClick={() => onStart(weak)}>
+                  <Button variant="outline" className="h-auto min-h-9 whitespace-normal" onClick={() => onStart(weak)}>
                     Ôn sớm các câu yếu nhất
                   </Button>
                 )
@@ -125,7 +125,7 @@ export function ReviewPanel({ progress, onStart }: Props) {
                   </tbody>
                 </table>
               ) : (
-                <div className="grid gap-1">
+                <div className="grid grid-cols-1 gap-1">
                   {entries
                     .filter((e) => e.r.due !== null)
                     .sort((a, b) => a.r.due!.localeCompare(b.r.due!))
@@ -139,7 +139,7 @@ export function ReviewPanel({ progress, onStart }: Props) {
                         <span className={cn('whitespace-nowrap', r.due! <= day && 'text-warning')}>{dueText(r.due, day)}</span>
                       </div>
                     ))}
-                  {entries.length > 4 && <p className="text-[11px] text-muted-foreground">Tách ra để xem cả {entries.length} câu.</p>}
+                  {entries.length > 4 && <p className="text-[12px] text-muted-foreground">Tách ra để xem cả {entries.length} câu.</p>}
                 </div>
               )}
             </>

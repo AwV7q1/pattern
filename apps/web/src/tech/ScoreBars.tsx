@@ -20,7 +20,7 @@ export function ScoreBar({ value, best, compact }: { value: number; best?: boole
           />
         ))}
       </div>
-      <span className={cn('w-5 text-right font-mono text-[11px]', best ? 'font-semibold text-success' : 'text-muted-foreground')}>
+      <span className={cn('w-5 text-right font-mono text-[12px]', best ? 'font-semibold text-success' : 'text-muted-foreground')}>
         {value}
       </span>
     </div>
