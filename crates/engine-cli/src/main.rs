@@ -155,6 +155,20 @@ fn run(path: &str, show_windows: bool, level: Option<&Level>) -> Result<(), Stri
             if !lag.is_empty() {
                 extra.push(format!("lag [{}]", lag.join(" ")));
             }
+            let scaled: Vec<String> = w
+                .nodes
+                .iter()
+                .enumerate()
+                .zip(&input.design.nodes)
+                .filter(|(_, spec)| spec.config.autoscale.is_some())
+                .map(|((i, n), _)| {
+                    let starting = if n.starting > 0 { format!("+{}", n.starting) } else { String::new() };
+                    format!("n{i}:{}{starting}", n.instances)
+                })
+                .collect();
+            if !scaled.is_empty() {
+                extra.push(format!("hpa [{}]", scaled.join(" ")));
+            }
             println!(
                 "    t={:>6.0}s ok={:>6.0}/s err={:>6.0}/s p99={:>7.1}ms retry={:>5} async={:>5}/s util=[{}] queue=[{}] {}",
                 w.t_ms / 1000.0,

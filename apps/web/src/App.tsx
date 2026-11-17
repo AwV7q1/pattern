@@ -10,6 +10,8 @@ import {
   MarkerType,
   type Connection,
   type EdgeTypes,
+  type Node,
+  type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
 import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
@@ -56,7 +58,9 @@ import { EdgeInspector, NodeInspector } from './components/Inspector';
 import { LevelPanel } from './components/LevelPanel';
 import { ResultDialog } from './components/ResultDialog';
 import { DRAG_MIME, Palette } from './components/Palette';
-import { TECH_MIME, TechLibrary } from './tech/TechLibrary';
+import { GROUP_MIME, TECH_MIME, TechLibrary } from './tech/TechLibrary';
+import { FrameNode, type FrameNodeType } from './components/FrameNode';
+import { GROUP_KINDS, childGroups, memberIds, withGroups } from './projects/groups';
 import { TechDialogs } from './tech/TechDialogs';
 import { techOf } from './tech/catalog';
 import { ProjectsHome } from './projects/ProjectsHome';
@@ -72,6 +76,8 @@ import {
   slug,
   snapshotOf,
   store,
+  newId,
+  type DesignGroup,
   type Project,
   type RunSnapshot,
   type Version,
@@ -88,7 +94,7 @@ import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
 import { ScrollArea } from './components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
 
-const nodeTypes: NodeTypes = { system: SystemNode };
+const nodeTypes: NodeTypes = { system: SystemNode, frame: FrameNode };
 const edgeTypes: EdgeTypes = { flow: FlowEdge };
 const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
@@ -133,6 +139,12 @@ export function App() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<SystemNodeType>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<FlowEdgeType>([]);
+  /** Canvas frames (cluster, namespace, node pool, zone): visual only. */
+  const [groups, setGroups] = useState<DesignGroup[]>([]);
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  const [groupSel, setGroupSel] = useState<string | null>(null);
+  const dragMembers = useRef(new Map<string, { nodes: Set<string>; groups: Set<string> }>());
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   nodesRef.current = nodes;
@@ -187,7 +199,14 @@ export function App() {
     const s = settings.current;
     const source = s.mode === 'game' ? s.level : s.preset;
     const flow = toFlow(source.design, s.mode === 'game' ? s.level.locked : ['client'], client.catalog);
-    loaded.current = { key: s.mode === 'game' ? '' : s.presetKey, design: JSON.stringify(toDesign(flow.nodes, flow.edges)) };
+    const frames = s.mode === 'game' ? [] : ((source.design as { groups?: DesignGroup[] }).groups ?? []);
+    setGroups(frames);
+    groupsRef.current = frames;
+    setGroupSel(null);
+    loaded.current = {
+      key: s.mode === 'game' ? '' : s.presetKey,
+      design: JSON.stringify(withGroups(toDesign(flow.nodes, flow.edges), frames)),
+    };
     clearEdgeGeometry();
     setNodes(flow.nodes);
     setEdges(flow.edges);
@@ -288,7 +307,7 @@ export function App() {
     if (!current) return null;
     const p: Project = {
       ...current,
-      design: { ...JSON.parse(design), groups: current.design.groups },
+      design: JSON.parse(design),
       notes: nextNotes,
       updatedAt: Date.now(),
     };
@@ -312,8 +331,8 @@ export function App() {
   }, []);
 
   const designJson = useMemo(
-    () => (project && mode === 'sandbox' ? JSON.stringify(toDesign(nodes, edges)) : null),
-    [project, mode, nodes, edges],
+    () => (project && mode === 'sandbox' ? JSON.stringify(withGroups(toDesign(nodes, edges), groups)) : null),
+    [project, mode, nodes, edges, groups],
   );
 
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
@@ -562,6 +581,18 @@ export function App() {
   const onDrop = useCallback(
     (e: DragEvent) => {
       e.preventDefault();
+      const frameKind = e.dataTransfer.getData(GROUP_MIME) as DesignGroup['kind'];
+      if (frameKind && GROUP_KINDS[frameKind]) {
+        const position = screenToFlowPosition({ x: e.clientX - 40, y: e.clientY - 20 });
+        const same = groupsRef.current.filter((g) => g.kind === frameKind).length;
+        const label = { cluster: 'prod', namespace: 'app', nodePool: 'pool', zone: 'zone-a' }[frameKind] + (same ? `-${same + 1}` : '');
+        const g: DesignGroup = { id: `g-${newId().slice(0, 8)}`, kind: frameKind, label, position, size: { width: 560, height: 340 } };
+        setGroups((gs) => [...gs, g]);
+        setGroupSel(g.id);
+        setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
+        setPanel('inspect');
+        return;
+      }
       const kind = e.dataTransfer.getData(DRAG_MIME) as NodeKind;
       if (!kind) return;
       const tech = techOf(e.dataTransfer.getData(TECH_MIME));
@@ -607,10 +638,104 @@ export function App() {
 
   const selectedNode = nodes.find((n) => n.selected);
   const selectedEdge = selectedNode ? undefined : viewEdges.find((e) => e.selected);
-  const selectionKey = selectedNode?.id ?? selectedEdge?.id;
+  const selectedGroup = selectedNode || selectedEdge ? undefined : groups.find((g) => g.id === groupSel);
+  const selectionKey = selectedNode?.id ?? selectedEdge?.id ?? selectedGroup?.id;
   useEffect(() => {
     if (selectionKey) setPanel('inspect');
   }, [selectionKey]);
+
+  // ------------------------------------------------------------------ frames
+
+  const frameNodes = useMemo<FrameNodeType[]>(
+    () =>
+      mode === 'sandbox'
+        ? groups.map((g) => {
+            const members = memberIds(g, nodes);
+            return {
+              id: g.id,
+              type: 'frame',
+              position: g.position,
+              width: g.size.width,
+              height: g.size.height,
+              style: { width: g.size.width, height: g.size.height },
+              zIndex: -1,
+              selected: groupSel === g.id,
+              data: {
+                group: g,
+                members: members.size,
+                down: members.size > 0 && nodes.filter((n) => members.has(n.id)).every((n) => n.data.down),
+              },
+            };
+          })
+        : [],
+    [mode, groups, groupSel, nodes],
+  );
+  const canvasNodes = useMemo(() => [...frameNodes, ...nodes] as Node[], [frameNodes, nodes]);
+
+  const onCanvasNodesChange = useCallback(
+    (changes: NodeChange<Node>[]) => {
+      const ids = new Set(groupsRef.current.map((g) => g.id));
+      const isFrame = (c: NodeChange<Node>) => 'id' in c && ids.has(c.id);
+      const nodeChanges = changes.filter((c) => !isFrame(c)) as NodeChange<SystemNodeType>[];
+      if (nodeChanges.length) onNodesChange(nodeChanges);
+      const frameChanges = changes.filter(isFrame);
+      if (!frameChanges.length) return;
+      let next = groupsRef.current;
+      const moves = new Map<string, { dx: number; dy: number }>();
+      for (const c of frameChanges) {
+        if (c.type === 'select') setGroupSel((s) => (c.selected ? c.id : s === c.id ? null : s));
+        if (c.type === 'remove') next = next.filter((g) => g.id !== c.id);
+        if (c.type === 'position' && c.position) {
+          const g = next.find((x) => x.id === c.id)!;
+          const dx = c.position.x - g.position.x;
+          const dy = c.position.y - g.position.y;
+          if (!dx && !dy) continue;
+          if (c.dragging) moves.set(c.id, { dx, dy });
+          next = next.map((x) => (x.id === c.id ? { ...x, position: c.position! } : x));
+        }
+        if (c.type === 'dimensions' && c.dimensions && (c.setAttributes || c.resizing)) {
+          next = next.map((x) => (x.id === c.id ? { ...x, size: { width: c.dimensions!.width, height: c.dimensions!.height } } : x));
+        }
+      }
+      // dragging a frame carries its nodes and inner frames along
+      moves.forEach(({ dx, dy }, id) => {
+        const m = dragMembers.current.get(id);
+        if (!m) return;
+        next = next.map((x) => (m.groups.has(x.id) ? { ...x, position: { x: x.position.x + dx, y: x.position.y + dy } } : x));
+        setNodes((ns) => ns.map((n) => (m.nodes.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n)));
+      });
+      groupsRef.current = next;
+      setGroups(next);
+    },
+    [onNodesChange, setNodes],
+  );
+
+  const onNodeDragStart = useCallback((_: unknown, node: Node) => {
+    const g = groupsRef.current.find((x) => x.id === node.id);
+    if (!g) return;
+    dragMembers.current.set(g.id, {
+      nodes: memberIds(g, nodesRef.current),
+      groups: new Set(childGroups(g, groupsRef.current).map((x) => x.id)),
+    });
+  }, []);
+  const onNodeDragStop = useCallback((_: unknown, node: Node) => {
+    dragMembers.current.delete(node.id);
+  }, []);
+
+  const updateGroup = (id: string, patch: Partial<DesignGroup>) =>
+    setGroups((gs) => gs.map((g) => (g.id === id ? { ...g, ...patch } : g)));
+  const removeGroup = (id: string) => {
+    setGroups((gs) => gs.filter((g) => g.id !== id));
+    setGroupSel(null);
+  };
+  /** Chaos: lose every node in a frame (a node pool or zone going away). */
+  const setGroupDown = (g: DesignGroup, down: boolean) => {
+    const members = memberIds(g, nodesRef.current);
+    nodesRef.current
+      .filter((n) => members.has(n.id) && n.data.kind !== 'client')
+      .forEach((n) => client.setNodeDown(n.data.index, down));
+    setNodes((ns) => ns.map((n) => (members.has(n.id) && n.data.kind !== 'client' ? { ...n, data: { ...n.data, down } } : n)));
+  };
 
   const updateNode = (id: string, config: NodeConfig, label: string) =>
     commit(
@@ -667,15 +792,21 @@ export function App() {
   const exportDesign = () => {
     const current = projectRef.current;
     if (current) {
-      download(`${slug(current.name)}.json`, exportJson({ ...current, design: { ...toDesign(nodes, edges), groups: current.design.groups }, notes }));
+      download(`${slug(current.name)}.json`, exportJson({ ...current, design: withGroups(toDesign(nodes, edges), groups), notes }));
       return;
     }
     const data = { title: preset.title, description: preset.description, design: toDesign(nodes, edges), scenario };
     download('design.json', JSON.stringify(data, null, 2));
   };
 
+  // autoscaled nodes cost what is running right now
   const cost = nodes.reduce(
-    (sum, n) => sum + (n.data.kind === 'client' ? 0 : n.data.config.costPerHour * n.data.config.instances),
+    (sum, n) =>
+      sum +
+      (n.data.kind === 'client'
+        ? 0
+        : n.data.config.costPerHour *
+          (n.data.config.autoscale ? (n.data.metrics?.instances ?? 0) + (n.data.metrics?.starting ?? 0) || n.data.config.instances : n.data.config.instances)),
     0,
   );
   const simSeconds = (windows.at(-1)?.tMs ?? 0) / 1000;
@@ -866,14 +997,19 @@ export function App() {
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           <ReactFlow
-            nodes={nodes}
+            nodes={canvasNodes}
             edges={viewEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
+            onNodesChange={onCanvasNodesChange}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDragStop={onNodeDragStop}
+            elevateNodesOnSelect={false}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            onDelete={onDelete}
+            onDelete={({ nodes: dn, edges: de }) =>
+              onDelete({ nodes: dn.filter((n) => n.type === 'system') as SystemNodeType[], edges: de as FlowEdgeType[] })
+            }
             isValidConnection={isValidConnection}
             deleteKeyCode={['Backspace', 'Delete']}
             fitView
@@ -992,7 +1128,14 @@ export function App() {
                       </ToggleGroup>
                     </div>
                   )}
-                  <MetricsPanel windows={windows} scenario={scenario} cost={cost} />
+                  <MetricsPanel
+                    windows={windows}
+                    scenario={scenario}
+                    cost={cost}
+                    replicas={nodes
+                      .filter((n) => n.data.config.autoscale)
+                      .map((n) => ({ index: n.data.index, label: n.data.label }))}
+                  />
                 </TabsContent>
                 <TabsContent value="trace">
                   <TracePanel
@@ -1067,6 +1210,72 @@ export function App() {
                       onChange={(p) => updateEdge(selectedEdge.id, p)}
                       onDelete={() => onDelete({ nodes: [], edges: [selectedEdge] })}
                     />
+                  ) : selectedGroup ? (
+                    <div className="grid gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="size-3 rounded-sm" style={{ background: GROUP_KINDS[selectedGroup.kind].color }} />
+                        <span className="font-semibold">{GROUP_KINDS[selectedGroup.kind].name}</span>
+                        <span className="text-xs text-muted-foreground">{GROUP_KINDS[selectedGroup.kind].hint}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs text-muted-foreground">Tên</Label>
+                          <Input
+                            className="h-8"
+                            value={selectedGroup.label}
+                            onChange={(e) => updateGroup(selectedGroup.id, { label: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid gap-1.5">
+                          <Label className="text-xs text-muted-foreground">Loại</Label>
+                          <Select
+                            value={selectedGroup.kind}
+                            onValueChange={(v) => updateGroup(selectedGroup.id, { kind: v as DesignGroup['kind'] })}
+                          >
+                            <SelectTrigger size="sm" className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Object.keys(GROUP_KINDS) as DesignGroup['kind'][]).map((k) => (
+                                <SelectItem key={k} value={k}>
+                                  {GROUP_KINDS[k].name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="grid gap-1">
+                        <Label className="text-xs text-muted-foreground">Bên trong khung</Label>
+                        <p className="text-sm">
+                          {nodes
+                            .filter((n) => memberIds(selectedGroup, [n]).size)
+                            .map((n) => n.data.label)
+                            .join(', ') || 'Chưa có node. Kéo node vào trong khung.'}
+                        </p>
+                      </div>
+                      {(() => {
+                        const members = memberIds(selectedGroup, nodes);
+                        const down = members.size > 0 && nodes.filter((n) => members.has(n.id)).every((n) => n.data.down);
+                        return (
+                          <Button
+                            variant={down ? 'default' : 'outline'}
+                            size="sm"
+                            disabled={!members.size}
+                            onClick={() => setGroupDown(selectedGroup, !down)}
+                          >
+                            {down ? 'Khôi phục cả khung' : `Giả lập mất ${GROUP_KINDS[selectedGroup.kind].name.toLowerCase()} (tắt mọi node bên trong)`}
+                          </Button>
+                        );
+                      })()}
+                      <p className="text-[11px] leading-relaxed text-muted-foreground">
+                        Khung chỉ để tổ chức và sinh manifest Kubernetes trong prompt, không ảnh hưởng mô phỏng. Kéo khung sẽ
+                        kéo theo mọi node bên trong.
+                      </p>
+                      <Button variant="ghost" size="sm" className="justify-self-start text-destructive" onClick={() => removeGroup(selectedGroup.id)}>
+                        Xoá khung (giữ node)
+                      </Button>
+                    </div>
                   ) : (
                     <p className="text-sm text-muted-foreground">
                       Chọn một node hoặc một edge trên canvas để chỉnh cấu hình, chính sách retry/timeout/circuit
@@ -1090,7 +1299,7 @@ export function App() {
         onOpenChange={setPromptOpen}
         project={
           project && promptOpen
-            ? { ...project, design: { ...toDesign(nodes, edges), groups: project.design.groups }, notes }
+            ? { ...project, design: withGroups(toDesign(nodes, edges), groups), notes }
             : null
         }
       />

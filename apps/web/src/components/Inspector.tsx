@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronRight, GitCompareArrows, Info, PowerOff, Power, Trash2 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_BREAKER, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
+import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -47,7 +47,7 @@ function NumberField({
   );
 }
 
-type NumKey = { [K in keyof NodeConfig]: NodeConfig[K] extends number ? K : never }[keyof NodeConfig];
+type NumKey = { [K in keyof NodeConfig]-?: NodeConfig[K] extends number ? K : never }[keyof NodeConfig];
 type Field = { key: NumKey; label: string; step: number; kinds?: string[]; hint?: string };
 
 const ROUTING_HELP: Record<Routing, string> = {
@@ -319,6 +319,50 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
           <div className="grid grid-cols-2 gap-3">
             {(draft.model === 'cpu' ? CPU_FIELDS : THREAD_FIELDS).map(field)}
             {COMMON_FIELDS.filter(fits).map(field)}
+          </div>
+          <div className="grid gap-2 rounded-md border p-2.5">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Autoscale (Kubernetes HPA)</Label>
+              <Switch
+                checked={!!draft.autoscale}
+                onCheckedChange={(on) =>
+                  setDraft({
+                    ...draft,
+                    autoscale: on ? { ...DEFAULT_AUTOSCALE, min: Math.min(DEFAULT_AUTOSCALE.min, draft.instances), max: Math.max(DEFAULT_AUTOSCALE.max, draft.instances) } : null,
+                  })
+                }
+              />
+            </div>
+            {draft.autoscale ? (
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      ['min', 'Min replica', 1],
+                      ['max', 'Max replica', 1],
+                      ['targetUtilization', 'Mục tiêu (0-1)', 0.05],
+                      ['evalEveryMs', 'Xét mỗi (ms)', 1000],
+                      ['podStartMs', 'Pod khởi động (ms)', 1000],
+                      ['stabilizationMs', 'Ổn định giảm (ms)', 5000],
+                    ] as [keyof Autoscale, string, number][]
+                  ).map(([k, l, step]) => (
+                    <NumberField
+                      key={k}
+                      label={l}
+                      step={step}
+                      value={draft.autoscale![k]}
+                      onChange={(v) => setDraft({ ...draft, autoscale: { ...draft.autoscale!, [k]: v } })}
+                    />
+                  ))}
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉.
+                  Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.
+                </p>
+              </>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">Số instance cố định. Bật để thấy độ trễ của autoscale khi có spike.</p>
+            )}
           </div>
           {draft.instances > 1 && (
             <div className="grid gap-1.5">

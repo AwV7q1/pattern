@@ -24,9 +24,13 @@ interface Props {
   windows: WindowMetrics[];
   scenario: Scenario;
   cost: number;
+  /** Autoscaled nodes: engine index and label, for the replica chart. */
+  replicas?: { index: number; label: string }[];
 }
 
-export function MetricsPanel({ windows, scenario, cost }: Props) {
+const REPLICA_COLORS = ['#a78bfa', '#34d399', '#f472b6', '#60a5fa', '#fbbf24'];
+
+export function MetricsPanel({ windows, scenario, cost, replicas = [] }: Props) {
   const last = windows.at(-1);
   const count = last ? last.okCount + last.errorCount : 0;
   const errRate = last && count ? last.errorCount / count : 0;
@@ -84,6 +88,17 @@ export function MetricsPanel({ windows, scenario, cost }: Props) {
             { label: 'p99', color: '#fbbf24', values: windows.map((w) => w.p99Ms) },
           ]}
         />
+        {replicas.length > 0 && (
+          <Chart
+            title="Replica (HPA)"
+            unit=""
+            series={replicas.slice(0, 5).map((r, i) => ({
+              label: r.label,
+              color: REPLICA_COLORS[i],
+              values: windows.map((w) => w.nodes[r.index]?.instances ?? 0),
+            }))}
+          />
+        )}
         {windows.some((w) => w.asyncOk > 0) && (
           <Chart
             title="Xử lý bất đồng bộ"

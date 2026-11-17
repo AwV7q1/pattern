@@ -33,7 +33,27 @@ export interface NodeConfig {
   errorRate: number;
   hitRate: number;
   costPerHour: number;
+  /** Kubernetes HPA-like autoscaling; `instances` is the start count. */
+  autoscale?: Autoscale | null;
 }
+
+export interface Autoscale {
+  min: number;
+  max: number;
+  targetUtilization: number;
+  evalEveryMs: number;
+  stabilizationMs: number;
+  podStartMs: number;
+}
+
+export const DEFAULT_AUTOSCALE: Autoscale = {
+  min: 2,
+  max: 10,
+  targetUtilization: 0.6,
+  evalEveryMs: 15000,
+  stabilizationMs: 60000,
+  podStartMs: 10000,
+};
 
 export interface CircuitBreaker {
   failureThreshold: number;
@@ -86,6 +106,8 @@ export interface DesignNode {
   config?: Partial<NodeConfig>;
   /** Real-world technology (apps/web/src/tech/catalog.ts); the engine ignores it. */
   tech?: string;
+  /** Canvas group (namespace, node pool…) it sits in; the engine ignores it. */
+  group?: string;
 }
 
 export interface DesignEdge extends Partial<EdgePolicy> {
@@ -144,6 +166,10 @@ export interface NodeWindow {
   arrivals: number;
   rejected: number;
   down: boolean;
+  /** Instances receiving traffic (changes with autoscale). */
+  instances: number;
+  /** Autoscaled instances still starting. */
+  starting: number;
 }
 
 export interface EdgeWindow {

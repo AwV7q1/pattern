@@ -89,17 +89,29 @@ function mermaid(nodes: Node[], edges: DesignEdge[], groups: Project['design']['
   };
   const lines = ['flowchart LR'];
   const inGroup = new Set<string>();
-  const groupOf = (n: Node) => (n as DesignNode & { group?: string }).group;
-  for (const g of groups ?? []) {
-    const members = nodes.filter((n) => groupOf(n) === g.id);
-    if (!members.length) continue;
-    lines.push(`  subgraph ${id(g.id)}["${g.label.replace(/"/g, "'")}"]`);
-    members.forEach((n) => {
-      lines.push(`    ${shape(n)}`);
-      inGroup.add(n.id);
-    });
-    lines.push('  end');
-  }
+  const all = groups ?? [];
+  const area = (g: NonNullable<typeof groups>[number]) => g.size.width * g.size.height;
+  const contains = (o: NonNullable<typeof groups>[number], g: NonNullable<typeof groups>[number]) =>
+    o.id !== g.id &&
+    g.position.x >= o.position.x &&
+    g.position.y >= o.position.y &&
+    g.position.x + g.size.width <= o.position.x + o.size.width &&
+    g.position.y + g.size.height <= o.position.y + o.size.height;
+  // parent = smallest frame that fully contains the frame
+  const parentOf = (g: NonNullable<typeof groups>[number]) => all.filter((o) => contains(o, g)).sort((a, b) => area(a) - area(b))[0]?.id;
+  const emit = (g: NonNullable<typeof groups>[number], depth: number) => {
+    const pad = '  '.repeat(depth);
+    lines.push(`${pad}subgraph ${id(g.id)}["${g.label.replace(/"/g, "'")}"]`);
+    nodes
+      .filter((n) => n.group === g.id)
+      .forEach((n) => {
+        lines.push(`${pad}  ${shape(n)}`);
+        inGroup.add(n.id);
+      });
+    all.filter((c) => parentOf(c) === g.id).forEach((c) => emit(c, depth + 1));
+    lines.push(`${pad}end`);
+  };
+  all.filter((g) => !parentOf(g)).forEach((g) => emit(g, 1));
   nodes.filter((n) => !inGroup.has(n.id)).forEach((n) => lines.push(`  ${shape(n)}`));
   const byId = new Map(nodes.map((n) => [n.id, n]));
   for (const e of edges) {
@@ -157,8 +169,12 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
     if (n.kind === 'queue') keys.push(`consumer concurrency/prefetch tổng = ${n.cfg.concurrency}`, `độ sâu tối đa ${n.cfg.queueSize.toLocaleString('en')}`);
     if (n.kind === 'cache') keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
     if (t) keys.push(...t.deploy.keySettings.slice(0, 3));
-    const k8s = (n as DesignNode & { k8s?: { hpa?: { min: number; max: number; targetUtilization: number } } }).k8s;
-    if (k8s?.hpa) keys.push(`HPA ${k8s.hpa.min}–${k8s.hpa.max} replica, CPU mục tiêu ${pct(k8s.hpa.targetUtilization)}`);
+    const hpa = n.cfg.autoscale;
+    if (hpa) {
+      keys.push(
+        `HPA ${hpa.min}–${hpa.max} replica, ${n.cfg.model === 'cpu' ? 'CPU' : 'utilization'} mục tiêu ${pct(hpa.targetUtilization)}, pod ready trong ≤ ${ms(hpa.podStartMs)}, scale-down stabilization ${ms(hpa.stabilizationMs)}`,
+      );
+    }
     out.push(
       `| ${n.label} | ${t ? `${t.name}${t.deploy.image ? ` (\`${t.deploy.image}\`)` : ''}` : KIND_META[n.kind].name} | ${role(n, outs(n.id))} | ${scale(n)} | ${keys.join('; ') || '—'} |`,
     );
@@ -239,7 +255,7 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
       '- **Kubernetes** (thư mục `k8s/`, dùng Kustomize): Namespace; Deployment cho service stateless và StatefulSet (hoặc operator) cho dữ liệu; Service; Ingress/Gateway; resources requests/limits khớp cột Quy mô; readiness/liveness probe; HPA và PodDisruptionBudget cho service có nhiều replica.',
     );
     for (const g of d.groups ?? []) {
-      const members = nodes.filter((n) => (n as DesignNode & { group?: string }).group === g.id).map((n) => n.label);
+      const members = nodes.filter((n) => n.group === g.id).map((n) => n.label);
       if (members.length) out.push(`  - ${g.kind === 'namespace' ? 'Namespace' : g.kind === 'nodePool' ? 'Node pool' : g.kind === 'zone' ? 'Zone' : 'Cluster'} **${g.label}**: ${members.join(', ')}`);
     }
   }

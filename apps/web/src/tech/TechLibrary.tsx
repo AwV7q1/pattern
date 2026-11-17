@@ -10,8 +10,11 @@ import { TECHS, TECH_BY_ID } from './catalog';
 import { TechLogo } from './TechLogo';
 import { CATEGORIES, type Tech } from './types';
 import { techUi, useTechUi } from './ui-store';
+import { GROUP_KINDS } from '@/projects/groups';
+import type { DesignGroup } from '@/projects/store';
 
 export const TECH_MIME = 'application/x-pattern-tech';
+export const GROUP_MIME = 'application/x-pattern-group';
 
 const GENERIC: NodeKind[] = ['loadBalancer', 'service', 'cache', 'database', 'queue'];
 
@@ -101,6 +104,25 @@ export function TechLibrary() {
                 {g.name}
                 <span className="ml-auto font-mono text-[10px] normal-case">{g.items.length}</span>
               </button>
+              {expanded && g.id === 'k8s' && !q && (
+                <div className="mb-1 grid grid-cols-2 gap-1 px-1">
+                  {(Object.keys(GROUP_KINDS) as DesignGroup['kind'][]).map((k) => (
+                    <div
+                      key={k}
+                      draggable
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(GROUP_MIME, k);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      title={`${GROUP_KINDS[k].hint}. Kéo vào canvas, rồi kéo node vào trong khung.`}
+                      className="cursor-grab rounded-md border-2 border-dashed px-2 py-1 text-[11px] select-none hover:bg-accent"
+                      style={{ borderColor: `${GROUP_KINDS[k].color}88`, color: GROUP_KINDS[k].color }}
+                    >
+                      {GROUP_KINDS[k].name}
+                    </div>
+                  ))}
+                </div>
+              )}
               {expanded && g.items.map((t) => <TechRow key={t.id} tech={t} inCompare={ui.compare.includes(t.id)} />)}
             </div>
           );

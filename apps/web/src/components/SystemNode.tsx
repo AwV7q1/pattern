@@ -18,6 +18,7 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
   const isClient = data.kind === 'client';
   const c = data.config;
   const rejected = m?.rejected ?? 0;
+  const replicas = c.autoscale ? (m?.instances ?? c.instances) : c.instances;
   const hot = !isClient && (util > 0.85 || rejected > 0);
   // cpu nodes: the bar shows CPU; "q" counts both backlog and CPU queue
 
@@ -64,8 +65,8 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
         <>
           <div className="mt-1 truncate text-[11px] text-muted-foreground">
             {c.model === 'cpu'
-              ? `${c.instances}×${c.cpuLanes} CPU · ${n2(c.cpuP50Ms)}ms CPU${c.ioP50Ms ? ` + ${n2(c.ioP50Ms)}ms I/O` : ''}`
-              : `${c.instances}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
+              ? `${replicas}×${c.cpuLanes} CPU · ${n2(c.cpuP50Ms)}ms CPU${c.ioP50Ms ? ` + ${n2(c.ioP50Ms)}ms I/O` : ''}`
+              : `${replicas}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
             {c.callsPerRequest > 1 && (data.kind === 'service' || data.kind === 'database') && ` · ${c.callsPerRequest} call`}
             {data.kind === 'cache' && ` · hit ${Math.round(c.hitRate * 100)}%`}
             {c.routing === 'sequence' && data.kind !== 'loadBalancer' && ' · ①② tuần tự'}
@@ -85,6 +86,12 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
               <span className={cn((m?.lagMs ?? 0) > 20 && 'text-warning')}>lag {fmt.ms(m!.lagMs)}</span>
             )}
             {rejected > 0 && <span className="text-destructive">drop {fmt.rps(rejected)}/s</span>}
+            {c.autoscale && (
+              <span className="ml-auto text-primary" title={`HPA ${c.autoscale.min}–${c.autoscale.max}, mục tiêu ${Math.round(c.autoscale.targetUtilization * 100)}%`}>
+                HPA {replicas}
+                {(m?.starting ?? 0) > 0 && `+${m!.starting}`}
+              </span>
+            )}
           </div>
         </>
       )}

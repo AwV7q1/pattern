@@ -1,0 +1,56 @@
+{
+  "title": "Kubernetes: HPA đuổi theo spike",
+  "description": "Cụm K8s với namespace app (Ingress-NGINX → API NestJS có HPA 2–12 pod) và namespace data (Redis, PostgreSQL). Traffic 400 rps, giây 20–80 spike lên 1200 rps (gấp 3). HPA xét mỗi 15s, pod mới cần 10s để ready nên khoảng 25–30s đầu spike vẫn bị lỗi/drop. Thử: tăng min replica, giảm target, rút ngắn podStartMs, hoặc đặt queue phía trước. Xem biểu đồ Replica ở tab Số liệu.",
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Users", "position": { "x": 0, "y": 300 } },
+      {
+        "id": "ingress", "kind": "loadBalancer", "label": "Ingress-NGINX", "tech": "k8s-ingress-nginx",
+        "position": { "x": 280, "y": 300 },
+        "config": { "instances": 2, "concurrency": 15000, "latencyP50Ms": 0.3, "latencyP99Ms": 1.5, "costPerHour": 0.03 }
+      },
+      {
+        "id": "api", "kind": "service", "label": "API (Deployment)", "tech": "nestjs",
+        "position": { "x": 580, "y": 300 },
+        "config": {
+          "instances": 2, "routing": "sequence", "model": "cpu", "cpuLanes": 1, "maxInFlight": 1000, "queueSize": 200,
+          "cpuP50Ms": 2, "cpuP99Ms": 8, "wakeupMs": 0.05, "gcPauseMs": 15, "gcEveryRequests": 5000, "costPerHour": 0.05,
+          "autoscale": { "min": 2, "max": 12, "targetUtilization": 0.6, "evalEveryMs": 15000, "stabilizationMs": 60000, "podStartMs": 10000 }
+        }
+      },
+      {
+        "id": "redis", "kind": "cache", "label": "Redis", "tech": "redis",
+        "position": { "x": 980, "y": 160 },
+        "config": { "concurrency": 2000, "queueSize": 1000, "latencyP50Ms": 0.3, "latencyP99Ms": 1.5, "hitRate": 0.8, "costPerHour": 0.15 }
+      },
+      {
+        "id": "pg", "kind": "database", "label": "PostgreSQL (StatefulSet)", "tech": "postgresql",
+        "position": { "x": 1260, "y": 420 },
+        "config": { "concurrency": 60, "queueSize": 400, "latencyP50Ms": 3, "latencyP99Ms": 15, "costPerHour": 0.5 }
+      }
+    ],
+    "edges": [
+      { "source": "client", "target": "ingress", "latencyMs": 10 },
+      { "source": "ingress", "target": "api", "latencyMs": 0.5 },
+      { "source": "api", "target": "redis", "latencyMs": 0.5, "timeoutMs": 100, "order": 1 },
+      { "source": "redis", "target": "pg", "latencyMs": 0.5, "timeoutMs": 500, "poolSize": 20, "poolTimeoutMs": 2000 }
+    ],
+    "groups": [
+      { "id": "g-cluster", "kind": "cluster", "label": "prod", "position": { "x": 220, "y": 40 }, "size": { "width": 1320, "height": 560 } },
+      { "id": "g-app", "kind": "namespace", "label": "app", "position": { "x": 250, "y": 100 }, "size": { "width": 600, "height": 470 } },
+      { "id": "g-data", "kind": "namespace", "label": "data", "position": { "x": 910, "y": 100 }, "size": { "width": 600, "height": 470 } }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 180000,
+    "timeoutMs": 2000,
+    "traffic": [
+      { "atMs": 0, "rps": 400 },
+      { "atMs": 20000, "rps": 1200 },
+      { "atMs": 80000, "rps": 400 }
+    ],
+    "slo": { "p99Ms": 300, "errorRate": 0.01 },
+    "windowMs": 1000
+  }
+}
