@@ -5,3 +5,5 @@ pkg/
 *.log
 .DS_Store
 *.tsbuildinfo
+pkg-node
+apps/server/data

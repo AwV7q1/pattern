@@ -17,7 +17,7 @@
         "kind": "loadBalancer",
         "label": "Load Balancer",
         "position": {
-          "x": 230,
+          "x": 299,
           "y": 160
         },
         "config": {
@@ -34,7 +34,7 @@
         "kind": "service",
         "label": "API",
         "position": {
-          "x": 470,
+          "x": 611,
           "y": 160
         },
         "config": {
@@ -51,7 +51,7 @@
         "kind": "loadBalancer",
         "label": "DB Router",
         "position": {
-          "x": 710,
+          "x": 923,
           "y": 160
         },
         "config": {
@@ -67,7 +67,7 @@
         "kind": "database",
         "label": "Replica 1",
         "position": {
-          "x": 950,
+          "x": 1235,
           "y": 60
         },
         "config": {
@@ -84,7 +84,7 @@
         "kind": "database",
         "label": "Replica 2",
         "position": {
-          "x": 950,
+          "x": 1235,
           "y": 260
         },
         "config": {

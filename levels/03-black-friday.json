@@ -1,0 +1,93 @@
+{
+  "title": "3. Black Friday",
+  "brief": "API nhận đơn hàng. Giây 15 traffic vọt lên 4000 rps trong 10 giây, gấp đôi sức ghi của database. Đơn hàng không cần xử lý xong ngay, nhưng khách phải nhận phản hồi nhanh. Ngân sách $1.20/giờ.",
+  "hint": "Đơn hàng có thể xử lý bất đồng bộ: nhận đơn, xếp hàng, xử lý dần với tốc độ database chịu được.",
+  "palette": [
+    "loadBalancer",
+    "service",
+    "queue"
+  ],
+  "locked": [
+    "client",
+    "db"
+  ],
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Order API",
+        "position": {
+          "x": 380,
+          "y": 160
+        },
+        "config": {
+          "instances": 2
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 800,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5,
+          "instances": 1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "db"
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1000
+      },
+      {
+        "atMs": 15000,
+        "rps": 4000
+      },
+      {
+        "atMs": 25000,
+        "rps": 1000
+      }
+    ],
+    "slo": {
+      "p99Ms": 300,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000,
+    "events": [],
+    "budgetPerHour": 1.2
+  },
+  "id": "03-black-friday"
+}

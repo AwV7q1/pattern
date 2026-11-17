@@ -1,66 +1,67 @@
-import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import type { NodeConfig, NodeKind, NodeWindow } from '../types';
+import { memo } from 'react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Lock, PowerOff } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { KIND_META, fmt, utilColor } from '@/lib/meta';
+import type { SystemNodeType } from '@/model/flow';
 
-export type SystemNodeData = {
-  index: number;
-  label: string;
-  kind: NodeKind;
-  config: NodeConfig;
-  metrics?: NodeWindow;
-  down: boolean;
-};
-export type SystemNodeType = Node<SystemNodeData, 'system'>;
-
-export const KIND_META: Record<NodeKind, { tag: string; color: string; name: string }> = {
-  client: { tag: 'USR', color: '#a78bfa', name: 'Client' },
-  loadBalancer: { tag: 'LB', color: '#60a5fa', name: 'Load balancer' },
-  service: { tag: 'SVC', color: '#34d399', name: 'Service' },
-  cache: { tag: 'CACHE', color: '#f472b6', name: 'Cache' },
-  database: { tag: 'DB', color: '#fbbf24', name: 'Database' },
-  queue: { tag: 'QUEUE', color: '#22d3ee', name: 'Queue' },
-};
-
-function utilColor(u: number) {
-  if (u < 0.6) return '#34d399';
-  if (u < 0.85) return '#fbbf24';
-  return '#f87171';
-}
-
-export function SystemNode({ data, selected }: NodeProps<SystemNodeType>) {
+export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNodeType>) {
   const meta = KIND_META[data.kind];
+  const Icon = meta.icon;
   const m = data.metrics;
   const util = m?.utilization ?? 0;
   const isClient = data.kind === 'client';
   const c = data.config;
-  const hot = !isClient && (util > 0.85 || (m?.rejected ?? 0) > 0);
+  const rejected = m?.rejected ?? 0;
+  const hot = !isClient && (util > 0.85 || rejected > 0);
 
   return (
-    <div className={`sys-node${selected ? ' selected' : ''}${data.down ? ' down' : ''}${hot ? ' hot' : ''}`}>
+    <div
+      className={cn(
+        'sys-node relative w-[200px] rounded-lg border bg-card/95 px-3 py-2 text-card-foreground shadow-md backdrop-blur transition-[border-color,box-shadow]',
+        hot && 'border-destructive/80 shadow-[0_0_24px_-4px] shadow-destructive/60',
+        data.down && 'border-dashed opacity-60',
+      )}
+    >
       {!isClient && <Handle type="target" position={Position.Left} />}
-      <div className="sys-node-head">
-        <span className="sys-tag" style={{ background: meta.color }}>{meta.tag}</span>
-        <span className="sys-label">{data.label}</span>
+      <div className="flex items-center gap-2">
+        <span
+          className="flex size-6 shrink-0 items-center justify-center rounded-md"
+          style={{ background: `${meta.color}26`, color: meta.color }}
+        >
+          <Icon className="size-3.5" />
+        </span>
+        <span className="truncate text-sm font-semibold">{data.label}</span>
+        {data.locked && <Lock className="ml-auto size-3 shrink-0 text-muted-foreground" />}
       </div>
       {isClient ? (
-        <div className="sys-sub">traffic source</div>
+        <div className="mt-1 text-[11px] text-muted-foreground">nguồn traffic</div>
       ) : (
         <>
-          <div className="sys-sub">
-            {c.instances}×{c.concurrency} slots · p50 {c.latencyP50Ms}ms
+          <div className="mt-1 truncate text-[11px] text-muted-foreground">
+            {c.instances}×{c.concurrency} slot · p50 {c.latencyP50Ms}ms
             {data.kind === 'cache' && ` · hit ${Math.round(c.hitRate * 100)}%`}
           </div>
-          <div className="sys-bar">
-            <div style={{ width: `${Math.round(util * 100)}%`, background: utilColor(util) }} />
+          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full transition-[width,background-color] duration-300"
+              style={{ width: `${Math.round(util * 100)}%`, background: utilColor(util) }}
+            />
           </div>
-          <div className="sys-stats">
+          <div className="mt-1 flex gap-2 font-mono text-[10px] text-muted-foreground">
             <span>{Math.round(util * 100)}%</span>
-            <span>queue {m?.queue ?? 0}</span>
-            {(m?.rejected ?? 0) > 0 && <span className="bad">rejected {m!.rejected}/s</span>}
+            <span>{fmt.rps(m?.arrivals ?? 0)}/s</span>
+            <span>q {m?.queue ?? 0}</span>
+            {rejected > 0 && <span className="text-destructive">drop {fmt.rps(rejected)}/s</span>}
           </div>
         </>
       )}
-      {data.down && <div className="sys-down">DOWN</div>}
+      {data.down && (
+        <span className="absolute -top-2.5 right-2 flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          <PowerOff className="size-2.5" /> DOWN
+        </span>
+      )}
       <Handle type="source" position={Position.Right} />
     </div>
   );
-}
+});

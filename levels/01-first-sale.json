@@ -1,0 +1,93 @@
+{
+  "title": "1. Đợt sale đầu tiên",
+  "brief": "Shop đang chạy ổn ở 1500 rps. Marketing vừa báo giây 20 sẽ có flash sale, traffic lên 3500 rps trong 20 giây. Database là con PostgreSQL duy nhất, không được đụng vào. Giữ hệ thống sống với ngân sách $1.00/giờ.",
+  "hint": "Phần lớn request là đọc sản phẩm, lặp đi lặp lại. Thử đặt một lớp cache trước database.",
+  "palette": [
+    "loadBalancer",
+    "service",
+    "cache"
+  ],
+  "locked": [
+    "client",
+    "db"
+  ],
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 380,
+          "y": 160
+        },
+        "config": {
+          "instances": 1
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 800,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5,
+          "instances": 1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "db"
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      },
+      {
+        "atMs": 20000,
+        "rps": 3500
+      },
+      {
+        "atMs": 40000,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000,
+    "events": [],
+    "budgetPerHour": 1.0
+  },
+  "id": "01-first-sale"
+}

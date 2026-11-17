@@ -1,0 +1,101 @@
+{
+  "title": "4. Mất một zone",
+  "brief": "Toàn bộ API chạy ở zone A. Giây 20, zone A sập trong 20 giây. Thêm dự phòng sao cho người dùng gần như không nhận ra, ngân sách $1.40/giờ.",
+  "hint": "Một zone thứ hai sau load balancer là chưa đủ: load balancer vẫn gửi một nửa traffic vào zone chết. Circuit breaker hoặc retry trên edge LB → API giúp nó né node hỏng.",
+  "palette": [
+    "loadBalancer",
+    "service"
+  ],
+  "locked": [
+    "client",
+    "api-a",
+    "db"
+  ],
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "api-a",
+        "kind": "service",
+        "label": "API zone A",
+        "position": {
+          "x": 380,
+          "y": 80
+        },
+        "config": {
+          "concurrency": 80,
+          "queueSize": 50,
+          "latencyP50Ms": 15,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.1,
+          "instances": 2
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 800,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5,
+          "instances": 2
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api-a"
+      },
+      {
+        "source": "api-a",
+        "target": "db"
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000,
+    "events": [
+      {
+        "atMs": 20000,
+        "node": "api-a",
+        "action": "down"
+      },
+      {
+        "atMs": 40000,
+        "node": "api-a",
+        "action": "up"
+      }
+    ],
+    "budgetPerHour": 1.4
+  },
+  "id": "04-zone-outage"
+}

@@ -4,11 +4,14 @@ import { ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './styles.css';
 import { App } from './App';
+import { TooltipProvider } from './components/ui/tooltip';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ReactFlowProvider>
-      <App />
+      <TooltipProvider delayDuration={300}>
+        <App />
+      </TooltipProvider>
     </ReactFlowProvider>
   </StrictMode>,
 );

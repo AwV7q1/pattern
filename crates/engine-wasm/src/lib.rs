@@ -62,3 +62,38 @@ pub fn run_headless(input_json: &str) -> Result<String, JsError> {
     let summary = pattern_engine::run_headless(input_json).map_err(|e| JsError::new(&e))?;
     serde_json::to_string(&summary).map_err(|e| JsError::new(&e.to_string()))
 }
+
+/// Score a player design against a level (both JSON). Returns the summary
+/// JSON, including `stars`. The server runs the very same function.
+#[wasm_bindgen]
+pub fn play_level(level_json: &str, design_json: &str) -> Result<String, JsError> {
+    let summary =
+        pattern_engine::play_level(level_json, design_json).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&summary).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// The sanitized `{ design, scenario }` a level would simulate for this
+/// design (catalog numbers applied), ready for `new Sim(...)`.
+#[wasm_bindgen]
+pub fn level_input(level_json: &str, design_json: &str) -> Result<String, JsError> {
+    let input =
+        pattern_engine::level_input(level_json, design_json).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&input).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Default per-instance catalog, keyed by node kind.
+#[wasm_bindgen]
+pub fn catalog_json() -> String {
+    use pattern_engine::NodeKind::*;
+    let map: std::collections::BTreeMap<&str, _> = [
+        ("loadBalancer", LoadBalancer),
+        ("service", Service),
+        ("cache", Cache),
+        ("database", Database),
+        ("queue", Queue),
+    ]
+    .into_iter()
+    .map(|(k, kind)| (k, pattern_engine::default_catalog(kind)))
+    .collect();
+    serde_json::to_string(&map).unwrap_or_else(|_| "{}".into())
+}

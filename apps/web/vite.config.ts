@@ -1,10 +1,27 @@
+import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   worker: { format: 'es' },
-  // the wasm package and the example scenarios live outside apps/web
-  server: { fs: { allow: ['../..'] } },
+  server: {
+    // the wasm package, examples and levels live outside apps/web
+    fs: { allow: ['../..'] },
+    // NestJS (apps/server) for level submissions and leaderboards
+    proxy: { '/api': 'http://localhost:3000' },
+  },
   optimizeDeps: { exclude: ['pattern-engine-wasm'] },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          flow: ['@xyflow/react'],
+          ui: ['radix-ui', 'lucide-react'],
+        },
+      },
+    },
+  },
 });

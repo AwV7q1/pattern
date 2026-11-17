@@ -1,0 +1,109 @@
+{
+  "nodes": [
+    {
+      "id": "client",
+      "kind": "client",
+      "label": "Users",
+      "position": {
+        "x": 0,
+        "y": 160
+      }
+    },
+    {
+      "id": "lb",
+      "kind": "loadBalancer",
+      "label": "Load Balancer",
+      "position": {
+        "x": 180,
+        "y": 160
+      },
+      "config": {
+        "instances": 1
+      }
+    },
+    {
+      "id": "api-a",
+      "kind": "service",
+      "label": "API zone A",
+      "position": {
+        "x": 380,
+        "y": 80
+      },
+      "config": {
+        "concurrency": 80,
+        "queueSize": 50,
+        "latencyP50Ms": 15,
+        "latencyP99Ms": 50,
+        "costPerHour": 0.1,
+        "instances": 2
+      }
+    },
+    {
+      "id": "api-b",
+      "kind": "service",
+      "label": "API zone B",
+      "position": {
+        "x": 380,
+        "y": 240
+      },
+      "config": {
+        "instances": 1
+      }
+    },
+    {
+      "id": "db",
+      "kind": "database",
+      "label": "PostgreSQL",
+      "position": {
+        "x": 800,
+        "y": 160
+      },
+      "config": {
+        "concurrency": 20,
+        "queueSize": 200,
+        "latencyP50Ms": 8,
+        "latencyP99Ms": 40,
+        "costPerHour": 0.5,
+        "instances": 2
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "client",
+      "target": "lb"
+    },
+    {
+      "source": "lb",
+      "target": "api-a",
+      "retries": 1,
+      "backoffMs": 0,
+      "circuitBreaker": {
+        "failureThreshold": 0.5,
+        "minRequests": 10,
+        "windowMs": 1000,
+        "openMs": 3000
+      }
+    },
+    {
+      "source": "lb",
+      "target": "api-b",
+      "retries": 1,
+      "backoffMs": 0,
+      "circuitBreaker": {
+        "failureThreshold": 0.5,
+        "minRequests": 10,
+        "windowMs": 1000,
+        "openMs": 3000
+      }
+    },
+    {
+      "source": "api-a",
+      "target": "db"
+    },
+    {
+      "source": "api-b",
+      "target": "db"
+    }
+  ]
+}

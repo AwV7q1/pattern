@@ -1,19 +1,31 @@
 /// <reference lib="webworker" />
 // Owns the WASM simulation and advances it in (scaled) real time.
-import init, { Sim } from 'pattern-engine-wasm';
+import init, { Sim, catalog_json, level_input, play_level } from 'pattern-engine-wasm';
 import type { FromWorker, ToWorker } from './protocol';
 
 const TICK_MS = 16;
 const MAX_STEP_WALL_MS = 100; // avoid huge catch-up steps after the tab sleeps
 
-const ready = init();
 let sim: Sim | null = null;
 let running = false;
 let speed = 1;
+let stopAt: number | null = null;
 let lastWall = performance.now();
 
 const post = (msg: FromWorker, transfer: Transferable[] = []) =>
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+const ready = init().then(() => post({ type: 'hello', catalog: JSON.parse(catalog_json()) }));
+
+function start(input: string, stopAtMs: number | null) {
+  sim?.free();
+  sim = null;
+  sim = new Sim(input);
+  stopAt = stopAtMs;
+  running = false;
+  post({ type: 'ready', input });
+}
 
 self.onmessage = async (e: MessageEvent<ToWorker>) => {
   await ready;
@@ -21,12 +33,12 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
   try {
     switch (msg.type) {
       case 'init':
-        sim?.free();
-        sim = new Sim(msg.input);
-        sim.set_rps(msg.rps);
-        sim.set_traffic_multiplier(msg.multiplier);
-        running = false;
-        post({ type: 'ready' });
+        start(msg.input, msg.stopAtMs);
+        if (msg.rps !== null) sim!.set_rps(msg.rps);
+        sim!.set_traffic_multiplier(msg.multiplier);
+        break;
+      case 'initLevel':
+        start(level_input(msg.level, msg.design), msg.stopAtMs);
         break;
       case 'play':
         running = true;
@@ -47,9 +59,17 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
       case 'nodeDown':
         sim?.set_node_down(msg.index, msg.down);
         break;
+      case 'verify':
+        try {
+          post({ type: 'verified', id: msg.id, summary: JSON.parse(play_level(msg.level, msg.design)) });
+        } catch (err) {
+          post({ type: 'verified', id: msg.id, error: errorMessage(err) });
+        }
+        break;
     }
   } catch (err) {
-    post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+    sim = null;
+    post({ type: 'error', message: errorMessage(err) });
   }
 };
 
@@ -58,9 +78,13 @@ setInterval(() => {
   const dtWall = Math.min(now - lastWall, MAX_STEP_WALL_MS);
   lastWall = now;
   if (!sim || !running) return;
-  sim.step(sim.now_ms() + dtWall * speed);
+  let target = sim.now_ms() + dtWall * speed;
+  const done = stopAt !== null && target >= stopAt;
+  if (done) target = stopAt!;
+  sim.step(target);
+  if (done) running = false;
   // wasm-bindgen copies Vec<f32> into a fresh (non-shared) Float32Array
   const particles = sim.take_particles() as Float32Array<ArrayBuffer>;
   const windows = JSON.parse(sim.take_windows_json());
-  post({ type: 'tick', simMs: sim.now_ms(), particles, windows }, [particles.buffer]);
+  post({ type: 'tick', simMs: sim.now_ms(), particles, windows, done }, [particles.buffer]);
 }, TICK_MS);

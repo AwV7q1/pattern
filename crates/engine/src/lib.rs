@@ -7,14 +7,17 @@
 //! the same output on every platform.
 
 pub mod histogram;
+pub mod level;
 pub mod model;
 pub mod rng;
 pub mod sim;
 
+pub use level::{default_catalog, level_input, play_level, Level};
 pub use model::{
-    Design, EdgeSpec, NodeConfig, NodeKind, NodeSpec, Scenario, SimInput, Slo, TrafficPhase,
+    ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, NodeConfig, NodeKind, NodeSpec,
+    Scenario, SimInput, Slo, TrafficPhase,
 };
-pub use sim::{NodeWindow, Simulation, Summary, WindowMetrics};
+pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, WindowMetrics};
 
 /// Parse a JSON input, run it to `scenario.durationMs` and return the summary.
 pub fn run_headless(input_json: &str) -> Result<Summary, String> {

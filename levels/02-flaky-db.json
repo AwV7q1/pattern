@@ -1,0 +1,122 @@
+{
+  "title": "2. Database chập chờn",
+  "brief": "Từ giây 20 đến 35, database chậm gấp 3 lần (backup chạy nhầm giờ). Team trước đã cấu hình API timeout 60ms và retry 3 lần cho 'chắc ăn'. Hãy xem chuyện gì xảy ra, rồi sửa cho hệ thống đạt SLO với ngân sách $0.90/giờ.",
+  "hint": "Retry khi dependency đang quá tải chỉ đổ thêm dầu vào lửa. Chọn edge API → DB để xem policy, và nghĩ cách giảm số request phải xuống DB.",
+  "palette": [
+    "cache",
+    "service"
+  ],
+  "locked": [
+    "client",
+    "lb",
+    "api",
+    "db"
+  ],
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 260,
+          "y": 160
+        },
+        "config": {
+          "instances": 1
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 520,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 80,
+          "queueSize": 50,
+          "latencyP50Ms": 15,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.1,
+          "instances": 2
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 800,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5,
+          "instances": 1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "db",
+        "timeoutMs": 60,
+        "retries": 3,
+        "backoffMs": 10
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1000
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000,
+    "events": [
+      {
+        "atMs": 20000,
+        "node": "db",
+        "action": "latency",
+        "value": 3
+      },
+      {
+        "atMs": 35000,
+        "node": "db",
+        "action": "up"
+      }
+    ],
+    "budgetPerHour": 0.9
+  },
+  "id": "02-flaky-db"
+}

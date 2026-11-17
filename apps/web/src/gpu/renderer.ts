@@ -11,13 +11,26 @@ export interface Viewport {
   zoom: number;
 }
 
+/** Common interface of the WebGPU renderer and the Canvas2D fallback. */
+export interface ParticleSink {
+  readonly liveParticles: number;
+  reset(): void;
+  setEdges(packed: Float32Array): void;
+  push(particles: Float32Array<ArrayBuffer>, simSeconds: number): void;
+  resize(cssWidth: number, cssHeight: number, dpr: number): void;
+  render(simSeconds: number, speed: number, viewport: Viewport): void;
+  destroy(): void;
+}
+
+export { MIN_VISUAL_SECONDS };
+
 /**
  * GPU-driven particle renderer. Particles are written once into a ring
  * buffer; the vertex shader derives each particle's position from the
  * current simulated time, so per-frame CPU work is O(new events), not
  * O(live particles).
  */
-export class ParticleRenderer {
+export class ParticleRenderer implements ParticleSink {
   private head = 0;
   /** Recent uploads, oldest first, to know which ring slots can still be visible. */
   private batches: Array<{ simSeconds: number; count: number }> = [];

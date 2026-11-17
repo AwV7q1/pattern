@@ -14,7 +14,7 @@ struct Uniforms {
 struct Edge { p0: vec2f, c0: vec2f, c1: vec2f, p1: vec2f };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var<storage, read> particles: array<vec4f>; // edge, t0, dur, kind
+@group(0) @binding(1) var<storage, read> particles: array<vec4f>; // edge, t0, dur, kind (0 req, 1 ok, 2 err, 3 retry)
 @group(0) @binding(2) var<storage, read> edges: array<Edge>;
 
 struct VSOut {
@@ -51,14 +51,15 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VSOut
     return out;
   }
   let kind = u32(p.w);
-  if (kind > 0u) { t = 1.0 - t; } // responses travel back to the caller
+  let isResponse = kind == 1u || kind == 2u;
+  if (isResponse) { t = 1.0 - t; } // responses travel back to the caller
 
   let e = edges[u32(p.x)];
   let tan = bezierTangent(e, t);
   let len = max(length(tan), 1e-4);
   let normal = vec2f(-tan.y, tan.x) / len;
   // spread particles into a stream; requests and responses use opposite lanes
-  let lane = select(-3.0, 3.0, kind > 0u);
+  let lane = select(-3.0, 3.0, isResponse);
   let world = bezier(e, t) + normal * (lane + (hash(ii) - 0.5) * 4.0);
 
   let corners = array<vec2f, 6>(
@@ -76,8 +77,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VSOut
     out.color = vec3f(0.30, 0.70, 1.00);
   } else if (kind == 1u) {
     out.color = vec3f(0.30, 0.95, 0.55);
-  } else {
+  } else if (kind == 2u) {
     out.color = vec3f(1.00, 0.28, 0.28);
+  } else {
+    out.color = vec3f(1.00, 0.62, 0.15); // retry
   }
   return out;
 }

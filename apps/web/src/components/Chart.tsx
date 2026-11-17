@@ -15,7 +15,7 @@ interface Props {
 }
 
 /** Tiny dependency-free line chart (canvas). */
-export function Chart({ title, unit, series, threshold, height = 110 }: Props) {
+export function Chart({ title, unit, series, threshold, height = 96 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -35,7 +35,7 @@ export function Chart({ title, unit, series, threshold, height = 110 }: Props) {
     const x = (i: number) => pad.l + (i / (n - 1)) * (w - pad.l - pad.r);
     const y = (v: number) => h - pad.b - (v / max) * (h - pad.t - pad.b);
 
-    ctx.strokeStyle = '#1e2638';
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let g = 1; g < 4; g++) {
       const gy = pad.t + (g / 4) * (h - pad.t - pad.b);
@@ -45,7 +45,7 @@ export function Chart({ title, unit, series, threshold, height = 110 }: Props) {
       ctx.stroke();
     }
     if (threshold) {
-      ctx.strokeStyle = '#f87171';
+      ctx.strokeStyle = 'rgba(248,113,113,0.8)';
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
       ctx.moveTo(pad.l, y(threshold.value));
@@ -64,10 +64,10 @@ export function Chart({ title, unit, series, threshold, height = 110 }: Props) {
   }, [series, threshold, height]);
 
   return (
-    <div className="chart">
-      <div className="chart-head">
-        <span>{title}</span>
-        <span className="chart-legend">
+    <div className="rounded-lg border bg-muted/30 p-2">
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="font-medium text-muted-foreground">{title}</span>
+        <span className="flex gap-2 font-mono">
           {series.map((s) => (
             <span key={s.label} style={{ color: s.color }}>
               {s.label} {Math.round(s.values.at(-1) ?? 0)}

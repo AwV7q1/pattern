@@ -3,11 +3,12 @@
   "private": true,
   "packageManager": "pnpm@10.0.0",
   "scripts": {
-    "build:wasm": "wasm-pack build crates/engine-wasm --target web --release --out-dir pkg",
+    "build:wasm": "wasm-pack build crates/engine-wasm --target web --release --out-dir pkg && wasm-pack build crates/engine-wasm --target nodejs --release --out-dir pkg-node --out-name pattern_engine_wasm",
     "dev": "pnpm --filter web dev",
     "build": "pnpm build:wasm && pnpm --filter web build",
-    "test": "cargo test --workspace && pnpm --filter web typecheck",
+    "test": "cargo test --workspace && pnpm --filter web typecheck && pnpm --filter server test",
     "sim": "cargo run -q --release -p pattern-sim --",
-    "test:gpu": "node apps/web/scripts/gpu-smoke.cjs"
+    "test:gpu": "node apps/web/scripts/gpu-smoke.cjs",
+    "dev:server": "pnpm --filter server dev"
   }
 }

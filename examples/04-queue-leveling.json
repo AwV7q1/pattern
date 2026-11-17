@@ -17,7 +17,7 @@
         "kind": "loadBalancer",
         "label": "Load Balancer",
         "position": {
-          "x": 230,
+          "x": 299,
           "y": 160
         },
         "config": {
@@ -34,7 +34,7 @@
         "kind": "service",
         "label": "API",
         "position": {
-          "x": 470,
+          "x": 611,
           "y": 160
         },
         "config": {
@@ -51,7 +51,7 @@
         "kind": "queue",
         "label": "Order Queue",
         "position": {
-          "x": 710,
+          "x": 923,
           "y": 160
         },
         "config": {
@@ -68,7 +68,7 @@
         "kind": "service",
         "label": "Worker",
         "position": {
-          "x": 950,
+          "x": 1235,
           "y": 160
         },
         "config": {
@@ -85,7 +85,7 @@
         "kind": "database",
         "label": "PostgreSQL",
         "position": {
-          "x": 1190,
+          "x": 1547,
           "y": 160
         },
         "config": {

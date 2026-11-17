@@ -1,0 +1,68 @@
+{
+  "nodes": [
+    {
+      "id": "client",
+      "kind": "client",
+      "label": "Users",
+      "position": {
+        "x": 0,
+        "y": 160
+      }
+    },
+    {
+      "id": "api",
+      "kind": "service",
+      "label": "API",
+      "position": {
+        "x": 260,
+        "y": 160
+      },
+      "config": {
+        "instances": 2
+      }
+    },
+    {
+      "id": "cache",
+      "kind": "cache",
+      "label": "Redis",
+      "position": {
+        "x": 520,
+        "y": 160
+      },
+      "config": {
+        "instances": 1
+      }
+    },
+    {
+      "id": "db",
+      "kind": "database",
+      "label": "PostgreSQL",
+      "position": {
+        "x": 800,
+        "y": 160
+      },
+      "config": {
+        "concurrency": 20,
+        "queueSize": 200,
+        "latencyP50Ms": 8,
+        "latencyP99Ms": 40,
+        "costPerHour": 0.5,
+        "instances": 1
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "client",
+      "target": "api"
+    },
+    {
+      "source": "api",
+      "target": "cache"
+    },
+    {
+      "source": "cache",
+      "target": "db"
+    }
+  ]
+}
