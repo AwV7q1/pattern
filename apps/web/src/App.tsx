@@ -12,7 +12,7 @@ import {
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { LearnPage } from './learn/LearnPage';
 import { useProgress } from './learn/progress';
@@ -63,6 +63,7 @@ import { ProjectsHome } from './projects/ProjectsHome';
 import { SaveStatus, type SaveState } from './projects/SaveStatus';
 import { VersionHistory } from './projects/VersionHistory';
 import { Textarea } from './components/ui/textarea';
+import { PromptDialog } from './prompt/PromptDialog';
 import { Input } from './components/ui/input';
 import {
   download,
@@ -244,6 +245,7 @@ export function App() {
   const [versionRev, setVersionRev] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
+  const [promptOpen, setPromptOpen] = useState(false);
   const saved = useRef({ design: '', notes: '' });
   const lastVersionAt = useRef(0);
   const flushSave = useRef<(() => void) | null>(null);
@@ -811,6 +813,9 @@ export function App() {
           </Select>
           {mode === 'sandbox' && (
             <>
+              <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
+                <Sparkles /> Prompt
+              </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button size="icon-sm" variant="ghost" onClick={saveNamedVersion} aria-label="Lưu phiên bản">
@@ -1080,6 +1085,15 @@ export function App() {
       </div>
       )}
       <TechDialogs />
+      <PromptDialog
+        open={promptOpen}
+        onOpenChange={setPromptOpen}
+        project={
+          project && promptOpen
+            ? { ...project, design: { ...toDesign(nodes, edges), groups: project.design.groups }, notes }
+            : null
+        }
+      />
       {project && (
         <VersionHistory
           projectId={project.id}
