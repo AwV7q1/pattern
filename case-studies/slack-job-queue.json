@@ -1,0 +1,395 @@
+{
+  "id": "slack-job-queue",
+  "company": "Slack",
+  "year": 2017,
+  "title": "Job queue: Redis → Kafka đứng trước Redis",
+  "summary": "Hàng đợi job trên Redis bị đầy RAM khi worker chậm, enqueue thất bại và gây sự cố. Slack đặt Kafka phía trước làm bộ đệm bền, relay dần vào Redis.",
+  "tags": [
+    "queue",
+    "backpressure",
+    "Kafka",
+    "Redis"
+  ],
+  "sources": [
+    {
+      "title": "Scaling Slack’s Job Queue (Slack Engineering)",
+      "url": "https://slack.engineering/scaling-slacks-job-queue/"
+    }
+  ],
+  "story": "Mọi việc nền của Slack (gửi tin, unfurl link, thông báo, billing) đi qua một job queue xây trên Redis: web app enqueue job, worker lấy ra xử lý. Khi một phụ thuộc phía sau (DB) chậm, worker xử lý chậm lại, job dồn trong Redis tới khi hết bộ nhớ; lúc đó enqueue lỗi và chính web app bị ảnh hưởng. Slack giữ phần Redis + worker quen thuộc nhưng đặt Kafka phía trước: web app ghi job vào Kafka qua một dịch vụ Go (Kafkagate), một dịch vụ relay (JQRelay) đọc Kafka và đẩy vào Redis với tốc độ vừa phải. Kafka lưu trên đĩa nên chứa được backlog rất lớn mà không làm hỏng đường ghi.",
+  "decisions": [
+    {
+      "title": "Kafka làm bộ đệm bền phía trước",
+      "why": "Lưu backlog trên đĩa, dung lượng lớn hơn RAM của Redis nhiều lần.",
+      "tradeoff": "Thêm Kafka, Kafkagate, JQRelay phải vận hành; độ trễ enqueue tăng nhẹ."
+    },
+    {
+      "title": "Giữ Redis + worker cũ",
+      "why": "Không phải viết lại toàn bộ worker và ngữ nghĩa job.",
+      "tradeoff": "Vẫn hai hệ thống queue nối tiếp."
+    }
+  ],
+  "challenges": [
+    "Ở giai đoạn 1, tăng queueSize của Redis: vấn đề được giải quyết hay chỉ bị lùi lại?",
+    "Ở giai đoạn 2, tăng concurrency của JQRelay lên rất cao: điều gì xảy ra với Redis và DB?",
+    "Thêm worker instances để backlog rút nhanh hơn, nhưng DB có chịu được không?"
+  ],
+  "stages": [
+    {
+      "title": "Trước: web → Redis queue → worker",
+      "note": "DB chậm ×10 từ giây 15 đến 40: worker chậm, Redis đầy (queueSize nhỏ ~ giới hạn RAM) và bắt đầu từ chối enqueue.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Slack web/API",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "web",
+            "kind": "service",
+            "label": "Web app (PHP/Hack)",
+            "position": {
+              "x": 300,
+              "y": 200
+            },
+            "tech": "laravel",
+            "config": {
+              "instances": 8,
+              "concurrency": 64,
+              "queueSize": 128,
+              "latencyP50Ms": 8,
+              "latencyP99Ms": 30,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "redis",
+            "kind": "queue",
+            "label": "Redis job queue",
+            "position": {
+              "x": 620,
+              "y": 200
+            },
+            "tech": "bullmq",
+            "config": {
+              "concurrency": 20,
+              "queueSize": 20000,
+              "latencyP50Ms": 0.5,
+              "latencyP99Ms": 2,
+              "costPerHour": 0.15
+            }
+          },
+          {
+            "id": "worker",
+            "kind": "service",
+            "label": "Job workers",
+            "position": {
+              "x": 920,
+              "y": 200
+            },
+            "tech": "laravel",
+            "config": {
+              "instances": 10,
+              "concurrency": 4,
+              "queueSize": 0,
+              "latencyP50Ms": 5,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "MySQL (Vitess)",
+            "position": {
+              "x": 1220,
+              "y": 200
+            },
+            "tech": "mysql",
+            "config": {
+              "instances": 4,
+              "concurrency": 60,
+              "queueSize": 200,
+              "latencyP50Ms": 4,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "web",
+            "latencyMs": 20
+          },
+          {
+            "source": "web",
+            "target": "redis",
+            "latencyMs": 1,
+            "timeoutMs": 200
+          },
+          {
+            "source": "redis",
+            "target": "worker",
+            "latencyMs": 1
+          },
+          {
+            "source": "worker",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 2000
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 1500
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000,
+        "events": [
+          {
+            "atMs": 15000,
+            "node": "db",
+            "action": "latency",
+            "value": 10
+          },
+          {
+            "atMs": 40000,
+            "node": "db",
+            "action": "up"
+          }
+        ]
+      }
+    },
+    {
+      "title": "Sau: Kafkagate → Kafka → JQRelay → Redis → worker",
+      "note": "Kafka giữ backlog trên đĩa (queueSize rất lớn), đường ghi của người dùng không bị ảnh hưởng. Khi Redis đầy, lỗi chỉ xuất hiện ở luồng async (JQRelay phải chờ/thử lại), không tới người dùng.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Slack web/API",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "web",
+            "kind": "service",
+            "label": "Web app (PHP/Hack)",
+            "position": {
+              "x": 300,
+              "y": 200
+            },
+            "tech": "laravel",
+            "config": {
+              "instances": 8,
+              "concurrency": 64,
+              "queueSize": 128,
+              "latencyP50Ms": 8,
+              "latencyP99Ms": 30,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "gate",
+            "kind": "service",
+            "label": "Kafkagate (Go)",
+            "position": {
+              "x": 580,
+              "y": 200
+            },
+            "tech": "go",
+            "config": {
+              "instances": 3,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 5000,
+              "cpuP50Ms": 0.3,
+              "cpuP99Ms": 1,
+              "queueSize": 1000,
+              "costPerHour": 0.05
+            }
+          },
+          {
+            "id": "kafka",
+            "kind": "queue",
+            "label": "Kafka",
+            "position": {
+              "x": 840,
+              "y": 200
+            },
+            "tech": "kafka",
+            "config": {
+              "concurrency": 12,
+              "queueSize": 50000000,
+              "latencyP50Ms": 2,
+              "latencyP99Ms": 8,
+              "costPerHour": 0.3
+            }
+          },
+          {
+            "id": "relay",
+            "kind": "service",
+            "label": "JQRelay",
+            "position": {
+              "x": 1100,
+              "y": 200
+            },
+            "tech": "go",
+            "config": {
+              "instances": 2,
+              "concurrency": 2,
+              "queueSize": 0,
+              "latencyP50Ms": 1,
+              "latencyP99Ms": 3,
+              "costPerHour": 0.05
+            }
+          },
+          {
+            "id": "redis",
+            "kind": "queue",
+            "label": "Redis job queue",
+            "position": {
+              "x": 1360,
+              "y": 200
+            },
+            "tech": "bullmq",
+            "config": {
+              "concurrency": 20,
+              "queueSize": 20000,
+              "latencyP50Ms": 0.5,
+              "latencyP99Ms": 2,
+              "costPerHour": 0.15
+            }
+          },
+          {
+            "id": "worker",
+            "kind": "service",
+            "label": "Job workers",
+            "position": {
+              "x": 1620,
+              "y": 200
+            },
+            "tech": "laravel",
+            "config": {
+              "instances": 10,
+              "concurrency": 4,
+              "queueSize": 0,
+              "latencyP50Ms": 5,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "MySQL (Vitess)",
+            "position": {
+              "x": 1880,
+              "y": 200
+            },
+            "tech": "mysql",
+            "config": {
+              "instances": 4,
+              "concurrency": 60,
+              "queueSize": 200,
+              "latencyP50Ms": 4,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "web",
+            "latencyMs": 20
+          },
+          {
+            "source": "web",
+            "target": "gate",
+            "latencyMs": 1,
+            "timeoutMs": 200
+          },
+          {
+            "source": "gate",
+            "target": "kafka",
+            "latencyMs": 1,
+            "timeoutMs": 200
+          },
+          {
+            "source": "kafka",
+            "target": "relay",
+            "latencyMs": 1
+          },
+          {
+            "source": "relay",
+            "target": "redis",
+            "latencyMs": 1,
+            "timeoutMs": 200,
+            "retries": 3,
+            "backoffMs": 100
+          },
+          {
+            "source": "redis",
+            "target": "worker",
+            "latencyMs": 1
+          },
+          {
+            "source": "worker",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 2000
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 1500
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000,
+        "events": [
+          {
+            "atMs": 15000,
+            "node": "db",
+            "action": "latency",
+            "value": 10
+          },
+          {
+            "atMs": 40000,
+            "node": "db",
+            "action": "up"
+          }
+        ]
+      }
+    }
+  ]
+}

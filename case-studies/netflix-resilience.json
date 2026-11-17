@@ -1,0 +1,360 @@
+{
+  "id": "netflix-resilience",
+  "company": "Netflix",
+  "year": 2012,
+  "title": "Một phụ thuộc chậm làm sập cả API: timeout, circuit breaker và fallback",
+  "summary": "API của Netflix gọi hàng chục service phía sau; chỉ một service chậm cũng chiếm hết thread của gateway. Hystrix ra đời với timeout, bulkhead, circuit breaker và fallback (thường là cache).",
+  "tags": [
+    "resilience",
+    "circuit breaker",
+    "cascading failure",
+    "cache"
+  ],
+  "sources": [
+    {
+      "title": "Fault Tolerance in a High Volume, Distributed System (Netflix Tech Blog, 2012)",
+      "url": "https://netflixtechblog.com/fault-tolerance-in-a-high-volume-distributed-system-91ab4faae74a"
+    },
+    {
+      "title": "Hystrix (GitHub, đã ở chế độ bảo trì)",
+      "url": "https://github.com/Netflix/Hystrix"
+    }
+  ],
+  "story": "Một request trang chủ của Netflix đi qua gateway rồi gọi song song nhiều service (đề xuất, hồ sơ, đánh giá…). Nếu một service chậm lại, mỗi request đang chờ nó giữ một thread của gateway; vài giây sau gateway hết thread và từ chối mọi request, kể cả những request không cần service chậm đó. Đó là cascading failure. Netflix đưa ra các nguyên tắc (và thư viện Hystrix): đặt timeout ngắn cho mọi lời gọi, cách ly tài nguyên theo phụ thuộc (bulkhead), circuit breaker để fail fast khi phụ thuộc đang hỏng, và fallback, ví dụ trả dữ liệu từ cache (EVCache) hay danh sách mặc định.",
+  "decisions": [
+    {
+      "title": "Timeout ngắn + circuit breaker cho mọi phụ thuộc",
+      "why": "Giải phóng thread nhanh, không để một phụ thuộc kéo sập gateway.",
+      "tradeoff": "Phải chọn ngưỡng cẩn thận; trả về dữ liệu kém hơn khi breaker mở."
+    },
+    {
+      "title": "Fallback từ cache (EVCache)",
+      "why": "Người dùng vẫn thấy nội dung, dù có thể cũ.",
+      "tradeoff": "Dữ liệu stale; tốn thêm cache cluster."
+    }
+  ],
+  "challenges": [
+    "Ở giai đoạn 2, bỏ circuit breaker nhưng giữ timeout: gateway còn sống không?",
+    "Đổi routing gateway từ parallel sang sequence: latency thay đổi thế nào?",
+    "Tăng retries lên 3 trên edge tới service chậm: quan sát retry storm."
+  ],
+  "stages": [
+    {
+      "title": "Trước: gọi song song, không timeout",
+      "note": "Giây 20: service Ratings chậm ×20. Thread của gateway bị giữ, gateway reject mọi thứ.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Netflix devices",
+            "position": {
+              "x": 0,
+              "y": 240
+            }
+          },
+          {
+            "id": "api",
+            "kind": "service",
+            "label": "API gateway (Zuul)",
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 6,
+              "concurrency": 200,
+              "queueSize": 100,
+              "latencyP50Ms": 1,
+              "latencyP99Ms": 4,
+              "routing": "parallel",
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "reco",
+            "kind": "service",
+            "label": "Recommendations",
+            "position": {
+              "x": 640,
+              "y": 60
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 8,
+              "latencyP99Ms": 32,
+              "costPerHour": 0.08
+            }
+          },
+          {
+            "id": "profile",
+            "kind": "service",
+            "label": "Profile",
+            "position": {
+              "x": 640,
+              "y": 240
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 5,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.08
+            }
+          },
+          {
+            "id": "ratings",
+            "kind": "service",
+            "label": "Ratings",
+            "position": {
+              "x": 640,
+              "y": 420
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 6,
+              "latencyP99Ms": 24,
+              "costPerHour": 0.08
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "api",
+            "latencyMs": 20
+          },
+          {
+            "source": "api",
+            "target": "reco",
+            "latencyMs": 1
+          },
+          {
+            "source": "api",
+            "target": "profile",
+            "latencyMs": 1
+          },
+          {
+            "source": "api",
+            "target": "ratings",
+            "latencyMs": 1
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 50000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 3000
+          }
+        ],
+        "slo": {
+          "p99Ms": 250,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000,
+        "events": [
+          {
+            "atMs": 20000,
+            "node": "ratings",
+            "action": "latency",
+            "value": 20
+          }
+        ]
+      }
+    },
+    {
+      "title": "Sau: timeout + circuit breaker + fallback cache",
+      "note": "Ratings đứng sau EVCache (hit 99%); edge có timeout 100ms và breaker. Gateway không sập. Engine chưa mô phỏng fallback, nên phần nhỏ request rơi vào Ratings khi nó chậm vẫn tính là lỗi (thực tế sẽ trả dữ liệu dự phòng).",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Netflix devices",
+            "position": {
+              "x": 0,
+              "y": 240
+            }
+          },
+          {
+            "id": "api",
+            "kind": "service",
+            "label": "API gateway (Zuul)",
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 6,
+              "concurrency": 200,
+              "queueSize": 100,
+              "latencyP50Ms": 1,
+              "latencyP99Ms": 4,
+              "routing": "parallel",
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "reco",
+            "kind": "service",
+            "label": "Recommendations",
+            "position": {
+              "x": 640,
+              "y": 60
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 8,
+              "latencyP99Ms": 32,
+              "costPerHour": 0.08
+            }
+          },
+          {
+            "id": "profile",
+            "kind": "service",
+            "label": "Profile",
+            "position": {
+              "x": 640,
+              "y": 240
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 5,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.08
+            }
+          },
+          {
+            "id": "evcache",
+            "kind": "cache",
+            "label": "EVCache (Memcached)",
+            "position": {
+              "x": 640,
+              "y": 420
+            },
+            "tech": "memcached",
+            "config": {
+              "concurrency": 4000,
+              "queueSize": 1000,
+              "latencyP50Ms": 0.3,
+              "latencyP99Ms": 1,
+              "hitRate": 0.99,
+              "costPerHour": 0.12
+            }
+          },
+          {
+            "id": "ratings",
+            "kind": "service",
+            "label": "Ratings",
+            "position": {
+              "x": 940,
+              "y": 420
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 4,
+              "concurrency": 50,
+              "queueSize": 50,
+              "latencyP50Ms": 6,
+              "latencyP99Ms": 24,
+              "costPerHour": 0.08
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "api",
+            "latencyMs": 20
+          },
+          {
+            "source": "api",
+            "target": "reco",
+            "latencyMs": 1,
+            "timeoutMs": 100,
+            "circuitBreaker": {
+              "failureThreshold": 0.5,
+              "minRequests": 20,
+              "windowMs": 1000,
+              "openMs": 5000
+            }
+          },
+          {
+            "source": "api",
+            "target": "profile",
+            "latencyMs": 1,
+            "timeoutMs": 100,
+            "circuitBreaker": {
+              "failureThreshold": 0.5,
+              "minRequests": 20,
+              "windowMs": 1000,
+              "openMs": 5000
+            }
+          },
+          {
+            "source": "api",
+            "target": "evcache",
+            "latencyMs": 0.5,
+            "timeoutMs": 50
+          },
+          {
+            "source": "evcache",
+            "target": "ratings",
+            "latencyMs": 1,
+            "timeoutMs": 100,
+            "circuitBreaker": {
+              "failureThreshold": 0.5,
+              "minRequests": 20,
+              "windowMs": 1000,
+              "openMs": 5000
+            }
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 50000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 3000
+          }
+        ],
+        "slo": {
+          "p99Ms": 250,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000,
+        "events": [
+          {
+            "atMs": 20000,
+            "node": "ratings",
+            "action": "latency",
+            "value": 20
+          }
+        ]
+      }
+    }
+  ]
+}

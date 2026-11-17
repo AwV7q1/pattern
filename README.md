@@ -25,6 +25,12 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 - **Học** (tab mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 29 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
 - **Sandbox**: kéo thả thành phần (LB, service, cache, DB, queue), nối dây, xoá. Chỉnh mọi tham số node và chính sách edge (timeout, retry + backoff + jitter, circuit breaker). Điều khiển RPS, spike ×2/×3/×5, tắt node (chaos). Tải design ra JSON để chạy bằng CLI.
+- **Studio** (trong tab Sandbox), xem [docs/STUDIO.md](docs/STUDIO.md):
+  - Thư viện khoảng 45 công nghệ thật (Nginx, Traefik, NestJS, Go, Redis, PostgreSQL, RabbitMQ, Kafka, Authentik, Keycloak, Kubernetes…) có logo, mô tả tổng quan và chi tiết, thanh điểm mạnh/yếu, so sánh tối đa 4 lựa chọn, đổi công nghệ ngay trong Inspector.
+  - Dự án lưu trong IndexedDB, tự động lưu, lịch sử phiên bản (⌘/Ctrl+S), ghi chú, nhập/xuất JSON.
+  - Xuất prompt markdown cho agent triển khai: Mermaid, bảng thành phần, chính sách gọi, SLO, sự cố, kết quả mô phỏng, yêu cầu Compose/K8s/NestJS.
+  - Kubernetes: khung Cluster/Namespace/Node pool/Zone, autoscale kiểu HPA trong engine (pod khởi động trễ, ổn định khi giảm).
+  - Case study đơn giản hoá từ bài viết công khai của Discord, Slack, Netflix, Twitter, Stack Overflow, Figma.
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
 - **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
 - **Công suất**:
@@ -50,7 +56,8 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `tools/k6` | `step-load.js` (tải theo bậc, xuất summary cho calibrate), `cpu-per-request.sh` |
 | `examples/calibration` | Số đo thật của server NestJS trong repo, dùng để thử calibrate |
 | `crates/engine-cli` | `pattern-sim`: chạy scenario hoặc chấm design theo level |
-| `examples/*.json` | Scenario sandbox `{ design, scenario }` |
+| `examples/*.json` | Scenario sandbox `{ design, scenario }`, đồng thời là mẫu dự án trong Studio |
+| `case-studies/*.json` | Case study: bối cảnh, quyết định, các giai đoạn design + scenario |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
 | `apps/web` | React 19 + shadcn/ui (Tailwind v4, Radix) + React Flow + WebGPU |
 | `apps/server` | NestJS 11: `GET /api/levels`, `POST /api/levels/:id/submit`, `GET /api/levels/:id/leaderboard` |

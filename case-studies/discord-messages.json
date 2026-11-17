@@ -1,0 +1,260 @@
+{
+  "id": "discord-messages",
+  "company": "Discord",
+  "year": 2023,
+  "title": "Lưu hàng nghìn tỷ tin nhắn: Cassandra → ScyllaDB + data service",
+  "summary": "Hot partition và GC pause của Cassandra làm p99 đọc tin nhắn dao động; Discord thêm tầng data service (Rust) gom request trùng và chuyển sang ScyllaDB.",
+  "tags": [
+    "database",
+    "hot partition",
+    "GC",
+    "request coalescing"
+  ],
+  "sources": [
+    {
+      "title": "How Discord Stores Trillions of Messages (Discord Engineering, 2023)",
+      "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages"
+    }
+  ],
+  "story": "Tin nhắn được lưu theo (channel, bucket thời gian). Một server lớn có hàng trăm nghìn người cùng đọc một kênh khi có thông báo, nên mọi lượt đọc dồn vào một partition (hot partition). Cassandra chạy trên JVM, GC pause làm cả node khựng lại và kéo theo p99 của toàn cụm. Đội vận hành phải liên tục \"chăm\" cụm (compaction, repair). Giải pháp gồm hai bước: (1) thêm data service viết bằng Rust đứng giữa API và DB, định tuyến theo channel bằng consistent hashing và gom các request đọc trùng nhau thành một truy vấn (request coalescing); (2) chuyển sang ScyllaDB (C++, shard-per-core, không GC). Bài viết nêu p99 đọc giảm từ khoảng 40–125ms xuống ~15ms và cụm từ 177 node Cassandra xuống 72 node ScyllaDB.",
+  "decisions": [
+    {
+      "title": "Thêm data service gom request trùng",
+      "why": "Nhiều người đọc cùng một kênh cùng lúc: một truy vấn DB có thể trả lời cho hàng trăm request.",
+      "tradeoff": "Thêm một tầng phải vận hành; cần định tuyến cố định theo channel để gom được."
+    },
+    {
+      "title": "Đổi Cassandra sang ScyllaDB",
+      "why": "Không có GC pause, p99 ổn định, ít node hơn.",
+      "tradeoff": "Migrate dữ liệu khổng lồ (họ viết migrator riêng bằng Rust); vẫn phải thiết kế partition key cẩn thận."
+    }
+  ],
+  "challenges": [
+    "Ở giai đoạn 1, giảm gcEveryRequests của Cassandra xem p99 thay đổi ra sao.",
+    "Ở giai đoạn 2, đặt hitRate của data service về 0 (tắt coalescing): ScyllaDB còn chịu nổi không?",
+    "Thêm timeout + retry cho edge API → DB ở giai đoạn 1: retry có làm hot partition tệ hơn không?"
+  ],
+  "stages": [
+    {
+      "title": "Trước: API đọc thẳng Cassandra",
+      "note": "Đọc dồn vào DB, GC pause 120ms làm p99 vọt lên; spike khi có thông báo lớn ở giây 20–35.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Discord clients",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "api",
+            "kind": "service",
+            "label": "API (Python/Elixir)",
+            "position": {
+              "x": 300,
+              "y": 200
+            },
+            "tech": "go",
+            "config": {
+              "instances": 6,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 2000,
+              "cpuP50Ms": 0.6,
+              "cpuP99Ms": 2.5,
+              "queueSize": 1000,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "Cassandra (177 node)",
+            "position": {
+              "x": 640,
+              "y": 200
+            },
+            "tech": "cassandra",
+            "config": {
+              "instances": 2,
+              "model": "cpu",
+              "cpuLanes": 8,
+              "maxInFlight": 400,
+              "cpuP50Ms": 1.2,
+              "cpuP99Ms": 6,
+              "ioP50Ms": 2,
+              "ioP99Ms": 30,
+              "queueSize": 500,
+              "gcPauseMs": 120,
+              "gcEveryRequests": 4000,
+              "costPerHour": 0.9
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "api",
+            "latencyMs": 20
+          },
+          {
+            "source": "api",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 1000,
+            "poolSize": 50
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 6000
+          },
+          {
+            "atMs": 20000,
+            "rps": 14000
+          },
+          {
+            "atMs": 35000,
+            "rps": 6000
+          }
+        ],
+        "slo": {
+          "p99Ms": 100,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    },
+    {
+      "title": "Sau: data service (Rust) + ScyllaDB",
+      "note": "Data service gom request trùng (mô hình bằng cache hit ~60%), ScyllaDB không GC.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Discord clients",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "api",
+            "kind": "service",
+            "label": "API",
+            "position": {
+              "x": 300,
+              "y": 200
+            },
+            "tech": "go",
+            "config": {
+              "instances": 6,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 2000,
+              "cpuP50Ms": 0.6,
+              "cpuP99Ms": 2.5,
+              "queueSize": 1000,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "ds",
+            "kind": "cache",
+            "label": "Data service (Rust, coalescing)",
+            "position": {
+              "x": 620,
+              "y": 200
+            },
+            "tech": "axum",
+            "config": {
+              "instances": 4,
+              "concurrency": 4000,
+              "queueSize": 2000,
+              "latencyP50Ms": 0.3,
+              "latencyP99Ms": 1.2,
+              "hitRate": 0.6,
+              "costPerHour": 0.08
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "ScyllaDB (72 node)",
+            "position": {
+              "x": 960,
+              "y": 200
+            },
+            "tech": "scylladb",
+            "config": {
+              "instances": 2,
+              "model": "cpu",
+              "cpuLanes": 8,
+              "maxInFlight": 800,
+              "cpuP50Ms": 0.5,
+              "cpuP99Ms": 2,
+              "ioP50Ms": 1,
+              "ioP99Ms": 6,
+              "queueSize": 1000,
+              "costPerHour": 1.0
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "api",
+            "latencyMs": 20
+          },
+          {
+            "source": "api",
+            "target": "ds",
+            "latencyMs": 0.5,
+            "timeoutMs": 500
+          },
+          {
+            "source": "ds",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 1000,
+            "poolSize": 50
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 6000
+          },
+          {
+            "atMs": 20000,
+            "rps": 14000
+          },
+          {
+            "atMs": 35000,
+            "rps": 6000
+          }
+        ],
+        "slo": {
+          "p99Ms": 100,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    }
+  ]
+}

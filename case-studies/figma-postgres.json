@@ -1,0 +1,530 @@
+{
+  "id": "figma-postgres",
+  "company": "Figma",
+  "year": 2024,
+  "title": "Postgres: một máy RDS → chia theo nhóm bảng → shard ngang",
+  "summary": "Lượng dữ liệu và truy vấn tăng gần 100 lần làm một instance Postgres lớn nhất RDS chạm trần CPU. Figma chia dọc theo nhóm bảng, rồi shard ngang với tầng DBProxy tự viết.",
+  "tags": [
+    "database",
+    "sharding",
+    "PgBouncer",
+    "vertical partitioning"
+  ],
+  "sources": [
+    {
+      "title": "The growing pains of database architecture (Figma, 2023)",
+      "url": "https://www.figma.com/blog/how-figma-scaled-to-multiple-databases/"
+    },
+    {
+      "title": "How Figma’s databases team lived to tell the scale (Figma, 2024)",
+      "url": "https://www.figma.com/blog/how-figmas-databases-team-lived-to-tell-the-scale/"
+    }
+  ],
+  "story": "Figma chạy trên một instance Postgres (RDS) lớn nhất có thể, với PgBouncer gom kết nối. Khi CPU DB thường xuyên ở mức cao, họ chia dọc: tách các nhóm bảng ít liên quan (ví dụ file, tổ chức…) sang các database riêng, mỗi nhóm có PgBouncer riêng. Một số bảng vẫn quá lớn cho một máy, nên họ shard ngang: bảng được chia theo khoá (theo nhóm bảng có cùng shard key) qua nhiều Postgres, và một dịch vụ DBProxy (Go) đứng giữa ứng dụng và DB để phân tích truy vấn và định tuyến tới đúng shard, giúp ứng dụng thay đổi ít nhất.",
+  "decisions": [
+    {
+      "title": "Chia dọc theo nhóm bảng trước",
+      "why": "Nhanh, ít rủi ro, giảm tải ngay.",
+      "tradeoff": "Mất join/transaction giữa các nhóm; chỉ mua thêm thời gian."
+    },
+    {
+      "title": "Shard ngang với DBProxy",
+      "why": "Scale gần như vô hạn cho bảng lớn mà ứng dụng ít phải sửa.",
+      "tradeoff": "Phức tạp: truy vấn xuyên shard, đổi schema, vận hành nhiều DB."
+    }
+  ],
+  "challenges": [
+    "Giai đoạn 1: tăng pool của PgBouncer lên 400: DB nhanh hơn hay chậm hơn?",
+    "Giai đoạn 3: tắt một shard (down) ở giây 20: bao nhiêu phần trăm request lỗi?"
+  ],
+  "stages": [
+    {
+      "title": "1. Một Postgres + PgBouncer",
+      "note": "Traffic tăng trưởng: 8k → 16k (giây 20) → 30k rps (giây 40). Mọi truy vấn vào một máy nên DB đầy từ bậc thứ hai.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Figma clients",
+            "position": {
+              "x": 0,
+              "y": 240
+            }
+          },
+          {
+            "id": "app",
+            "kind": "service",
+            "label": "Figma backend (Ruby/Go)",
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "tech": "go",
+            "config": {
+              "instances": 30,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 2000,
+              "cpuP50Ms": 1,
+              "cpuP99Ms": 4,
+              "queueSize": 1000,
+              "callsPerRequest": 2,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "bouncer",
+            "kind": "loadBalancer",
+            "label": "PgBouncer",
+            "position": {
+              "x": 620,
+              "y": 240
+            },
+            "config": {
+              "concurrency": 20000,
+              "latencyP50Ms": 0.1,
+              "latencyP99Ms": 0.5,
+              "costPerHour": 0.05
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "Postgres (RDS, 1 instance)",
+            "position": {
+              "x": 900,
+              "y": 240
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "app",
+            "latencyMs": 30
+          },
+          {
+            "source": "app",
+            "target": "bouncer",
+            "latencyMs": 0.5,
+            "timeoutMs": 1000
+          },
+          {
+            "source": "bouncer",
+            "target": "db",
+            "latencyMs": 0.5,
+            "poolSize": 100,
+            "poolTimeoutMs": 1000
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 8000
+          },
+          {
+            "atMs": 20000,
+            "rps": 16000
+          },
+          {
+            "atMs": 40000,
+            "rps": 30000
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    },
+    {
+      "title": "2. Chia dọc theo nhóm bảng",
+      "note": "Ba database theo nhóm bảng (mô phỏng: chia đều). Qua được 16k rps nhưng tới 30k rps thì bắt đầu sát trần: chia dọc chỉ mua thêm thời gian.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Figma clients",
+            "position": {
+              "x": 0,
+              "y": 240
+            }
+          },
+          {
+            "id": "app",
+            "kind": "service",
+            "label": "Figma backend (Ruby/Go)",
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "tech": "go",
+            "config": {
+              "instances": 30,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 2000,
+              "cpuP50Ms": 1,
+              "cpuP99Ms": 4,
+              "queueSize": 1000,
+              "callsPerRequest": 2,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "bouncer",
+            "kind": "loadBalancer",
+            "label": "PgBouncer (mỗi nhóm)",
+            "position": {
+              "x": 620,
+              "y": 240
+            },
+            "config": {
+              "concurrency": 20000,
+              "latencyP50Ms": 0.1,
+              "latencyP99Ms": 0.5,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "files",
+            "kind": "database",
+            "label": "Postgres: files",
+            "position": {
+              "x": 900,
+              "y": 60
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "orgs",
+            "kind": "database",
+            "label": "Postgres: orgs/users",
+            "position": {
+              "x": 900,
+              "y": 240
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "misc",
+            "kind": "database",
+            "label": "Postgres: còn lại",
+            "position": {
+              "x": 900,
+              "y": 420
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "app",
+            "latencyMs": 30
+          },
+          {
+            "source": "app",
+            "target": "bouncer",
+            "latencyMs": 0.5,
+            "timeoutMs": 1000
+          },
+          {
+            "source": "bouncer",
+            "target": "files",
+            "latencyMs": 0.5,
+            "poolSize": 100,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "bouncer",
+            "target": "orgs",
+            "latencyMs": 0.5,
+            "poolSize": 100,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "bouncer",
+            "target": "misc",
+            "latencyMs": 0.5,
+            "poolSize": 100,
+            "poolTimeoutMs": 1000
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 8000
+          },
+          {
+            "atMs": 20000,
+            "rps": 16000
+          },
+          {
+            "atMs": 40000,
+            "rps": 30000
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    },
+    {
+      "title": "3. Shard ngang với DBProxy",
+      "note": "DBProxy (Go) định tuyến theo shard key tới 5 shard; mỗi shard nhẹ tải.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Figma clients",
+            "position": {
+              "x": 0,
+              "y": 240
+            }
+          },
+          {
+            "id": "app",
+            "kind": "service",
+            "label": "Figma backend (Ruby/Go)",
+            "position": {
+              "x": 300,
+              "y": 240
+            },
+            "tech": "go",
+            "config": {
+              "instances": 30,
+              "model": "cpu",
+              "cpuLanes": 2,
+              "maxInFlight": 2000,
+              "cpuP50Ms": 1,
+              "cpuP99Ms": 4,
+              "queueSize": 1000,
+              "callsPerRequest": 2,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "proxy",
+            "kind": "loadBalancer",
+            "label": "DBProxy (Go)",
+            "position": {
+              "x": 620,
+              "y": 240
+            },
+            "tech": "go",
+            "config": {
+              "instances": 3,
+              "concurrency": 20000,
+              "latencyP50Ms": 0.3,
+              "latencyP99Ms": 1.2,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "shard0",
+            "kind": "database",
+            "label": "Shard 0",
+            "position": {
+              "x": 920,
+              "y": 20
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "shard1",
+            "kind": "database",
+            "label": "Shard 1",
+            "position": {
+              "x": 920,
+              "y": 130
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "shard2",
+            "kind": "database",
+            "label": "Shard 2",
+            "position": {
+              "x": 920,
+              "y": 240
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "shard3",
+            "kind": "database",
+            "label": "Shard 3",
+            "position": {
+              "x": 920,
+              "y": 350
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          },
+          {
+            "id": "shard4",
+            "kind": "database",
+            "label": "Shard 4",
+            "position": {
+              "x": 920,
+              "y": 460
+            },
+            "tech": "postgresql",
+            "config": {
+              "concurrency": 80,
+              "queueSize": 500,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 15,
+              "costPerHour": 1.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "app",
+            "latencyMs": 30
+          },
+          {
+            "source": "app",
+            "target": "proxy",
+            "latencyMs": 0.5,
+            "timeoutMs": 1000
+          },
+          {
+            "source": "proxy",
+            "target": "shard0",
+            "latencyMs": 0.5,
+            "poolSize": 60,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "proxy",
+            "target": "shard1",
+            "latencyMs": 0.5,
+            "poolSize": 60,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "proxy",
+            "target": "shard2",
+            "latencyMs": 0.5,
+            "poolSize": 60,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "proxy",
+            "target": "shard3",
+            "latencyMs": 0.5,
+            "poolSize": 60,
+            "poolTimeoutMs": 1000
+          },
+          {
+            "source": "proxy",
+            "target": "shard4",
+            "latencyMs": 0.5,
+            "poolSize": 60,
+            "poolTimeoutMs": 1000
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 8000
+          },
+          {
+            "atMs": 20000,
+            "rps": 16000
+          },
+          {
+            "atMs": 40000,
+            "rps": 30000
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    }
+  ]
+}

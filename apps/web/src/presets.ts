@@ -18,3 +18,30 @@ export const LEVELS: Record<string, Level> = Object.fromEntries(byFile(levels));
 export const LEARN_LEVELS: Record<string, Level> = Object.fromEntries(
   byFile(learnLevels).map(([k, v]) => [`learn/${k}`, v]),
 );
+
+// ---------------------------------------------------------------- case studies
+
+export interface CaseStage {
+  title: string;
+  note: string;
+  design: Preset['design'];
+  scenario: Preset['scenario'];
+}
+
+/** Simplified model of a public engineering write-up (case-studies/*.json). */
+export interface CaseStudy {
+  id: string;
+  company: string;
+  year: number;
+  title: string;
+  summary: string;
+  tags: string[];
+  sources: { title: string; url: string }[];
+  story: string;
+  decisions: { title: string; why: string; tradeoff: string }[];
+  challenges: string[];
+  stages: CaseStage[];
+}
+
+const caseFiles = import.meta.glob<CaseStudy>('../../../case-studies/*.json', { eager: true, import: 'default' });
+export const CASES: CaseStudy[] = byFile(caseFiles).map(([, c]) => c);

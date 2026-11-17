@@ -1,0 +1,291 @@
+{
+  "id": "twitter-timeline",
+  "company": "Twitter",
+  "year": 2013,
+  "title": "Home timeline: fan-out on read → fan-out on write vào Redis",
+  "summary": "Ghép timeline lúc đọc (query nhiều bảng) không chịu nổi khi lượt đọc gấp hàng trăm lần lượt ghi. Twitter đẩy tweet vào timeline cache của từng follower ngay lúc ghi.",
+  "tags": [
+    "fan-out",
+    "cache",
+    "read-heavy"
+  ],
+  "sources": [
+    {
+      "title": "Timelines at Scale – Raffi Krikorian (QCon 2012, InfoQ)",
+      "url": "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/"
+    },
+    {
+      "title": "The Infrastructure Behind Twitter: Scale (Twitter Engineering, 2017)",
+      "url": "https://blog.twitter.com/engineering/en_us/topics/infrastructure/2017/the-infrastructure-behind-twitter-scale"
+    }
+  ],
+  "story": "Mỗi lần mở app, người dùng tải home timeline: tweet mới nhất của mọi người họ theo dõi. Cách ngây thơ là lúc đọc mới query và gộp (fan-out on read): rẻ khi ghi nhưng mỗi lượt đọc tốn nhiều query, và lượt đọc nhiều hơn lượt ghi rất nhiều. Twitter chuyển sang fan-out on write: khi một tweet được đăng, worker đẩy ID tweet vào danh sách timeline (trong Redis) của từng follower; đọc timeline chỉ là một lần đọc Redis. Đổi lại, người có hàng chục triệu follower làm một tweet thành hàng chục triệu lần ghi, nên tài khoản cực lớn được xử lý riêng (gộp lúc đọc).",
+  "decisions": [
+    {
+      "title": "Fan-out on write vào Redis",
+      "why": "Đọc timeline thành O(1), rất nhanh, DB nhẹ hẳn.",
+      "tradeoff": "Ghi khuếch đại theo số follower; tốn RAM cho timeline của mọi người."
+    },
+    {
+      "title": "Ngoại lệ cho tài khoản nổi tiếng",
+      "why": "Tránh một tweet tạo hàng chục triệu lần ghi.",
+      "tradeoff": "Hai đường đọc khác nhau phải gộp lại."
+    }
+  ],
+  "challenges": [
+    "Giai đoạn 2: giảm hitRate của Redis timeline xuống 0.7 (cache nguội sau restart): DB có chịu không?",
+    "Thêm nhánh ghi: Timeline service → queue → fan-out worker (callsPerRequest = số follower) → Redis. Queue có rút kịp khi một người nổi tiếng đăng bài?"
+  ],
+  "stages": [
+    {
+      "title": "Trước: fan-out on read",
+      "note": "Mỗi lượt đọc timeline gọi DB 8 lần (gộp tweet của người được theo dõi). Đọc chiếm phần lớn traffic.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Twitter clients",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "lb",
+            "kind": "loadBalancer",
+            "label": "Load balancer",
+            "position": {
+              "x": 260,
+              "y": 200
+            },
+            "tech": "haproxy",
+            "config": {
+              "concurrency": 30000,
+              "latencyP50Ms": 0.1,
+              "latencyP99Ms": 0.6,
+              "costPerHour": 0.03
+            }
+          },
+          {
+            "id": "timeline",
+            "kind": "service",
+            "label": "Timeline service",
+            "position": {
+              "x": 540,
+              "y": 200
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 10,
+              "concurrency": 200,
+              "queueSize": 100,
+              "latencyP50Ms": 2,
+              "latencyP99Ms": 8,
+              "callsPerRequest": 8,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "MySQL (tweets)",
+            "position": {
+              "x": 860,
+              "y": 200
+            },
+            "tech": "mysql",
+            "config": {
+              "instances": 6,
+              "concurrency": 60,
+              "queueSize": 200,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "lb",
+            "latencyMs": 20
+          },
+          {
+            "source": "lb",
+            "target": "timeline",
+            "latencyMs": 1
+          },
+          {
+            "source": "timeline",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 500,
+            "poolSize": 20
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 4000
+          },
+          {
+            "atMs": 20000,
+            "rps": 9000
+          },
+          {
+            "atMs": 40000,
+            "rps": 4000
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    },
+    {
+      "title": "Sau: fan-out on write + Redis timeline",
+      "note": "Đọc chỉ chạm Redis (hit 98%), DB gần như rảnh. Đường ghi fan-out (tweet → queue → worker ghi vào timeline của từng follower) không vẽ ở đây vì một design chỉ có một nguồn traffic; thử thêm nó như một nhánh riêng.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Twitter clients",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "lb",
+            "kind": "loadBalancer",
+            "label": "Load balancer",
+            "position": {
+              "x": 260,
+              "y": 200
+            },
+            "tech": "haproxy",
+            "config": {
+              "concurrency": 30000,
+              "latencyP50Ms": 0.1,
+              "latencyP99Ms": 0.6,
+              "costPerHour": 0.03
+            }
+          },
+          {
+            "id": "timeline",
+            "kind": "service",
+            "label": "Timeline service",
+            "position": {
+              "x": 540,
+              "y": 200
+            },
+            "tech": "spring",
+            "config": {
+              "instances": 10,
+              "concurrency": 200,
+              "queueSize": 100,
+              "latencyP50Ms": 1,
+              "latencyP99Ms": 4,
+              "costPerHour": 0.1
+            }
+          },
+          {
+            "id": "redis",
+            "kind": "cache",
+            "label": "Redis timelines",
+            "position": {
+              "x": 840,
+              "y": 120
+            },
+            "tech": "redis",
+            "config": {
+              "instances": 6,
+              "concurrency": 4000,
+              "queueSize": 1000,
+              "latencyP50Ms": 0.3,
+              "latencyP99Ms": 1.5,
+              "hitRate": 0.98,
+              "costPerHour": 0.15
+            }
+          },
+          {
+            "id": "db",
+            "kind": "database",
+            "label": "MySQL (tweets)",
+            "position": {
+              "x": 1140,
+              "y": 200
+            },
+            "tech": "mysql",
+            "config": {
+              "instances": 6,
+              "concurrency": 60,
+              "queueSize": 200,
+              "latencyP50Ms": 3,
+              "latencyP99Ms": 20,
+              "costPerHour": 0.5
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "lb",
+            "latencyMs": 20
+          },
+          {
+            "source": "lb",
+            "target": "timeline",
+            "latencyMs": 1
+          },
+          {
+            "source": "timeline",
+            "target": "redis",
+            "latencyMs": 0.5,
+            "timeoutMs": 100
+          },
+          {
+            "source": "redis",
+            "target": "db",
+            "latencyMs": 1,
+            "timeoutMs": 500,
+            "poolSize": 20
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 4000
+          },
+          {
+            "atMs": 20000,
+            "rps": 9000
+          },
+          {
+            "atMs": 40000,
+            "rps": 4000
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    }
+  ]
+}

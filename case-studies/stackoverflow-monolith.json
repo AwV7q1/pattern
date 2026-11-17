@@ -1,0 +1,176 @@
+{
+  "id": "stackoverflow-monolith",
+  "company": "Stack Overflow",
+  "year": 2016,
+  "title": "Monolith trên vài máy chủ phục vụ hàng trăm triệu request/ngày",
+  "summary": "Phản ví dụ của microservices: một ứng dụng .NET trên 9 web server, SQL Server mạnh và Redis, tối ưu kỹ từng truy vấn, vẫn phục vụ ~200 triệu request mỗi ngày.",
+  "tags": [
+    "monolith",
+    "cache",
+    "vertical scaling",
+    "simplicity"
+  ],
+  "sources": [
+    {
+      "title": "Stack Overflow: The Architecture – 2016 Edition (Nick Craver)",
+      "url": "https://nickcraver.com/blog/2016/02/17/stack-overflow-the-architecture-2016-edition/"
+    }
+  ],
+  "story": "Năm 2016, Stack Overflow chạy trên một số ít máy chủ vật lý: HAProxy phía trước, 9 web server IIS chạy cùng một ứng dụng ASP.NET, SQL Server trên máy rất mạnh (RAM lớn chứa gần hết dữ liệu nóng), Redis làm cache nhiều tầng và Elasticsearch cho tìm kiếm. Bài viết nêu khoảng 209 triệu HTTP request mỗi ngày, tức trung bình ~2.400 request/giây, với các máy chạy ở mức tải thấp. Bài học: đo đạc, cache đúng chỗ và tối ưu truy vấn có thể đi rất xa trước khi cần chia nhỏ hệ thống.",
+  "decisions": [
+    {
+      "title": "Scale dọc (máy mạnh) thay vì nhiều máy nhỏ",
+      "why": "Ít thành phần, ít độ trễ mạng, dễ vận hành.",
+      "tradeoff": "Giới hạn trần của một máy; phần cứng đắt."
+    },
+    {
+      "title": "Cache nhiều tầng bằng Redis + in-memory",
+      "why": "Phần lớn lượt đọc không chạm DB.",
+      "tradeoff": "Phải xử lý invalidation cẩn thận."
+    }
+  ],
+  "challenges": [
+    "Tăng traffic lên 4 lần: thành phần nào đầy trước?",
+    "Đặt hitRate Redis về 0.5: SQL Server có còn đủ sức?",
+    "Tắt 4 trong 9 web server (giảm instances): hệ thống còn đạt SLO không?"
+  ],
+  "stages": [
+    {
+      "title": "Kiến trúc 2016",
+      "note": "Traffic trung bình ~2.400 rps, cao điểm gấp đôi. Các máy chạy rất nhàn.",
+      "design": {
+        "nodes": [
+          {
+            "id": "client",
+            "kind": "client",
+            "label": "Visitors",
+            "position": {
+              "x": 0,
+              "y": 200
+            }
+          },
+          {
+            "id": "lb",
+            "kind": "loadBalancer",
+            "label": "HAProxy",
+            "position": {
+              "x": 260,
+              "y": 200
+            },
+            "tech": "haproxy",
+            "config": {
+              "instances": 2,
+              "concurrency": 30000,
+              "latencyP50Ms": 0.1,
+              "latencyP99Ms": 0.6,
+              "costPerHour": 0.05
+            }
+          },
+          {
+            "id": "web",
+            "kind": "service",
+            "label": "9 × IIS (ASP.NET MVC)",
+            "position": {
+              "x": 540,
+              "y": 200
+            },
+            "config": {
+              "instances": 9,
+              "concurrency": 200,
+              "queueSize": 200,
+              "latencyP50Ms": 10,
+              "latencyP99Ms": 40,
+              "routing": "pick",
+              "costPerHour": 0.3
+            }
+          },
+          {
+            "id": "redis",
+            "kind": "cache",
+            "label": "Redis",
+            "position": {
+              "x": 860,
+              "y": 100
+            },
+            "tech": "redis",
+            "config": {
+              "instances": 2,
+              "concurrency": 4000,
+              "queueSize": 1000,
+              "latencyP50Ms": 0.2,
+              "latencyP99Ms": 1,
+              "hitRate": 0.9,
+              "costPerHour": 0.2
+            }
+          },
+          {
+            "id": "sql",
+            "kind": "database",
+            "label": "SQL Server (384GB RAM)",
+            "position": {
+              "x": 1160,
+              "y": 200
+            },
+            "config": {
+              "instances": 1,
+              "concurrency": 400,
+              "queueSize": 1000,
+              "latencyP50Ms": 1.5,
+              "latencyP99Ms": 8,
+              "costPerHour": 2.0
+            }
+          }
+        ],
+        "edges": [
+          {
+            "source": "client",
+            "target": "lb",
+            "latencyMs": 30
+          },
+          {
+            "source": "lb",
+            "target": "web",
+            "latencyMs": 0.3
+          },
+          {
+            "source": "web",
+            "target": "redis",
+            "latencyMs": 0.3,
+            "timeoutMs": 100
+          },
+          {
+            "source": "redis",
+            "target": "sql",
+            "latencyMs": 0.3,
+            "timeoutMs": 1000,
+            "poolSize": 50
+          }
+        ]
+      },
+      "scenario": {
+        "seed": 1,
+        "durationMs": 60000,
+        "timeoutMs": 2000,
+        "traffic": [
+          {
+            "atMs": 0,
+            "rps": 2400
+          },
+          {
+            "atMs": 20000,
+            "rps": 5000
+          },
+          {
+            "atMs": 40000,
+            "rps": 2400
+          }
+        ],
+        "slo": {
+          "p99Ms": 200,
+          "errorRate": 0.01
+        },
+        "windowMs": 1000
+      }
+    }
+  ]
+}

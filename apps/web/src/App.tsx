@@ -15,7 +15,8 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
-import { LEARN_LEVELS, LEVELS, PRESETS } from './presets';
+import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
+import { CaseLibrary } from './cases/CaseLibrary';
 import { LearnPage } from './learn/LearnPage';
 import { useProgress } from './learn/progress';
 import { LESSONS } from './learn/curriculum';
@@ -981,7 +982,15 @@ export function App() {
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : mode === 'sandbox' && !project ? (
-        <ProjectsHome presets={PRESETS} onOpen={openProject} tab={homeTab} onTab={setHomeTab} />
+        <ProjectsHome
+          presets={PRESETS}
+          onOpen={openProject}
+          tab={homeTab}
+          onTab={setHomeTab}
+          extraTabs={[
+            { value: 'cases', label: `Case study · ${CASES.length}`, content: <CaseLibrary cases={CASES} onOpen={openProject} /> },
+          ]}
+        />
       ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
