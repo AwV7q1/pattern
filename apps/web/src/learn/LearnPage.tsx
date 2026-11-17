@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Brain, Check, Dumbbell, Flame, Lock, RotateCcw, Star, Target, Wrench, Zap } from 'lucide-react';
+import { BookA, BookOpen, Brain, Check, Dumbbell, Flame, Lock, RotateCcw, Star, Target, Wrench, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -8,6 +8,8 @@ import { LESSONS, UNITS, cardByKey, lessonXp } from './curriculum';
 import { DAILY_GOAL, REVIEW_SIZE, dueKeys, isUnlocked, nextLesson, streak, today, useProgress } from './progress';
 import { LessonRunner } from './LessonRunner';
 import { ReviewPanel } from './ReviewPanel';
+import { GLOSSARY } from './glossary';
+import { GlossaryButton, GlossaryProvider } from './Glossary';
 import type { Lesson } from './types';
 
 const REVIEW_UNIT = { title: 'Ôn tập', color: '#f59e0b' };
@@ -29,7 +31,15 @@ interface Props {
  * mix explanations with animated sequence diagrams, quizzes, ordering tasks,
  * predictions checked by the engine, and practice levels on the canvas.
  */
-export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
+export function LearnPage(props: Props) {
+  return (
+    <GlossaryProvider>
+      <LearnPageInner {...props} />
+    </GlossaryProvider>
+  );
+}
+
+function LearnPageInner({ onBuild, openLesson, onOpened }: Props) {
   const { progress, complete, recordAnswer, addXp, setUnlockAll, reset } = useProgress();
   const [review, setReview] = useState<{ id: number; keys: string[] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -98,6 +108,15 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
     <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto" onClick={() => setPicked(null)}>
         <div className="mx-auto grid max-w-xl gap-10 px-6 py-8">
+          <GlossaryButton className="flex items-center gap-3 rounded-2xl border-2 border-b-4 p-4 text-left hover:bg-muted/50">
+            <BookA className="size-8 shrink-0 text-sky-400" />
+            <span className="flex-1">
+              <b>Từ điển thuật ngữ</b>
+              <span className="block text-xs text-muted-foreground">
+                {GLOSSARY.length} khái niệm như p99, rps, load balancer… Trong bài, từ có gạch chân chấm là thuật ngữ: di chuột hoặc chạm để xem nghĩa.
+              </span>
+            </span>
+          </GlossaryButton>
           {due.length > 0 && (
             <button
               type="button"

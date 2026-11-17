@@ -223,7 +223,7 @@ export const UNITS: Unit[] = [
           {
             type: 'read',
             title: 'Một server phục vụ được bao nhiêu?',
-            body: 'Một server có một số **slot** (thread, connection) làm việc cùng lúc. Mỗi request chiếm một slot trong thời gian xử lý.\n\n**Công suất ≈ số slot ÷ thời gian xử lý.** Ví dụ 10 slot, mỗi request 50 ms (0.05 s): 10 ÷ 0.05 = **200 request/giây** (rps).\n\nRequest đến nhanh hơn mức đó thì phải **xếp hàng**. Hàng đợi đầy thì server **từ chối** (lỗi 503).',
+            body: 'Một server có một số **slot** (thread, connection) làm việc cùng lúc. Mỗi request chiếm một slot trong thời gian xử lý.\n\n**Công suất ≈ số slot ÷ thời gian xử lý.** Ví dụ 10 slot, mỗi request 50 ms (0.05 s): 10 ÷ 0.05 = **200 request/giây** (rps). Số request thực sự xử lý xong mỗi giây gọi là **throughput**.\n\nRequest đến nhanh hơn mức đó thì phải **xếp hàng**. Hàng đợi đầy thì server **từ chối** (lỗi 503).',
           },
           {
             type: 'choice',
@@ -527,7 +527,7 @@ export const UNITS: Unit[] = [
           {
             type: 'read',
             title: 'Máy to hơn hay nhiều máy hơn?',
-            body: '- **Scale dọc** (vertical): mua máy mạnh hơn. Đơn giản, nhưng có giới hạn và đắt dần lên\n- **Scale ngang** (horizontal): thêm máy giống nhau, đặt **load balancer** phía trước để chia request\n\nScale ngang còn cho thêm **dự phòng**: mất một máy thì các máy khác gánh thay.',
+            body: '- **Scale dọc** (vertical): mua máy mạnh hơn. Đơn giản, nhưng có giới hạn và đắt dần lên\n- **Scale ngang** (horizontal): thêm máy giống nhau (mỗi bản đang chạy gọi là một **instance**), đặt **load balancer** phía trước để chia request\n\nScale ngang còn cho thêm **dự phòng**: mất một máy thì các máy khác gánh thay.',
             anim: {
               actors: ['Users', 'Load balancer', 'API 1', 'API 2'],
               steps: [
@@ -584,7 +584,7 @@ export const UNITS: Unit[] = [
           {
             type: 'read',
             title: 'Vì sao không chạy server ở 95%?',
-            body: 'Thời gian xếp hàng tăng theo **1 ÷ (1 − tải)**:\n- 50% tải: chờ ×2\n- 80%: ×5\n- 90%: ×10\n- 95%: ×20\n\nGần 100% thì hàng đợi tăng rất nhanh, chỉ một đợt request dồn lên là p99 bùng nổ. Vì vậy người ta thường nhắm **60–70%** khi lên kế hoạch.',
+            body: 'Thời gian xếp hàng tăng theo **1 ÷ (1 − tải)**:\n- 50% tải: chờ ×2\n- 80%: ×5\n- 90%: ×10\n- 95%: ×20\n\nGần 100% thì hàng đợi tăng rất nhanh, chỉ một đợt request dồn lên là p99 bùng nổ. Chỗ latency bắt đầu tăng vọt gọi là **điểm gãy**. Vì vậy người ta thường nhắm **60–70%** khi lên kế hoạch.',
           },
           {
             type: 'predict',

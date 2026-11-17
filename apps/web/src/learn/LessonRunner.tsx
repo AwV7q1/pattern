@@ -7,27 +7,30 @@ import type { Card, KnobValue, Lesson, Metric } from './types';
 import { SequenceAnim } from './SequenceAnim';
 import { FixCard, defaultValues, type Attempt } from './FixCard';
 import { applyKnobs, formatMetric, goalMet, goalText, trapsHit } from './fix';
+import { GlossaryButton, Glossed, glossify } from './Glossary';
 
 // ---------------------------------------------------------------- markdown-lite
 
-function inline(text: string): ReactNode[] {
+/** `seen`: glossary terms already underlined in this block (each term once). */
+function inline(text: string, seen: Set<string>): ReactNode[] {
   return text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((part, i) =>
     part.startsWith('**') ? (
       <b key={i} className="text-foreground">
-        {part.slice(2, -2)}
+        {glossify(part.slice(2, -2), seen)}
       </b>
     ) : part.startsWith('`') ? (
       <code key={i} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground">
         {part.slice(1, -1)}
       </code>
     ) : (
-      <Fragment key={i}>{part}</Fragment>
+      <Fragment key={i}>{glossify(part, seen)}</Fragment>
     ),
   );
 }
 
 /** Paragraphs separated by blank lines, `- ` bullets, **bold**, `code`. */
 export function Prose({ text, className }: { text: string; className?: string }) {
+  const seen = new Set<string>();
   return (
     <div className={cn('grid gap-3 text-[15px] leading-relaxed text-muted-foreground', className)}>
       {text.split('\n\n').map((block, i) => {
@@ -36,7 +39,7 @@ export function Prose({ text, className }: { text: string; className?: string })
           return (
             <ul key={i} className="grid list-disc gap-1 pl-5">
               {lines.map((l, j) => (
-                <li key={j}>{inline(l.slice(2))}</li>
+                <li key={j}>{inline(l.slice(2), seen)}</li>
               ))}
             </ul>
           );
@@ -45,12 +48,12 @@ export function Prose({ text, className }: { text: string; className?: string })
         return (
           <div key={i} className="grid gap-1">
             {head.map((l, j) => (
-              <p key={j}>{inline(l)}</p>
+              <p key={j}>{inline(l, seen)}</p>
             ))}
             {bullets.length > 0 && (
               <ul className="grid list-disc gap-1 pl-5">
                 {bullets.map((l, j) => (
-                  <li key={j}>{inline(l.slice(2))}</li>
+                  <li key={j}>{inline(l.slice(2), seen)}</li>
                 ))}
               </ul>
             )}
@@ -272,6 +275,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
           <div className="h-full rounded-full bg-emerald-400 transition-[width] duration-500" style={{ width: `${Math.max(4, pct)}%` }} />
         </div>
         {retried.size > 0 && <span className="text-xs text-muted-foreground">ôn lại {retried.size}</span>}
+        <GlossaryButton className="text-muted-foreground hover:text-foreground" />
       </div>
 
       {/* card */}
@@ -291,7 +295,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
 
           {card.type === 'choice' && (
             <>
-              <h2 className="text-xl font-bold">{card.question}</h2>
+              <h2 className="text-xl font-bold"><Glossed text={card.question} /></h2>
               {card.anim && <SequenceAnim spec={card.anim} />}
               <div className="grid gap-2">
                 {card.options.map((o, i) => (
@@ -314,7 +318,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
               <div className="flex items-center gap-2 text-sm font-semibold text-sky-400">
                 <FlaskConical className="size-4" /> Đoán trước, simulator kiểm chứng
               </div>
-              <h2 className="text-xl font-bold">{card.question}</h2>
+              <h2 className="text-xl font-bold"><Glossed text={card.question} /></h2>
               <div className="grid grid-cols-2 gap-2">
                 {card.options.map((o, i) => (
                   <OptionButton
@@ -333,7 +337,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
 
           {card.type === 'order' && (
             <>
-              <h2 className="text-xl font-bold">{card.question}</h2>
+              <h2 className="text-xl font-bold"><Glossed text={card.question} /></h2>
               <div className="grid min-h-[3.5rem] gap-2 rounded-xl border-2 border-dashed p-2">
                 {order.length === 0 && <span className="p-2 text-sm text-muted-foreground">Bấm các bước bên dưới theo thứ tự…</span>}
                 {order.map((item, i) => (
@@ -375,7 +379,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
               <div className="flex items-center gap-2 text-sm font-semibold text-sky-400">
                 <Wrench className="size-4" /> Sửa design, simulator chấm
               </div>
-              <h2 className="text-xl font-bold">{card.question}</h2>
+              <h2 className="text-xl font-bold"><Glossed text={card.question} /></h2>
               <FixCard
                 card={card}
                 values={values}
@@ -394,7 +398,9 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
                 <Dumbbell className="size-10" />
               </div>
               <h2 className="text-2xl font-bold">Thực hành trên canvas</h2>
-              <p className="max-w-lg text-muted-foreground">{card.intro}</p>
+              <p className="max-w-lg text-muted-foreground">
+                <Glossed text={card.intro} />
+              </p>
               <p className="text-xs text-muted-foreground">Đạt ít nhất 1★ khi chấm điểm để hoàn thành bài này.</p>
               <Button size="lg" onClick={() => onBuild(card.level)}>
                 Mở bài thực hành
@@ -429,7 +435,11 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, 
                     {verdict.correct ? 'Chính xác!' : 'Chưa đúng'}
                   </div>
                   {verdict.detail && <p className="text-sm">{verdict.detail}</p>}
-                  {'explain' in card && <p className="text-sm text-muted-foreground">{card.explain}</p>}
+                  {'explain' in card && (
+                    <p className="text-sm text-muted-foreground">
+                      <Glossed text={card.explain} />
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (

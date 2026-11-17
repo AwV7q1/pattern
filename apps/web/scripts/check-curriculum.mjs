@@ -69,5 +69,26 @@ for (const unit of UNITS) {
     });
   }
 }
+// ---------------------------------------------------------------- glossary
+const { GLOSSARY, findTerms } = await import('../src/learn/glossary.ts');
+const unitIds = new Set(UNITS.map((u) => u.id));
+const termIds = new Set();
+const spellings = new Map();
+for (const t of GLOSSARY) {
+  if (termIds.has(t.id)) fail(`glossary ${t.id}`, 'duplicate term id');
+  termIds.add(t.id);
+  if (!unitIds.has(t.unit)) fail(`glossary ${t.id}`, `unknown unit ${t.unit}`);
+  for (const s of new Set([t.term, t.term.replace(/\s*\(.*\)$/, ''), ...(t.aliases ?? [])].map((x) => x.toLowerCase()))) {
+    if (spellings.has(s) && spellings.get(s) !== t.id) fail(`glossary ${t.id}`, `spelling "${s}" also used by ${spellings.get(s)}`);
+    spellings.set(s, t.id);
+  }
+}
+// every term should appear somewhere in the lessons (warning only)
+const text = UNITS.flatMap((u) => [u.description, ...u.lessons.flatMap((l) => l.cards.map((c) => [c.title, c.body, c.question, c.explain, c.intro].filter(Boolean).join('\n')))]).join('\n');
+const used = new Set(findTerms(text).filter((p) => typeof p !== 'string').map((p) => p.term.id));
+const unused = GLOSSARY.filter((t) => !used.has(t.id)).map((t) => t.id);
+if (unused.length) console.log(`warn glossary terms not found in lesson text: ${unused.join(', ')}`);
+console.log(`glossary: ${GLOSSARY.length} terms, ${used.size} used in lessons`);
+
 console.log(failures ? `${failures} problem(s)` : `curriculum ok: ${ids.size} lessons`);
 process.exit(failures ? 1 : 0);
