@@ -1,0 +1,42 @@
+{
+  "design": {
+    "nodes": [
+      {
+        "id": "loadgen",
+        "kind": "client"
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "NestJS (1 process)",
+        "config": {
+          "model": "cpu",
+          "cpuLanes": 1,
+          "maxInFlight": 100000,
+          "queueSize": 0,
+          "cpuP50Ms": 0.3,
+          "cpuP99Ms": 0.9
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "loadgen",
+        "target": "api",
+        "latencyMs": 0.1
+      }
+    ]
+  },
+  "scenario": {
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1000
+      }
+    ],
+    "slo": {
+      "p99Ms": 100,
+      "errorRate": 0.01
+    }
+  }
+}

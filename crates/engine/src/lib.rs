@@ -6,16 +6,18 @@
 //! transcendental math goes through `libm`, so a given input always produces
 //! the same output on every platform.
 
+pub mod calibrate;
 pub mod histogram;
 pub mod level;
 pub mod model;
 pub mod rng;
 pub mod sim;
+pub mod sizing;
 
 pub use level::{default_catalog, level_input, play_level, Level};
 pub use model::{
-    ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, NodeConfig, NodeKind, NodeSpec,
-    Scenario, SimInput, Slo, TrafficPhase,
+    Arrival, ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
+    NodeKind, NodeSpec, Scenario, SimInput, Slo, TrafficPhase,
 };
 pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, WindowMetrics};
 

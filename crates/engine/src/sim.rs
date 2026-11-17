@@ -17,6 +17,12 @@
 //!    asynchronously with `instances * concurrency` consumers.
 //! 6. Scripted chaos events (node down/up, slowdown, error bursts) fire at
 //!    fixed simulated times.
+//! 7. `cpu` nodes (Node.js, Postgres) separate *in-flight* requests from
+//!    *CPU lanes*: a request computes in slices around its downstream calls
+//!    and only queues for a lane while computing. Waiting for a lane is the
+//!    event-loop lag.
+//! 8. Edges may carry a connection pool: calls wait for a free connection,
+//!    and a connection stays busy until the callee answers.
 //!
 //! Time is integer microseconds; the event heap is ordered by
 //! `(time, sequence)` so simultaneous events resolve deterministically.
@@ -27,7 +33,9 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 use serde::Serialize;
 
 use crate::histogram::Histogram;
-use crate::model::{ChaosAction, CircuitBreaker, NodeKind, SimInput, Slo};
+use crate::model::{
+    Arrival, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, SimInput, Slo,
+};
 use crate::rng::Rng;
 
 pub type Time = u64; // microseconds
@@ -36,6 +44,8 @@ const Z99: f64 = 2.326_347_874; // z-score of the 99th percentile
 const MAX_LATENCY_US: f64 = 60_000_000.0;
 const MAX_PENDING_PARTICLE_FLOATS: usize = 4 * 500_000;
 const NO_EDGE: u32 = u32::MAX;
+/// Placeholder in a CPU queue for a pending GC pause.
+const GC_JOB: u32 = u32::MAX;
 /// Particle kinds, written into the particle stream.
 pub const PARTICLE_REQUEST: f32 = 0.0;
 pub const PARTICLE_RESPONSE_OK: f32 = 1.0;
@@ -50,6 +60,13 @@ fn us_to_ms(v: f64) -> f64 {
     v / 1000.0
 }
 
+/// Lognormal `(mu, sigma)` in µs from a p50 and p99 in ms.
+fn lognormal_params(p50_ms: f64, p99_ms: f64) -> (f64, f64) {
+    let p50 = (p50_ms * 1000.0).max(1.0);
+    let p99 = (p99_ms * 1000.0).max(p50);
+    (libm::log(p50), (libm::log(p99) - libm::log(p50)) / Z99)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Ev {
     ClientArrival,
@@ -62,12 +79,34 @@ enum Ev {
         call: u32,
         gen: u32,
     },
-    /// The response of child `token` reaches caller `call`.
+    /// The response of child `token` reaches caller `call` over `edge`.
     Response {
         call: u32,
         gen: u32,
         token: u64,
+        edge: u32,
         ok: bool,
+    },
+    /// A CPU slice of a `cpu` node finished.
+    CpuDone {
+        call: u32,
+        gen: u32,
+    },
+    /// Local non-CPU wait of a `cpu` node finished.
+    IoDone {
+        call: u32,
+        gen: u32,
+    },
+    /// A GC pause on instance `inst` of `node` ended.
+    GcDone {
+        node: u32,
+        inst: u32,
+    },
+    /// Gave up waiting for a pooled connection.
+    PoolTimeout {
+        call: u32,
+        gen: u32,
+        token: u64,
     },
     Timeout {
         call: u32,
@@ -107,14 +146,46 @@ impl Ord for Scheduled {
     }
 }
 
-struct NodeRt {
-    kind: NodeKind,
-    capacity: u32,
+/// One server of a node.
+#[derive(Default)]
+struct Inst {
     busy: u32,
     queue: VecDeque<u32>,
+    cpu_busy: u32,
+    cpu_queue: VecDeque<u32>,
+    /// Requests since the last GC pause.
+    gc_count: u32,
+}
+
+struct NodeRt {
+    kind: NodeKind,
+    model: ExecModel,
+    balance: Balance,
+    instances: f64,
+    /// Processes per instance, for per-process connection pools.
+    processes: u32,
+    insts: Vec<Inst>,
+    next_inst: usize,
+    /// Per instance: `threads` slots or `cpu` in-flight permits.
+    slots: u32,
     queue_cap: usize,
+    lanes: u32,
+    /// Totals over instances, for utilization.
+    capacity: u32,
+    busy: u32,
+    cpu_cap: u32,
+    cpu_busy: u32,
     mu: f64,
     sigma: f64,
+    cpu_mu: f64,
+    cpu_sigma: f64,
+    io: Option<(f64, f64)>,
+    calls: u32,
+    contention: f64,
+    coherency: f64,
+    gc_pause: Time,
+    gc_every: u32,
+    wakeup: Time,
     base_error_rate: f64,
     error_rate: f64,
     latency_factor: f64,
@@ -125,6 +196,10 @@ struct NodeRt {
     // window accounting
     busy_area: f64,
     last_change: Time,
+    cpu_area: f64,
+    cpu_last: Time,
+    lag_sum: f64,
+    lag_n: u64,
     rejected: u64,
     arrivals: u64,
 }
@@ -132,6 +207,57 @@ struct NodeRt {
 impl NodeRt {
     fn account(&mut self, now: Time) {
         self.busy_area += self.busy as f64 * now.saturating_sub(self.last_change) as f64;
+        self.last_change = now;
+    }
+
+    fn account_cpu(&mut self, now: Time) {
+        self.cpu_area += self.cpu_busy as f64 * now.saturating_sub(self.cpu_last) as f64;
+        self.cpu_last = now;
+    }
+
+    /// Downstream calls a request makes here.
+    fn effective_calls(&self) -> u32 {
+        if self.out.is_empty() {
+            0
+        } else {
+            self.calls
+        }
+    }
+
+    /// USL slowdown with the number of active requests on instance `i`.
+    fn usl(&self, i: usize) -> f64 {
+        if self.contention <= 0.0 && self.coherency <= 0.0 {
+            return 1.0;
+        }
+        let n = (self.insts[i].busy as f64).max(1.0);
+        1.0 + self.contention * (n - 1.0) + self.coherency * n * (n - 1.0)
+    }
+
+    fn queued(&self) -> usize {
+        self.insts.iter().map(|i| i.queue.len()).sum()
+    }
+
+    fn cpu_queued(&self) -> usize {
+        self.insts.iter().map(|i| i.cpu_queue.len()).sum()
+    }
+}
+
+struct PoolRt {
+    cap: u32,
+    busy: u32,
+    timeout: Time,
+    /// `(call, gen, wait token, enqueued at)`; stale entries are skipped.
+    waiters: VecDeque<(u32, u32, u64, Time)>,
+    area: f64,
+    last_change: Time,
+    wait_sum: f64,
+    wait_n: u64,
+    timeouts: u64,
+}
+
+impl PoolRt {
+    fn account(&mut self, now: Time) {
+        self.area += self.busy as f64 * now.saturating_sub(self.last_change) as f64;
         self.last_change = now;
     }
 }
@@ -159,6 +285,7 @@ struct EdgeRt {
     backoff: Time,
     jitter: bool,
     breaker: Option<Breaker>,
+    pool: Option<PoolRt>,
     // window accounting
     w_calls: u64,
     w_retries: u64,
@@ -194,6 +321,16 @@ struct Call {
     waiting: u64,
     out_edge: u32,
     last_timeout: bool,
+    /// Downstream calls completed so far.
+    step: u32,
+    /// CPU time of each slice (`cpu` nodes).
+    slice: Time,
+    /// When the call started waiting for a CPU lane.
+    enq: Time,
+    /// Token while waiting for a pooled connection, 0 otherwise.
+    pool_wait: u64,
+    /// Instance of `node` serving the call.
+    inst: u32,
 }
 
 #[derive(Default)]
@@ -204,6 +341,7 @@ struct Acc {
     async_ok: u64,
     async_err: u64,
     retries: u64,
+    dropped: u64,
     hist: Histogram,
 }
 
@@ -215,6 +353,7 @@ impl Acc {
         self.async_ok = 0;
         self.async_err = 0;
         self.retries = 0;
+        self.dropped = 0;
         self.hist.clear();
     }
 }
@@ -223,9 +362,16 @@ impl Acc {
 #[serde(rename_all = "camelCase")]
 pub struct NodeWindow {
     /// Time-weighted fraction of busy slots during the window (0..1).
+    /// `cpu` nodes: fraction of busy CPU lanes.
     pub utilization: f64,
+    /// Average requests open at the node (Little's law: rps × latency).
+    pub in_flight: f64,
     /// Queue length at the end of the window.
     pub queue: usize,
+    /// `cpu` nodes: requests waiting for a CPU lane at the end of the window.
+    pub cpu_queue: usize,
+    /// `cpu` nodes: average wait for a CPU lane (event-loop lag), ms.
+    pub lag_ms: f64,
     /// Calls arriving per second (including retries).
     pub arrivals: f64,
     pub rejected: u64,
@@ -243,6 +389,12 @@ pub struct EdgeWindow {
     pub short_circuits: u64,
     /// `closed`, `open` or `halfOpen` at the end of the window.
     pub breaker: &'static str,
+    /// Pooled edges: fraction of connections busy (0..1).
+    pub pool_utilization: f64,
+    /// Pooled edges: average wait for a connection, ms.
+    pub pool_wait_ms: f64,
+    /// Pooled edges: attempts that gave up waiting for a connection.
+    pub pool_timeouts: u64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -258,6 +410,8 @@ pub struct WindowMetrics {
     pub async_ok: u64,
     pub async_err: u64,
     pub retries: u64,
+    /// Requests the load generator skipped (`maxConcurrent` reached).
+    pub dropped: u64,
     pub p50_ms: f64,
     pub p95_ms: f64,
     pub p99_ms: f64,
@@ -279,6 +433,7 @@ pub struct Summary {
     pub async_ok: u64,
     pub async_err: u64,
     pub retries: u64,
+    pub dropped: u64,
     pub error_rate: f64,
     pub throughput_rps: f64,
     pub p50_ms: f64,
@@ -334,6 +489,9 @@ pub struct Simulation {
     client: u32,
     traffic: Vec<(Time, f64)>,
     multiplier: f64,
+    arrival: Arrival,
+    max_concurrent: Option<u32>,
+    user_in_flight: u32,
     slo: Slo,
     budget: Option<f64>,
     window: Time,
@@ -382,25 +540,64 @@ impl Simulation {
             .iter()
             .map(|n| {
                 let c = &n.config;
-                let p50 = (c.latency_p50_ms * 1000.0).max(1.0);
-                let p99 = (c.latency_p99_ms * 1000.0).max(p50);
+                let (mu, sigma) = lognormal_params(c.latency_p50_ms, c.latency_p99_ms);
+                let (cpu_mu, cpu_sigma) = lognormal_params(c.cpu_p50_ms, c.cpu_p99_ms);
+                let io = (c.io_p50_ms > 0.0).then(|| lognormal_params(c.io_p50_ms, c.io_p99_ms));
                 let instances = c.instances.max(1);
                 if n.kind != NodeKind::Client {
                     cost_per_hour += c.cost_per_hour * instances as f64;
                 }
                 let error_rate = c.error_rate.clamp(0.0, 1.0);
+                let model = if n.kind == NodeKind::Client {
+                    ExecModel::Threads
+                } else {
+                    c.model
+                };
+                let per_instance = match model {
+                    ExecModel::Threads => c.concurrency.max(1),
+                    ExecModel::Cpu => c.max_in_flight.max(1),
+                };
+                let slots = if n.kind == NodeKind::Client {
+                    0
+                } else {
+                    per_instance
+                };
                 NodeRt {
                     kind: n.kind,
-                    capacity: if n.kind == NodeKind::Client {
-                        0
-                    } else {
-                        instances * c.concurrency.max(1)
+                    model,
+                    balance: c.balance,
+                    instances: instances as f64,
+                    insts: (0..instances).map(|_| Inst::default()).collect(),
+                    next_inst: 0,
+                    slots,
+                    lanes: c.cpu_lanes.max(1),
+                    processes: match model {
+                        ExecModel::Threads => 1,
+                        ExecModel::Cpu => c.cpu_lanes.max(1),
                     },
+                    capacity: instances.saturating_mul(slots),
                     busy: 0,
-                    queue: VecDeque::new(),
-                    queue_cap: (instances * c.queue_size) as usize,
-                    mu: libm::log(p50),
-                    sigma: (libm::log(p99) - libm::log(p50)) / Z99,
+                    queue_cap: c.queue_size as usize,
+                    mu,
+                    sigma,
+                    cpu_cap: instances.saturating_mul(c.cpu_lanes.max(1)),
+                    cpu_busy: 0,
+                    cpu_mu,
+                    cpu_sigma,
+                    io,
+                    calls: match n.kind {
+                        NodeKind::Service | NodeKind::Database => c.calls_per_request.clamp(1, 100),
+                        _ => 1,
+                    },
+                    contention: c.contention.max(0.0),
+                    coherency: c.coherency.max(0.0),
+                    gc_pause: ms_to_us(c.gc_pause_ms),
+                    wakeup: ms_to_us(c.wakeup_ms),
+                    gc_every: if model == ExecModel::Cpu && c.gc_pause_ms > 0.0 {
+                        c.gc_every_requests
+                    } else {
+                        0
+                    },
                     base_error_rate: error_rate,
                     error_rate,
                     latency_factor: 1.0,
@@ -410,6 +607,10 @@ impl Simulation {
                     rr: 0,
                     busy_area: 0.0,
                     last_change: 0,
+                    cpu_area: 0.0,
+                    cpu_last: 0,
+                    lag_sum: 0.0,
+                    lag_n: 0,
                     rejected: 0,
                     arrivals: 0,
                 }
@@ -431,6 +632,22 @@ impl Simulation {
                 return Err(format!("edge {i}: a node cannot call itself"));
             }
             nodes[from as usize].out.push(i as u32);
+            let pool = e.pool_size.filter(|p| *p > 0).map(|p| {
+                let src = &nodes[from as usize];
+                PoolRt {
+                    cap: p
+                        .saturating_mul(src.instances as u32)
+                        .saturating_mul(src.processes),
+                    busy: 0,
+                    timeout: ms_to_us(e.pool_timeout_ms.max(1.0)),
+                    waiters: VecDeque::new(),
+                    area: 0.0,
+                    last_change: 0,
+                    wait_sum: 0.0,
+                    wait_n: 0,
+                    timeouts: 0,
+                }
+            });
             let timeout = match e.timeout_ms {
                 Some(t) if t > 0.0 => Some(ms_to_us(t)),
                 Some(_) => None,
@@ -451,6 +668,7 @@ impl Simulation {
                     calls: 0,
                     failures: 0,
                 }),
+                pool,
                 w_calls: 0,
                 w_retries: 0,
                 w_timeouts: 0,
@@ -498,6 +716,9 @@ impl Simulation {
             client,
             traffic,
             multiplier: 1.0,
+            arrival: sc.arrival,
+            max_concurrent: sc.max_concurrent,
+            user_in_flight: 0,
             slo: sc.slo,
             budget: sc.budget_per_hour,
             window: ms_to_us(sc.window_ms).max(1000),
@@ -568,7 +789,7 @@ impl Simulation {
         }
         n.down = down;
         if down {
-            let drained: Vec<u32> = n.queue.drain(..).collect();
+            let drained: Vec<u32> = n.insts.iter_mut().flat_map(|i| i.queue.drain(..)).collect();
             n.rejected += drained.len() as u64;
             for call in drained {
                 self.settle(call, false);
@@ -606,6 +827,7 @@ impl Simulation {
             async_ok: t.async_ok,
             async_err: t.async_err,
             retries: t.retries,
+            dropped: t.dropped,
             error_rate,
             throughput_rps: if secs > 0.0 { t.ok as f64 / secs } else { 0.0 },
             p50_ms: us_to_ms(t.hist.percentile(0.5)),
@@ -624,7 +846,7 @@ impl Simulation {
                 .nodes
                 .iter()
                 .filter(|n| n.kind == NodeKind::Queue)
-                .map(|n| n.queue.len() as u64)
+                .map(|n| n.queued() as u64)
                 .sum(),
             stars: 0,
         };
@@ -682,6 +904,11 @@ impl Simulation {
                     waiting: 0,
                     out_edge: NO_EDGE,
                     last_timeout: false,
+                    step: 0,
+                    slice: 0,
+                    enq: 0,
+                    pool_wait: 0,
+                    inst: 0,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -696,6 +923,11 @@ impl Simulation {
         c.waiting = 0;
         c.out_edge = NO_EDGE;
         c.last_timeout = false;
+        c.step = 0;
+        c.slice = 0;
+        c.enq = 0;
+        c.pool_wait = 0;
+        c.inst = 0;
         id
     }
 
@@ -709,14 +941,19 @@ impl Simulation {
         self.calls[call as usize].gen == gen
     }
 
-    fn sample_latency(&mut self, node: u32) -> Time {
-        let n = &self.nodes[node as usize];
-        let (mu, sigma, factor) = (n.mu, n.sigma, n.latency_factor);
-        let v = if sigma <= 0.0 {
+    fn sample(&mut self, mu: f64, sigma: f64) -> f64 {
+        if sigma <= 0.0 {
             libm::exp(mu)
         } else {
             self.rng.lognormal(mu, sigma)
-        };
+        }
+    }
+
+    /// Local processing time of a `threads` node.
+    fn sample_latency(&mut self, node: u32, inst: usize) -> Time {
+        let n = &self.nodes[node as usize];
+        let (mu, sigma, factor) = (n.mu, n.sigma, n.latency_factor * n.usl(inst));
+        let v = self.sample(mu, sigma);
         (v * factor).clamp(1.0, MAX_LATENCY_US) as Time
     }
 
@@ -737,8 +974,24 @@ impl Simulation {
                 call,
                 gen,
                 token,
+                edge,
                 ok,
-            } => self.on_response(call, gen, token, ok),
+            } => {
+                self.release_pool(edge);
+                self.on_response(call, gen, token, ok);
+            }
+            Ev::CpuDone { call, gen } => {
+                if self.live(call, gen) {
+                    self.on_cpu_done(call);
+                }
+            }
+            Ev::IoDone { call, gen } => {
+                if self.live(call, gen) {
+                    self.proceed(call);
+                }
+            }
+            Ev::PoolTimeout { call, gen, token } => self.on_pool_timeout(call, gen, token),
+            Ev::GcDone { node, inst } => self.release_lane(node, inst as usize),
             Ev::Timeout { call, gen, token } => self.on_timeout(call, gen, token),
             Ev::Retry { call, gen } => {
                 if self.live(call, gen) {
@@ -752,9 +1005,22 @@ impl Simulation {
     fn on_client_arrival(&mut self) {
         let rps = self.current_rps();
         if rps > 0.0 {
-            let root = self.alloc_call(self.client, Parent::User, NO_EDGE, self.now);
-            self.send_or_give_up(root);
-            let gap = (self.rng.exp(rps) * 1e6).max(1.0) as Time;
+            if self
+                .max_concurrent
+                .is_some_and(|cap| self.user_in_flight >= cap)
+            {
+                self.win.dropped += 1;
+                self.total.dropped += 1;
+            } else {
+                self.user_in_flight += 1;
+                let root = self.alloc_call(self.client, Parent::User, NO_EDGE, self.now);
+                self.send_or_give_up(root);
+            }
+            let gap = match self.arrival {
+                Arrival::Poisson => self.rng.exp(rps),
+                Arrival::Uniform => 1.0 / rps,
+            };
+            let gap = (gap * 1e6).max(1.0) as Time;
             self.schedule(self.now + gap, Ev::ClientArrival);
         } else {
             // idle: poll for traffic changes
@@ -786,7 +1052,27 @@ impl Simulation {
         let node = self.calls[call as usize].node;
         let n = &mut self.nodes[node as usize];
         n.arrivals += 1;
-        let has_room = n.busy < n.capacity || n.queue.len() < n.queue_cap;
+        let k = n.insts.len();
+        let inst = match n.balance {
+            _ if k == 1 => 0,
+            Balance::RoundRobin => {
+                n.next_inst = (n.next_inst + 1) % k;
+                n.next_inst
+            }
+            Balance::LeastConnections => {
+                let start = n.next_inst;
+                n.next_inst = (n.next_inst + 1) % k;
+                (0..k)
+                    .map(|j| (start + j) % k)
+                    .min_by_key(|&i| n.insts[i].busy as usize + n.insts[i].queue.len())
+                    .unwrap_or(0)
+            }
+            Balance::Random => (self.rng.f64() * k as f64) as usize % k,
+        };
+        self.calls[call as usize].inst = inst as u32;
+        let n = &mut self.nodes[node as usize];
+        let slot = &n.insts[inst];
+        let has_room = slot.busy < n.slots || slot.queue.len() < n.queue_cap;
         if n.down || !has_room {
             n.rejected += 1;
             self.settle(call, false);
@@ -801,20 +1087,175 @@ impl Simulation {
             c.start = self.now;
         }
         let n = &mut self.nodes[node as usize];
-        if n.busy < n.capacity {
+        if n.insts[inst].busy < n.slots {
             n.account(self.now);
             n.busy += 1;
+            n.insts[inst].busy += 1;
             self.start(call);
         } else {
-            n.queue.push_back(call);
+            n.insts[inst].queue.push_back(call);
         }
     }
 
+    /// The call got its slot (`threads`) or in-flight permit (`cpu`).
     fn start(&mut self, call: u32) {
+        let c = &self.calls[call as usize];
+        let (node, gen, inst) = (c.node, c.gen, c.inst as usize);
+        match self.nodes[node as usize].model {
+            ExecModel::Threads => {
+                let lat = self.sample_latency(node, inst);
+                self.schedule(self.now + lat, Ev::LocalDone { call, gen });
+            }
+            ExecModel::Cpu => {
+                let n = &self.nodes[node as usize];
+                let (mu, sigma, slices) = (n.cpu_mu, n.cpu_sigma, n.effective_calls() + 1);
+                let total = self.sample(mu, sigma);
+                self.calls[call as usize].slice = (total / slices as f64).max(1.0) as Time;
+                self.maybe_gc(node, inst);
+                self.request_cpu(call);
+            }
+        }
+    }
+
+    /// Run the next CPU slice of `call`, or wait for a lane.
+    fn request_cpu(&mut self, call: u32) {
+        let c = &self.calls[call as usize];
+        let (node, inst) = (c.node, c.inst as usize);
+        let n = &mut self.nodes[node as usize];
+        if n.insts[inst].cpu_busy < n.lanes {
+            n.account_cpu(self.now);
+            n.cpu_busy += 1;
+            n.insts[inst].cpu_busy += 1;
+            let wake = n.wakeup;
+            self.run_slice(call, wake);
+        } else {
+            n.insts[inst].cpu_queue.push_back(call);
+            self.calls[call as usize].enq = self.now;
+        }
+    }
+
+    /// `extra`: wake-up cost when the slice found its lane idle.
+    fn run_slice(&mut self, call: u32, extra: Time) {
+        let c = &self.calls[call as usize];
+        let (node, gen, slice, inst) = (c.node, c.gen, c.slice, c.inst as usize);
+        let n = &self.nodes[node as usize];
+        let work = (slice + extra) as f64;
+        let d = (work * n.latency_factor * n.usl(inst)).clamp(1.0, MAX_LATENCY_US) as Time;
+        self.schedule(self.now + d, Ev::CpuDone { call, gen });
+    }
+
+    /// Count a request on `inst`; every `gc_every` requests one process
+    /// stops the world. The pause jumps the queue (it preempts in reality).
+    fn maybe_gc(&mut self, node: u32, inst: usize) {
+        let n = &mut self.nodes[node as usize];
+        if n.gc_every == 0 {
+            return;
+        }
+        let i = &mut n.insts[inst];
+        i.gc_count += 1;
+        if i.gc_count < n.gc_every {
+            return;
+        }
+        i.gc_count = 0;
+        if i.cpu_busy < n.lanes {
+            n.account_cpu(self.now);
+            n.cpu_busy += 1;
+            n.insts[inst].cpu_busy += 1;
+            self.run_gc(node, inst);
+        } else {
+            i.cpu_queue.push_front(GC_JOB);
+        }
+    }
+
+    fn run_gc(&mut self, node: u32, inst: usize) {
+        let pause = self.nodes[node as usize].gc_pause as f64 * (0.5 + self.rng.f64());
+        self.schedule(
+            self.now + (pause as Time).max(1),
+            Ev::GcDone {
+                node,
+                inst: inst as u32,
+            },
+        );
+    }
+
+    /// A CPU lane of `inst` is free: hand it to the next waiting slice.
+    fn release_lane(&mut self, node: u32, inst: usize) {
+        let next = self.nodes[node as usize].insts[inst].cpu_queue.pop_front();
+        match next {
+            Some(GC_JOB) => self.run_gc(node, inst),
+            Some(next) => {
+                let lag = self.now - self.calls[next as usize].enq;
+                let n = &mut self.nodes[node as usize];
+                n.lag_sum += lag as f64;
+                n.lag_n += 1;
+                self.run_slice(next, 0);
+            }
+            None => {
+                let n = &mut self.nodes[node as usize];
+                n.account_cpu(self.now);
+                n.cpu_busy -= 1;
+                n.insts[inst].cpu_busy -= 1;
+            }
+        }
+    }
+
+    fn on_cpu_done(&mut self, call: u32) {
+        let (node, inst) = (
+            self.calls[call as usize].node,
+            self.calls[call as usize].inst as usize,
+        );
+        self.release_lane(node, inst);
+        if self.calls[call as usize].step > 0 {
+            self.proceed(call);
+            return;
+        }
+        // first slice: decide failure, then the local non-CPU wait
+        let (down, error_rate, io, factor) = {
+            let n = &self.nodes[node as usize];
+            (n.down, n.error_rate, n.io, n.latency_factor)
+        };
+        if down || (error_rate > 0.0 && self.rng.f64() < error_rate) {
+            self.finish(call, false);
+            return;
+        }
+        match io {
+            Some((mu, sigma)) => {
+                let d = (self.sample(mu, sigma) * factor).clamp(1.0, MAX_LATENCY_US) as Time;
+                let gen = self.calls[call as usize].gen;
+                self.schedule(self.now + d, Ev::IoDone { call, gen });
+            }
+            None => self.proceed(call),
+        }
+    }
+
+    /// Make the next downstream call, or answer once all calls are done.
+    fn proceed(&mut self, call: u32) {
         let node = self.calls[call as usize].node;
-        let lat = self.sample_latency(node);
-        let gen = self.calls[call as usize].gen;
-        self.schedule(self.now + lat, Ev::LocalDone { call, gen });
+        let calls = self.nodes[node as usize].effective_calls();
+        if self.calls[call as usize].step >= calls {
+            self.finish(call, true);
+            return;
+        }
+        self.calls[call as usize].attempt = 0;
+        match self.send(call) {
+            Send::Sent => {}
+            Send::NoEdge => self.finish(call, true),
+            Send::Blocked => self.finish(call, false),
+        }
+    }
+
+    /// A downstream call succeeded.
+    fn downstream_ok(&mut self, call: u32) {
+        let node = self.calls[call as usize].node;
+        if node == self.client {
+            self.settle(call, true);
+            return;
+        }
+        self.calls[call as usize].step += 1;
+        match self.nodes[node as usize].model {
+            ExecModel::Threads => self.proceed(call),
+            ExecModel::Cpu => self.request_cpu(call),
+        }
     }
 
     fn on_local_done(&mut self, call: u32) {
@@ -831,11 +1272,7 @@ impl Simulation {
             self.finish(call, true);
             return;
         }
-        match self.send(call) {
-            Send::Sent => {}
-            Send::NoEdge => self.finish(call, true),
-            Send::Blocked => self.finish(call, false),
-        }
+        self.proceed(call);
     }
 
     /// Ask the circuit breaker of `edge` whether a call may go through.
@@ -922,7 +1359,33 @@ impl Simulation {
         let Some(edge) = chosen else {
             return Send::Blocked;
         };
+        self.calls[call as usize].out_edge = edge;
+        let now = self.now;
+        let gen = self.calls[call as usize].gen;
+        let mut wait = None;
+        if let Some(pool) = self.edges[edge as usize].pool.as_mut() {
+            if pool.busy >= pool.cap {
+                self.next_token += 1;
+                let token = self.next_token;
+                pool.waiters.push_back((call, gen, token, now));
+                wait = Some((token, pool.timeout));
+            } else {
+                pool.account(now);
+                pool.busy += 1;
+                pool.wait_n += 1;
+            }
+        }
+        if let Some((token, timeout)) = wait {
+            self.calls[call as usize].pool_wait = token;
+            self.schedule(now + timeout, Ev::PoolTimeout { call, gen, token });
+            return Send::Sent;
+        }
+        self.dispatch(call, edge);
+        Send::Sent
+    }
 
+    /// Send the child call of `call` over `edge` (connection already held).
+    fn dispatch(&mut self, call: u32, edge: u32) {
         let (gen, start_t, attempt) = {
             let c = &self.calls[call as usize];
             (c.gen, c.start, c.attempt)
@@ -935,9 +1398,7 @@ impl Simulation {
         let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
         let token = self.calls[child as usize].token;
         let child_gen = self.calls[child as usize].gen;
-        let c = &mut self.calls[call as usize];
-        c.waiting = token;
-        c.out_edge = edge;
+        self.calls[call as usize].waiting = token;
         self.schedule(
             self.now + lat,
             Ev::Arrive {
@@ -954,7 +1415,47 @@ impl Simulation {
             PARTICLE_REQUEST
         };
         self.emit(edge, lat, kind);
-        Send::Sent
+    }
+
+    /// A pooled connection on `edge` is free again: hand it to the next
+    /// caller still waiting for it.
+    fn release_pool(&mut self, edge: u32) {
+        let now = self.now;
+        let Some(pool) = self.edges[edge as usize].pool.as_mut() else {
+            return;
+        };
+        pool.account(now);
+        pool.busy -= 1;
+        let mut next = None;
+        while let Some((call, gen, token, at)) = pool.waiters.pop_front() {
+            let c = &mut self.calls[call as usize];
+            if c.gen != gen || c.pool_wait != token {
+                continue; // timed out meanwhile
+            }
+            c.pool_wait = 0;
+            pool.busy += 1;
+            pool.wait_sum += (now - at) as f64;
+            pool.wait_n += 1;
+            next = Some(call);
+            break;
+        }
+        if let Some(call) = next {
+            self.dispatch(call, edge);
+        }
+    }
+
+    fn on_pool_timeout(&mut self, call: u32, gen: u32, token: u64) {
+        if !self.live(call, gen) || self.calls[call as usize].pool_wait != token {
+            return;
+        }
+        let c = &mut self.calls[call as usize];
+        c.pool_wait = 0;
+        c.last_timeout = false;
+        let edge = c.out_edge;
+        if let Some(pool) = self.edges[edge as usize].pool.as_mut() {
+            pool.timeouts += 1;
+        }
+        self.downstream_failed(call);
     }
 
     fn send_or_give_up(&mut self, call: u32) {
@@ -971,7 +1472,7 @@ impl Simulation {
         self.calls[call as usize].waiting = 0;
         self.breaker_record(edge, ok);
         if ok {
-            self.downstream_done(call, true);
+            self.downstream_ok(call);
         } else {
             self.calls[call as usize].last_timeout = false;
             self.downstream_failed(call);
@@ -1025,14 +1526,18 @@ impl Simulation {
 
     /// Release the slot held by `call` and answer its caller.
     fn finish(&mut self, call: u32, ok: bool) {
-        let node = self.calls[call as usize].node;
+        let (node, inst) = (
+            self.calls[call as usize].node,
+            self.calls[call as usize].inst as usize,
+        );
         let n = &mut self.nodes[node as usize];
-        if let Some(next) = n.queue.pop_front() {
+        if let Some(next) = n.insts[inst].queue.pop_front() {
             // slot handed directly to the next waiting call
             self.start(next);
         } else {
             n.account(self.now);
             n.busy -= 1;
+            n.insts[inst].busy -= 1;
         }
         self.settle(call, ok);
     }
@@ -1049,6 +1554,7 @@ impl Simulation {
                     call: id,
                     gen,
                     token,
+                    edge,
                     ok,
                 },
             );
@@ -1083,6 +1589,7 @@ impl Simulation {
     }
 
     fn complete_user(&mut self, call: u32, ok: bool) {
+        self.user_in_flight = self.user_in_flight.saturating_sub(1);
         let c = &self.calls[call as usize];
         let latency = self.now - c.start;
         let timed_out = !ok && c.last_timeout;
@@ -1108,19 +1615,32 @@ impl Simulation {
                 .iter_mut()
                 .map(|n| {
                     n.account(end);
-                    let utilization = if n.capacity > 0 {
-                        (n.busy_area / (n.capacity as f64 * self.window as f64)).min(1.0)
-                    } else {
-                        0.0
-                    };
+                    n.account_cpu(end);
+                    let span = self.window as f64;
+                    let utilization = match n.model {
+                        _ if n.capacity == 0 => 0.0,
+                        ExecModel::Threads => n.busy_area / (n.capacity as f64 * span),
+                        ExecModel::Cpu => n.cpu_area / (n.cpu_cap as f64 * span),
+                    }
+                    .min(1.0);
                     let w = NodeWindow {
                         utilization,
-                        queue: n.queue.len(),
+                        in_flight: n.busy_area / span,
+                        queue: n.queued(),
+                        cpu_queue: n.cpu_queued(),
+                        lag_ms: if n.lag_n > 0 {
+                            us_to_ms(n.lag_sum / n.lag_n as f64)
+                        } else {
+                            0.0
+                        },
                         arrivals: n.arrivals as f64 / secs,
                         rejected: n.rejected,
                         down: n.down,
                     };
                     n.busy_area = 0.0;
+                    n.cpu_area = 0.0;
+                    n.lag_sum = 0.0;
+                    n.lag_n = 0;
                     n.rejected = 0;
                     n.arrivals = 0;
                     w
@@ -1135,12 +1655,35 @@ impl Simulation {
                         Some(CbState::Open { .. }) | Some(CbState::HalfOpen { .. }) => "halfOpen",
                         _ => "closed",
                     };
+                    let (pool_utilization, pool_wait_ms, pool_timeouts) = match e.pool.as_mut() {
+                        Some(p) => {
+                            p.account(end);
+                            let r = (
+                                (p.area / (p.cap as f64 * self.window as f64)).min(1.0),
+                                if p.wait_n > 0 {
+                                    us_to_ms(p.wait_sum / p.wait_n as f64)
+                                } else {
+                                    0.0
+                                },
+                                p.timeouts,
+                            );
+                            p.area = 0.0;
+                            p.wait_sum = 0.0;
+                            p.wait_n = 0;
+                            p.timeouts = 0;
+                            r
+                        }
+                        None => (0.0, 0.0, 0),
+                    };
                     let w = EdgeWindow {
                         calls: e.w_calls as f64 / secs,
                         retries: e.w_retries,
                         timeouts: e.w_timeouts,
                         short_circuits: e.w_short_circuits,
                         breaker,
+                        pool_utilization,
+                        pool_wait_ms,
+                        pool_timeouts,
                     };
                     e.w_calls = 0;
                     e.w_retries = 0;
@@ -1175,6 +1718,7 @@ impl Simulation {
                 async_ok: w.async_ok,
                 async_err: w.async_err,
                 retries: w.retries,
+                dropped: w.dropped,
                 p50_ms: us_to_ms(w.hist.percentile(0.5)),
                 p95_ms: us_to_ms(w.hist.percentile(0.95)),
                 p99_ms,
@@ -1264,6 +1808,8 @@ mod tests {
             window_ms: 1000.0,
             events: vec![],
             budget_per_hour: None,
+            arrival: Arrival::Poisson,
+            max_concurrent: None,
         }
     }
 
@@ -1577,5 +2123,231 @@ mod tests {
         input.design.edges.push(edge("db", "api"));
         let err = Simulation::new(&input, false).err().unwrap();
         assert!(err.contains("cycle"), "{err}");
+    }
+
+    // ------------------------------------------------------------ cpu model
+
+    fn node_api(cpu_ms: f64, lanes: u32, calls: u32) -> NodeConfig {
+        NodeConfig {
+            model: ExecModel::Cpu,
+            cpu_lanes: lanes,
+            max_in_flight: 10_000,
+            queue_size: 0,
+            cpu_p50_ms: cpu_ms,
+            cpu_p99_ms: cpu_ms,
+            calls_per_request: calls,
+            ..NodeConfig::default()
+        }
+    }
+
+    fn api_db_cpu(api: NodeConfig, db_ms: f64, pool: Option<u32>, rps: f64) -> SimInput {
+        let mut to_db = edge("api", "db");
+        to_db.pool_size = pool;
+        to_db.pool_timeout_ms = 500.0;
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node("api", NodeKind::Service, api),
+                    node(
+                        "db",
+                        NodeKind::Database,
+                        NodeConfig {
+                            concurrency: 100_000,
+                            latency_p50_ms: db_ms,
+                            latency_p99_ms: db_ms,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                ],
+                edges: vec![edge("c", "api"), to_db],
+            },
+            scenario: scenario(rps, 10_000.0),
+        }
+    }
+
+    fn windows(input: &SimInput) -> Vec<WindowMetrics> {
+        let mut sim = Simulation::new(input, false).unwrap();
+        sim.run_to_end().unwrap();
+        sim.take_windows()
+    }
+
+    #[test]
+    fn event_loop_waits_for_io_without_using_cpu() {
+        // 1 ms CPU, 100 ms DB: 500 rps keeps ~50 requests open but needs only
+        // half a CPU lane. A 10-thread pool would collapse; the event loop
+        // does not.
+        let s = run(&api_db_cpu(node_api(1.0, 1, 1), 100.0, None, 500.0));
+        assert_eq!(s.errors, 0);
+        assert!(s.p99_ms < 115.0, "p99 = {}", s.p99_ms);
+        let w = windows(&api_db_cpu(node_api(1.0, 1, 1), 100.0, None, 500.0));
+        let api = &w[5].nodes[1];
+        assert!(
+            (api.utilization - 0.5).abs() < 0.08,
+            "cpu = {}",
+            api.utilization
+        );
+        assert!(
+            (api.in_flight - 51.0).abs() < 8.0,
+            "open = {}",
+            api.in_flight
+        );
+
+        let threads = NodeConfig {
+            concurrency: 10,
+            queue_size: 10,
+            latency_p50_ms: 1.0,
+            latency_p99_ms: 1.0,
+            ..NodeConfig::default()
+        };
+        let t = run(&api_db_cpu(threads, 100.0, None, 500.0));
+        assert!(t.error_rate > 0.5, "threads err = {}", t.error_rate);
+    }
+
+    #[test]
+    fn cpu_saturation_shows_as_event_loop_lag() {
+        // 4 ms CPU on one lane = 250 rps max.
+        let ok = windows(&api_db_cpu(node_api(4.0, 1, 1), 2.0, None, 150.0));
+        let hot = windows(&api_db_cpu(node_api(4.0, 1, 1), 2.0, None, 240.0));
+        let lag = |w: &[WindowMetrics]| w[5..].iter().map(|w| w.nodes[1].lag_ms).sum::<f64>() / 5.0;
+        assert!(lag(&ok) < 5.0, "lag at 60% = {}", lag(&ok));
+        assert!(lag(&hot) > 3.0 * lag(&ok), "lag at 96% = {}", lag(&hot));
+        // two cluster processes double the capacity
+        let s = run(&api_db_cpu(node_api(4.0, 2, 1), 2.0, None, 400.0));
+        assert!(s.p99_ms < 60.0, "p99 with 2 lanes = {}", s.p99_ms);
+        let s = run(&api_db_cpu(node_api(4.0, 1, 1), 2.0, None, 400.0));
+        assert!(s.error_rate > 0.2, "1 lane at 160% = {}", s.error_rate);
+    }
+
+    #[test]
+    fn sequential_calls_multiply_downstream_load() {
+        let input = api_db_cpu(node_api(1.0, 1, 3), 2.0, None, 100.0);
+        let s = run(&input);
+        assert_eq!(s.errors, 0);
+        // 3 sequential DB round trips of ~4 ms each
+        assert!(s.p50_ms > 13.0 && s.p50_ms < 18.0, "p50 = {}", s.p50_ms);
+        let db = arrivals(&input, 2);
+        assert!((db - 300.0).abs() < 30.0, "db arrivals = {db}");
+    }
+
+    #[test]
+    fn connection_pool_caps_throughput() {
+        // 5 connections * (1 / ~12 ms) ≈ 415 queries/s.
+        let ok = run(&api_db_cpu(node_api(0.5, 1, 1), 10.0, Some(5), 250.0));
+        assert_eq!(ok.errors, 0);
+        let hot = windows(&api_db_cpu(node_api(0.5, 1, 1), 10.0, Some(5), 700.0));
+        let last = hot.last().unwrap();
+        assert!(last.edges[1].pool_utilization > 0.95);
+        assert!(last.edges[1].pool_timeouts > 0, "pool timeouts expected");
+        assert!(last.error_count > 100, "errors = {}", last.error_count);
+        // the rest of the system is idle: the pool is the bottleneck
+        assert!(last.nodes[1].utilization < 0.5);
+        // a pool per process: 2 lanes double the connections
+        let two = run(&api_db_cpu(node_api(0.5, 2, 1), 10.0, Some(5), 700.0));
+        assert!(
+            two.error_rate < 0.01,
+            "2 processes err = {}",
+            two.error_rate
+        );
+    }
+
+    #[test]
+    fn usl_contention_lowers_peak_throughput() {
+        let mk = |contention: f64| {
+            let mut input = single_service(900.0, 20, 20.0);
+            input.design.nodes[1].config.contention = contention;
+            input
+        };
+        // 20 slots / 20 ms = 1000 rps linear; with contention 0.05 at N=20
+        // work is ~1.95x slower, so ~510 rps.
+        let linear = run(&mk(0.0));
+        let contended = run(&mk(0.05));
+        assert!(linear.error_rate < 0.01, "linear = {}", linear.error_rate);
+        assert!(
+            contended.error_rate > 0.3,
+            "contended = {}",
+            contended.error_rate
+        );
+    }
+
+    #[test]
+    fn uniform_arrivals_and_load_generator_cap() {
+        let mut input = single_service(100.0, 100, 50.0);
+        input.scenario.arrival = Arrival::Uniform;
+        let s = run(&input);
+        // exactly 2000 sent, the last ~50 ms still in flight at the end
+        assert!((1990..=2000).contains(&s.total), "total = {}", s.total);
+        // a 2-VU generator can only keep 2 requests of 51 ms in flight
+        input.scenario.max_concurrent = Some(2);
+        let s = run(&input);
+        assert!(s.dropped > 0 && s.errors == 0);
+        assert!(s.throughput_rps < 40.0, "rps = {}", s.throughput_rps);
+    }
+
+    #[test]
+    fn instances_queue_separately_and_balancing_matters() {
+        // 4 servers × 1 slot, very uneven work (p50 5 ms, p99 100 ms), ~75% busy.
+        let mk = |instances: u32, concurrency: u32, balance: Balance| {
+            let mut input = single_service(260.0, concurrency, 5.0);
+            let c = &mut input.design.nodes[1].config;
+            c.instances = instances;
+            c.latency_p99_ms = 100.0;
+            c.queue_size = 1000;
+            c.balance = balance;
+            input
+        };
+        let rr = run(&mk(4, 1, Balance::RoundRobin));
+        let lc = run(&mk(4, 1, Balance::LeastConnections));
+        let pooled = run(&mk(1, 4, Balance::RoundRobin)); // one shared queue
+                                                          // a shared queue beats least-connections beats blind round-robin
+        assert!(
+            pooled.p99_ms < lc.p99_ms,
+            "{} vs {}",
+            pooled.p99_ms,
+            lc.p99_ms
+        );
+        assert!(
+            lc.p99_ms < rr.p99_ms * 0.8,
+            "{} vs {}",
+            lc.p99_ms,
+            rr.p99_ms
+        );
+    }
+
+    #[test]
+    fn gc_pauses_fatten_the_tail_not_the_median() {
+        let base = api_db_cpu(node_api(0.5, 1, 1), 1.0, None, 400.0);
+        let mut gc = base.clone();
+        gc.design.nodes[1].config.gc_pause_ms = 20.0;
+        gc.design.nodes[1].config.gc_every_requests = 400; // one per second
+        let (a, b) = (run(&base), run(&gc));
+        assert!(
+            (b.p50_ms - a.p50_ms).abs() < 0.5,
+            "p50 {} vs {}",
+            a.p50_ms,
+            b.p50_ms
+        );
+        assert!(
+            b.p99_ms > a.p99_ms + 5.0,
+            "p99 {} vs {}",
+            a.p99_ms,
+            b.p99_ms
+        );
+    }
+
+    #[test]
+    fn wakeup_cost_makes_cpu_per_request_fall_with_load() {
+        let mk = |rps: f64| {
+            let mut api = node_api(0.3, 1, 0);
+            api.wakeup_ms = 0.5;
+            let mut input = api_db_cpu(api, 1.0, None, rps);
+            input.design.edges.pop(); // api is a leaf
+            input.design.nodes.pop();
+            input.scenario.arrival = Arrival::Uniform;
+            windows(&input)[5].nodes[1].utilization / rps * 1000.0 // CPU ms per request
+        };
+        let (low, high) = (mk(100.0), mk(2000.0));
+        assert!(low > 0.7, "idle: every request pays the wake-up, {low}");
+        assert!(high < 0.5, "busy: requests run back to back, {high}");
     }
 }

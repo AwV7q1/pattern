@@ -26,6 +26,7 @@ pub fn default_catalog(kind: NodeKind) -> NodeConfig {
         error_rate: 0.0,
         hit_rate: 0.0,
         cost_per_hour: cost,
+        ..NodeConfig::default()
     };
     match kind {
         NodeKind::Client => c(1, 0, 0.0, 0.0, 0.0),
@@ -140,6 +141,7 @@ impl Level {
                     timeout_ms: e.timeout_ms.map(|t| t.max(1.0)),
                     retries: e.retries.min(MAX_RETRIES),
                     backoff_ms: e.backoff_ms.clamp(0.0, 10_000.0),
+                    pool_size: None,
                     ..e.clone()
                 }
             })

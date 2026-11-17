@@ -20,16 +20,79 @@ pub enum NodeKind {
     Queue,
 }
 
+/// How a node executes requests.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecModel {
+    /// Thread-per-request (Java/Go pools, legacy default): a request holds
+    /// one of `concurrency` slots for its whole life, including while it
+    /// waits for downstream calls.
+    #[default]
+    Threads,
+    /// CPU lanes + in-flight limit (Node.js event loop, Postgres backends):
+    /// a request only needs a CPU lane while it computes (`cpuP50Ms`); while
+    /// it waits for I/O or downstream calls it just counts against
+    /// `maxInFlight`. CPU queueing shows up as event-loop lag.
+    Cpu,
+}
+
+/// How calls are spread over the instances of a node. Each instance has
+/// its own slots, queue and CPU lanes, like separate servers.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Balance {
+    /// nginx / ALB default.
+    #[default]
+    RoundRobin,
+    /// Fewest open requests (nginx `least_conn`, ALB least outstanding).
+    LeastConnections,
+    Random,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NodeConfig {
     pub instances: u32,
-    /// Concurrent requests per instance.
+    pub balance: Balance,
+    pub model: ExecModel,
+    /// `threads`: concurrent requests per instance.
     pub concurrency: u32,
-    /// Waiting requests per instance before rejecting.
+    /// Waiting requests per instance before rejecting (`cpu`: requests
+    /// waiting for an in-flight slot, like the accept backlog).
     pub queue_size: u32,
+    /// `threads`: local processing time (holds the slot).
     pub latency_p50_ms: f64,
     pub latency_p99_ms: f64,
+    /// `cpu`: CPU lanes per instance (Node: cluster processes, DB: cores).
+    pub cpu_lanes: u32,
+    /// `cpu`: requests open at once per instance before queueing.
+    pub max_in_flight: u32,
+    /// `cpu`: CPU time per request, split evenly around downstream calls.
+    pub cpu_p50_ms: f64,
+    pub cpu_p99_ms: f64,
+    /// `cpu`: local wait that does not use CPU (disk, unmodelled I/O),
+    /// after the first CPU slice.
+    pub io_p50_ms: f64,
+    pub io_p99_ms: f64,
+    /// Sequential downstream calls per request (e.g. N queries). Each picks
+    /// the next edge round-robin and applies that edge's policy.
+    pub calls_per_request: u32,
+    /// Universal Scalability Law coefficients: with `N` requests active per
+    /// instance, work takes `1 + contention*(N-1) + coherency*N*(N-1)` times
+    /// longer (lock contention, cache-line ping-pong). 0 = linear scaling.
+    pub contention: f64,
+    pub coherency: f64,
+    /// `cpu`: extra CPU to wake an idle process (epoll, timers, context
+    /// switch), paid by a slice that finds its lane idle. When busy, slices
+    /// run back to back and skip it, so CPU per request *falls* with load.
+    pub wakeup_ms: f64,
+    /// `cpu`: garbage-collector pause (stop-the-world) of one process, ms.
+    /// 0 = no GC. A pause blocks one CPU lane, so requests behind it wait:
+    /// p50 stays low while p99 grows, as with V8 or JVM GC.
+    pub gc_pause_ms: f64,
+    /// `cpu`: a pause every this many requests per instance (allocation
+    /// driven, so pauses get more frequent with load).
+    pub gc_every_requests: u32,
     /// Probability that a processed request fails (0..1).
     pub error_rate: f64,
     /// Cache hit ratio (0..1), only used by `cache` nodes.
@@ -42,10 +105,24 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             instances: 1,
+            balance: Balance::RoundRobin,
             concurrency: 100,
             queue_size: 100,
             latency_p50_ms: 1.0,
             latency_p99_ms: 5.0,
+            model: ExecModel::Threads,
+            cpu_lanes: 1,
+            max_in_flight: 10_000,
+            cpu_p50_ms: 1.0,
+            cpu_p99_ms: 5.0,
+            io_p50_ms: 0.0,
+            io_p99_ms: 0.0,
+            calls_per_request: 1,
+            contention: 0.0,
+            coherency: 0.0,
+            wakeup_ms: 0.0,
+            gc_pause_ms: 0.0,
+            gc_every_requests: 0,
             error_rate: 0.0,
             hit_rate: 0.0,
             cost_per_hour: 0.0,
@@ -122,6 +199,20 @@ pub struct EdgeSpec {
     pub jitter: bool,
     #[serde(default)]
     pub circuit_breaker: Option<CircuitBreaker>,
+    /// Connection pool per caller process (Prisma/TypeORM/HikariCP). Total
+    /// connections = poolSize * source instances * processes (`cpuLanes` for
+    /// `cpu` nodes, 1 otherwise). A connection stays busy until the callee
+    /// answers, even when the caller already timed out.
+    #[serde(default)]
+    pub pool_size: Option<u32>,
+    /// Give up waiting for a free connection after this long (Prisma
+    /// `pool_timeout`, default 10 s). Counts as a failed attempt.
+    #[serde(default = "default_pool_timeout")]
+    pub pool_timeout_ms: f64,
+}
+
+fn default_pool_timeout() -> f64 {
+    10_000.0
 }
 
 impl EdgeSpec {
@@ -135,6 +226,8 @@ impl EdgeSpec {
             backoff_ms: default_backoff(),
             jitter: true,
             circuit_breaker: None,
+            pool_size: None,
+            pool_timeout_ms: default_pool_timeout(),
         }
     }
 }
@@ -202,6 +295,17 @@ fn default_window() -> f64 {
     1000.0
 }
 
+/// How the client spaces user requests.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Arrival {
+    /// Independent users (exponential gaps). Real traffic.
+    #[default]
+    Poisson,
+    /// Fixed gaps, like k6 `constant-arrival-rate`.
+    Uniform,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Scenario {
@@ -224,6 +328,12 @@ pub struct Scenario {
     /// Game levels: cost ceiling used for star rating.
     #[serde(default)]
     pub budget_per_hour: Option<f64>,
+    #[serde(default)]
+    pub arrival: Arrival,
+    /// Load generator limit (k6 `maxVUs`): new requests are dropped, not
+    /// failed, while this many are in flight.
+    #[serde(default)]
+    pub max_concurrent: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

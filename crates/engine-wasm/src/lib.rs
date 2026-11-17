@@ -97,3 +97,103 @@ pub fn catalog_json() -> String {
     .collect();
     serde_json::to_string(&map).unwrap_or_else(|_| "{}".into())
 }
+
+/// Sizing wizard: `SizingSpec` JSON in, `SizingReport` JSON out.
+#[wasm_bindgen]
+pub fn size_json(spec_json: &str) -> Result<String, JsError> {
+    let spec: pattern_engine::sizing::SizingSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let report = pattern_engine::sizing::size(&spec).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&report).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Default sizing spec (form defaults for the UI).
+#[wasm_bindgen]
+pub fn default_sizing_spec() -> String {
+    serde_json::to_string(&pattern_engine::sizing::SizingSpec::default()).unwrap_or_default()
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+struct CalibrateRequest {
+    /// `[{ name, json }]`: k6 summary files.
+    summaries: Vec<NamedFile>,
+    /// `--fit` style keys; empty = automatic.
+    fit: Vec<String>,
+    /// `--observe` style specs.
+    observe: Vec<String>,
+    max_vus: Option<u32>,
+    max_evals: Option<usize>,
+    max_sim_ms: Option<f64>,
+    /// SLO used for the capacity estimate.
+    slo: Option<pattern_engine::Slo>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct NamedFile {
+    name: String,
+    json: String,
+}
+
+/// Fit `design_json` to k6 summaries. Returns
+/// `{ report, defaultFit, capacityRps, slo }`.
+#[wasm_bindgen]
+pub fn calibrate_json(design_json: &str, request_json: &str) -> Result<String, JsError> {
+    use pattern_engine::calibrate as cal;
+    let err = |e: String| JsError::new(&e);
+    let design: pattern_engine::Design =
+        serde_json::from_str(design_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let req: CalibrateRequest =
+        serde_json::from_str(request_json).map_err(|e| JsError::new(&e.to_string()))?;
+    let mut levels = vec![];
+    for f in &req.summaries {
+        levels.extend(cal::parse_k6_summary(&f.json, &f.name).map_err(err)?);
+    }
+    levels.sort_by(|a, b| a.offered_rps.total_cmp(&b.offered_rps));
+    let opts = cal::CalibrateOptions {
+        max_vus: req.max_vus,
+        max_evals: req.max_evals.unwrap_or(80),
+        max_sim_ms: req.max_sim_ms.unwrap_or(15_000.0),
+        ..Default::default()
+    };
+    let params = if req.fit.is_empty() {
+        cal::default_params(&design, &levels, &opts).map_err(err)?
+    } else {
+        req.fit
+            .iter()
+            .map(|f| cal::parse_fit(f, &design))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?
+    };
+    let observations = req
+        .observe
+        .iter()
+        .map(|o| cal::parse_observe(o, &design))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    let report = cal::calibrate(&design, &levels, &params, &observations, &opts).map_err(err)?;
+    let low_p99 = levels.first().and_then(|l| l.p99_ms).unwrap_or(100.0);
+    let slo = req.slo.unwrap_or(pattern_engine::Slo {
+        p99_ms: (low_p99 * 3.0).max(50.0),
+        error_rate: 0.01,
+    });
+    let top = levels.iter().map(|l| l.offered_rps).fold(0.0, f64::max);
+    let cap = cal::capacity(
+        &report.design,
+        slo,
+        top / 4.0,
+        top,
+        &cal::CalibrateOptions {
+            max_vus: None,
+            ..opts
+        },
+    )
+    .map_err(err)?;
+    let out = serde_json::json!({
+        "report": report,
+        "fit": params.iter().map(|p| p.key.clone()).collect::<Vec<_>>(),
+        "capacityRps": cap,
+        "slo": slo,
+    });
+    Ok(out.to_string())
+}
