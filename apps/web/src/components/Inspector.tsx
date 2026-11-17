@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, PowerOff, Power, Trash2 } from 'lucide-react';
+import { ChevronRight, GitCompareArrows, Info, PowerOff, Power, Trash2 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
 import { DEFAULT_BREAKER, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
@@ -12,6 +12,9 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { swapCandidates, techOf } from '@/tech/catalog';
+import { TechLogo } from '@/tech/TechLogo';
+import { techUi } from '@/tech/ui-store';
 
 function NumberField({
   label,
@@ -123,9 +126,64 @@ interface NodeProps {
   onChange: (config: NodeConfig, label: string) => void;
   onToggleDown: () => void;
   onDelete: () => void;
+  /** Sandbox: switch the real-world technology (optionally taking its default numbers). */
+  onTech?: (tech: string | undefined, applyDefaults: boolean) => void;
 }
 
-export function NodeInspector({ node, outDegree, game, maxInstances, onChange, onToggleDown, onDelete }: NodeProps) {
+const NO_TECH = '__none';
+
+/** Which product this node is, with a quick swap to an alternative. */
+function TechSection({ node, onTech }: { node: SystemNodeData; onTech: NonNullable<NodeProps['onTech']> }) {
+  const tech = techOf(node.tech);
+  const [applyDefaults, setApplyDefaults] = useState(true);
+  const options = [...(tech ? [tech] : []), ...swapCandidates(tech, node.kind)];
+  return (
+    <div className="grid gap-2 rounded-md border p-2.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs text-muted-foreground">Công nghệ</Label>
+        {tech && (
+          <div className="flex gap-1">
+            <Button size="icon-sm" variant="ghost" className="size-6" title="Chi tiết" onClick={() => techUi.openSheet(tech.id)}>
+              <Info />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="size-6"
+              title="So sánh với lựa chọn thay thế"
+              onClick={() => techUi.compareWith([tech.id, ...tech.alternatives.slice(0, 2)])}
+            >
+              <GitCompareArrows />
+            </Button>
+          </div>
+        )}
+      </div>
+      <Select value={tech?.id ?? NO_TECH} onValueChange={(v) => onTech(v === NO_TECH ? undefined : v, applyDefaults)}>
+        <SelectTrigger size="sm" className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_TECH}>
+            <span className="text-muted-foreground">Chung ({KIND_META[node.kind].name})</span>
+          </SelectItem>
+          {options.map((t) => (
+            <SelectItem key={t.id} value={t.id}>
+              <TechLogo tech={t} className="size-4" tile={false} />
+              {t.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {tech && <p className="text-[11px] leading-relaxed text-muted-foreground">{tech.summary}</p>}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] text-muted-foreground">Khi đổi, áp số mô phỏng mặc định của công nghệ</span>
+        <Switch checked={applyDefaults} onCheckedChange={setApplyDefaults} />
+      </div>
+    </div>
+  );
+}
+
+export function NodeInspector({ node, outDegree, game, maxInstances, onChange, onToggleDown, onDelete, onTech }: NodeProps) {
   const [draft, setDraft] = useState(node.config);
   const [label, setLabel] = useState(node.label);
   useEffect(() => {
@@ -163,19 +221,27 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
   return (
     <div className="grid gap-4">
       <div className="flex items-center gap-2">
-        <span
-          className="flex size-7 items-center justify-center rounded-md"
-          style={{ background: `${meta.color}26`, color: meta.color }}
-        >
-          <Icon className="size-4" />
-        </span>
+        {techOf(node.tech) ? (
+          <TechLogo tech={techOf(node.tech)!} className="size-8" />
+        ) : (
+          <span
+            className="flex size-7 items-center justify-center rounded-md"
+            style={{ background: `${meta.color}26`, color: meta.color }}
+          >
+            <Icon className="size-4" />
+          </span>
+        )}
         <div className="min-w-0 flex-1">
           <div className="truncate font-semibold">{node.label}</div>
-          <div className="text-xs text-muted-foreground">{meta.name}</div>
+          <div className="text-xs text-muted-foreground">
+            {techOf(node.tech) ? `${techOf(node.tech)!.name} · ` : ''}
+            {meta.name}
+          </div>
         </div>
         {node.locked && <Badge variant="secondary">cố định</Badge>}
       </div>
       <p className="text-xs leading-relaxed text-muted-foreground">{meta.blurb}</p>
+      {onTech && !game && node.kind !== 'client' && !node.locked && <TechSection node={node} onTech={onTech} />}
 
       {node.kind === 'client' ? (
         <p className="text-sm text-muted-foreground">Traffic được điều khiển ở tab Số liệu hoặc theo kịch bản level.</p>

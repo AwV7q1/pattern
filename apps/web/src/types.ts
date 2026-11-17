@@ -84,6 +84,8 @@ export interface DesignNode {
   label: string;
   position: { x: number; y: number };
   config?: Partial<NodeConfig>;
+  /** Real-world technology (apps/web/src/tech/catalog.ts); the engine ignores it. */
+  tech?: string;
 }
 
 export interface DesignEdge extends Partial<EdgePolicy> {

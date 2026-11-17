@@ -4,12 +4,15 @@ import { Lock, PowerOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { KIND_META, fmt, utilColor } from '@/lib/meta';
 import type { SystemNodeType } from '@/model/flow';
+import { techOf } from '@/tech/catalog';
+import { TechLogo } from '@/tech/TechLogo';
 
 const n2 = (v: number) => +v.toFixed(2);
 
 export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNodeType>) {
   const meta = KIND_META[data.kind];
   const Icon = meta.icon;
+  const tech = techOf(data.tech);
   const m = data.metrics;
   const util = m?.utilization ?? 0;
   const isClient = data.kind === 'client';
@@ -28,13 +31,31 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
     >
       {!isClient && <Handle type="target" position={Position.Left} />}
       <div className="flex items-center gap-2">
-        <span
-          className="flex size-6 shrink-0 items-center justify-center rounded-md"
-          style={{ background: `${meta.color}26`, color: meta.color }}
-        >
-          <Icon className="size-3.5" />
-        </span>
-        <span className="truncate text-sm font-semibold">{data.label}</span>
+        {tech ? (
+          <span className="relative">
+            <TechLogo tech={tech} className="size-7" />
+            <span
+              className="absolute -right-1 -bottom-1 flex size-3.5 items-center justify-center rounded-sm border border-card"
+              style={{ background: meta.color }}
+              title={meta.name}
+            >
+              <Icon className="size-2.5 text-black/70" />
+            </span>
+          </span>
+        ) : (
+          <span
+            className="flex size-6 shrink-0 items-center justify-center rounded-md"
+            style={{ background: `${meta.color}26`, color: meta.color }}
+          >
+            <Icon className="size-3.5" />
+          </span>
+        )}
+        <div className="min-w-0">
+          <div className="truncate text-sm leading-tight font-semibold">{data.label}</div>
+          {tech && tech.name !== data.label && (
+            <div className="truncate text-[10px] leading-tight text-muted-foreground">{tech.name}</div>
+          )}
+        </div>
         {data.locked && <Lock className="ml-auto size-3 shrink-0 text-muted-foreground" />}
       </div>
       {isClient ? (

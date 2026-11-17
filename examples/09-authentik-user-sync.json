@@ -3,36 +3,235 @@
   "description": "Hai luồng dùng chung Authentik và PostgreSQL. Luồng đăng nhập: Traefik → API (① xác thực token với Authentik, ② đọc session/profile qua Redis, miss thì xuống PostgreSQL). Luồng sync: Authentik bắn webhook → receiver đẩy vào RabbitMQ rồi trả 200 ngay → worker gọi lại Authentik API lấy user rồi upsert PostgreSQL. Khi spike, worker sync gọi Authentik quá nhiều và làm chậm luồng đăng nhập. Ở giây 40, Authentik chậm ×4: backlog dồn trong RabbitMQ thay vì làm hỏng webhook.",
   "design": {
     "nodes": [
-      { "id": "client", "kind": "client", "label": "Users + Authentik events", "position": { "x": 0, "y": 300 } },
-      { "id": "traefik", "kind": "loadBalancer", "label": "Traefik", "position": { "x": 300, "y": 120 },
-        "config": { "instances": 1, "concurrency": 20000, "queueSize": 0, "latencyP50Ms": 0.3, "latencyP99Ms": 1, "costPerHour": 0.03 } },
-      { "id": "api", "kind": "service", "label": "API (NestJS)", "position": { "x": 620, "y": 120 },
-        "config": { "instances": 2, "concurrency": 100, "queueSize": 100, "latencyP50Ms": 4, "latencyP99Ms": 15, "routing": "sequence", "costPerHour": 0.1 } },
-      { "id": "authentik", "kind": "service", "label": "Authentik (OIDC + API)", "position": { "x": 980, "y": 300 },
-        "config": { "instances": 1, "concurrency": 16, "queueSize": 200, "latencyP50Ms": 20, "latencyP99Ms": 90, "costPerHour": 0.2 } },
-      { "id": "redis", "kind": "cache", "label": "Redis (session)", "position": { "x": 980, "y": 0 },
-        "config": { "instances": 1, "concurrency": 5000, "queueSize": 1000, "latencyP50Ms": 0.3, "latencyP99Ms": 1.5, "hitRate": 0.9, "costPerHour": 0.05 } },
-      { "id": "pg", "kind": "database", "label": "PostgreSQL", "position": { "x": 1340, "y": 120 },
-        "config": { "instances": 1, "concurrency": 30, "queueSize": 300, "latencyP50Ms": 3, "latencyP99Ms": 20, "costPerHour": 0.5 } },
-      { "id": "hook", "kind": "service", "label": "Webhook receiver", "position": { "x": 300, "y": 480 },
-        "config": { "instances": 1, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 1, "latencyP99Ms": 5, "costPerHour": 0.05 } },
-      { "id": "rabbit", "kind": "queue", "label": "RabbitMQ (user.sync)", "position": { "x": 620, "y": 480 },
-        "config": { "instances": 1, "concurrency": 8, "queueSize": 500000, "latencyP50Ms": 0.5, "latencyP99Ms": 2, "costPerHour": 0.05 } },
-      { "id": "worker", "kind": "service", "label": "Sync worker", "position": { "x": 980, "y": 560 },
-        "config": { "instances": 2, "concurrency": 4, "queueSize": 10, "latencyP50Ms": 2, "latencyP99Ms": 8, "routing": "sequence", "costPerHour": 0.1 } }
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users + Authentik events",
+        "position": {
+          "x": 0,
+          "y": 300
+        }
+      },
+      {
+        "id": "traefik",
+        "kind": "loadBalancer",
+        "label": "Traefik",
+        "position": {
+          "x": 300,
+          "y": 120
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.3,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        },
+        "tech": "traefik"
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API (NestJS)",
+        "position": {
+          "x": 620,
+          "y": 120
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 100,
+          "queueSize": 100,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 15,
+          "routing": "sequence",
+          "costPerHour": 0.1
+        },
+        "tech": "nestjs"
+      },
+      {
+        "id": "authentik",
+        "kind": "service",
+        "label": "Authentik (OIDC + API)",
+        "position": {
+          "x": 980,
+          "y": 300
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 16,
+          "queueSize": 200,
+          "latencyP50Ms": 20,
+          "latencyP99Ms": 90,
+          "costPerHour": 0.2
+        },
+        "tech": "authentik"
+      },
+      {
+        "id": "redis",
+        "kind": "cache",
+        "label": "Redis (session)",
+        "position": {
+          "x": 980,
+          "y": 0
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 5000,
+          "queueSize": 1000,
+          "latencyP50Ms": 0.3,
+          "latencyP99Ms": 1.5,
+          "hitRate": 0.9,
+          "costPerHour": 0.05
+        },
+        "tech": "redis"
+      },
+      {
+        "id": "pg",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 1340,
+          "y": 120
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 30,
+          "queueSize": 300,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.5
+        },
+        "tech": "postgresql"
+      },
+      {
+        "id": "hook",
+        "kind": "service",
+        "label": "Webhook receiver",
+        "position": {
+          "x": 300,
+          "y": 480
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 200,
+          "queueSize": 200,
+          "latencyP50Ms": 1,
+          "latencyP99Ms": 5,
+          "costPerHour": 0.05
+        },
+        "tech": "nestjs"
+      },
+      {
+        "id": "rabbit",
+        "kind": "queue",
+        "label": "RabbitMQ (user.sync)",
+        "position": {
+          "x": 620,
+          "y": 480
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 8,
+          "queueSize": 500000,
+          "latencyP50Ms": 0.5,
+          "latencyP99Ms": 2,
+          "costPerHour": 0.05
+        },
+        "tech": "rabbitmq"
+      },
+      {
+        "id": "worker",
+        "kind": "service",
+        "label": "Sync worker",
+        "position": {
+          "x": 980,
+          "y": 560
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 4,
+          "queueSize": 10,
+          "latencyP50Ms": 2,
+          "latencyP99Ms": 8,
+          "routing": "sequence",
+          "costPerHour": 0.1
+        },
+        "tech": "nestjs"
+      }
     ],
     "edges": [
-      { "source": "client", "target": "traefik", "latencyMs": 15 },
-      { "source": "client", "target": "hook", "latencyMs": 2, "requestKb": 3 },
-      { "source": "traefik", "target": "api", "latencyMs": 1 },
-      { "source": "api", "target": "authentik", "latencyMs": 1, "order": 1, "timeoutMs": 300, "retries": 1, "backoffMs": 50,
-        "circuitBreaker": { "failureThreshold": 0.5, "minRequests": 20, "windowMs": 2000, "openMs": 5000 } },
-      { "source": "api", "target": "redis", "latencyMs": 0.5, "order": 2 },
-      { "source": "redis", "target": "pg", "latencyMs": 0.5, "poolSize": 10 },
-      { "source": "hook", "target": "rabbit", "latencyMs": 1, "timeoutMs": 200 },
-      { "source": "rabbit", "target": "worker", "latencyMs": 1 },
-      { "source": "worker", "target": "authentik", "latencyMs": 1, "order": 1, "timeoutMs": 1000, "retries": 3, "backoffMs": 200, "responseKb": 4 },
-      { "source": "worker", "target": "pg", "latencyMs": 0.5, "order": 2, "poolSize": 5 }
+      {
+        "source": "client",
+        "target": "traefik",
+        "latencyMs": 15
+      },
+      {
+        "source": "client",
+        "target": "hook",
+        "latencyMs": 2,
+        "requestKb": 3
+      },
+      {
+        "source": "traefik",
+        "target": "api",
+        "latencyMs": 1
+      },
+      {
+        "source": "api",
+        "target": "authentik",
+        "latencyMs": 1,
+        "order": 1,
+        "timeoutMs": 300,
+        "retries": 1,
+        "backoffMs": 50,
+        "circuitBreaker": {
+          "failureThreshold": 0.5,
+          "minRequests": 20,
+          "windowMs": 2000,
+          "openMs": 5000
+        }
+      },
+      {
+        "source": "api",
+        "target": "redis",
+        "latencyMs": 0.5,
+        "order": 2
+      },
+      {
+        "source": "redis",
+        "target": "pg",
+        "latencyMs": 0.5,
+        "poolSize": 10
+      },
+      {
+        "source": "hook",
+        "target": "rabbit",
+        "latencyMs": 1,
+        "timeoutMs": 200
+      },
+      {
+        "source": "rabbit",
+        "target": "worker",
+        "latencyMs": 1
+      },
+      {
+        "source": "worker",
+        "target": "authentik",
+        "latencyMs": 1,
+        "order": 1,
+        "timeoutMs": 1000,
+        "retries": 3,
+        "backoffMs": 200,
+        "responseKb": 4
+      },
+      {
+        "source": "worker",
+        "target": "pg",
+        "latencyMs": 0.5,
+        "order": 2,
+        "poolSize": 5
+      }
     ]
   },
   "scenario": {
@@ -40,15 +239,36 @@
     "durationMs": 60000,
     "timeoutMs": 1000,
     "traffic": [
-      { "atMs": 0, "rps": 300 },
-      { "atMs": 20000, "rps": 900 },
-      { "atMs": 30000, "rps": 300 }
+      {
+        "atMs": 0,
+        "rps": 300
+      },
+      {
+        "atMs": 20000,
+        "rps": 900
+      },
+      {
+        "atMs": 30000,
+        "rps": 300
+      }
     ],
     "events": [
-      { "atMs": 40000, "node": "authentik", "action": "latency", "value": 4 },
-      { "atMs": 50000, "node": "authentik", "action": "up" }
+      {
+        "atMs": 40000,
+        "node": "authentik",
+        "action": "latency",
+        "value": 4
+      },
+      {
+        "atMs": 50000,
+        "node": "authentik",
+        "action": "up"
+      }
     ],
-    "slo": { "p99Ms": 300, "errorRate": 0.01 },
+    "slo": {
+      "p99Ms": 300,
+      "errorRate": 0.01
+    },
     "windowMs": 1000
   }
 }

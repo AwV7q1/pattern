@@ -56,6 +56,9 @@ import { EdgeInspector, NodeInspector } from './components/Inspector';
 import { LevelPanel } from './components/LevelPanel';
 import { ResultDialog } from './components/ResultDialog';
 import { DRAG_MIME, Palette } from './components/Palette';
+import { TECH_MIME, TechLibrary } from './tech/TechLibrary';
+import { TechDialogs } from './tech/TechDialogs';
+import { techOf } from './tech/catalog';
 import { Button } from './components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { SidePanel } from './components/SidePanel';
@@ -307,7 +310,8 @@ export function App() {
   const onConnect = useCallback(
     (c: Connection) => {
       const fromClient = nodesRef.current.find((n) => n.id === c.source)?.data.kind === 'client';
-      const policy: EdgePolicy = { ...DEFAULT_POLICY, latencyMs: fromClient ? 5 : 1 };
+      const targetTech = techOf(nodesRef.current.find((n) => n.id === c.target)?.data.tech);
+      const policy: EdgePolicy = { ...DEFAULT_POLICY, latencyMs: fromClient ? 5 : 1, ...targetTech?.edgeDefaults };
       const edge: FlowEdgeType = {
         id: `e-${c.source}-${c.target}`,
         source: c.source,
@@ -325,9 +329,11 @@ export function App() {
       e.preventDefault();
       const kind = e.dataTransfer.getData(DRAG_MIME) as NodeKind;
       if (!kind) return;
+      const tech = techOf(e.dataTransfer.getData(TECH_MIME));
       const ns = nodesRef.current;
-      const id = uniqueId(kind, new Set(ns.map((n) => n.id)));
-      const sameKind = ns.filter((n) => n.data.kind === kind).length;
+      const id = uniqueId(tech?.id ?? kind, new Set(ns.map((n) => n.id)));
+      const sameKind = ns.filter((n) => (tech ? n.data.tech === tech.id : n.data.kind === kind)).length;
+      const baseName = tech?.name ?? KIND_META[kind].name;
       const position = screenToFlowPosition({ x: e.clientX - 100, y: e.clientY - 30 });
       const node: SystemNodeType = {
         id,
@@ -336,9 +342,10 @@ export function App() {
         selected: true,
         data: {
           index: ns.length,
-          label: `${KIND_META[kind].name}${sameKind ? ` ${sameKind + 1}` : ''}`,
+          label: `${baseName}${sameKind ? ` ${sameKind + 1}` : ''}`,
           kind,
-          config: { ...DEFAULT_CONFIG, ...catalog[kind] },
+          config: { ...DEFAULT_CONFIG, ...catalog[kind], ...tech?.config },
+          tech: tech?.id,
           down: false,
           locked: false,
         },
@@ -380,6 +387,21 @@ export function App() {
       nodes,
       edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, policy } } : e)),
     );
+  /** Switch a node's real-world technology, optionally with its default numbers. */
+  const setTech = (id: string, techId: string | undefined, applyDefaults: boolean) => {
+    const tech = techOf(techId);
+    commit(
+      nodes.map((n) => {
+        if (n.id !== id) return n;
+        const old = techOf(n.data.tech);
+        const label = old && n.data.label.startsWith(old.name) && tech ? n.data.label.replace(old.name, tech.name) : n.data.label;
+        const config =
+          applyDefaults && tech ? { ...DEFAULT_CONFIG, ...catalog[n.data.kind], ...tech.config, routing: n.data.config.routing } : n.data.config;
+        return { ...n, data: { ...n.data, tech: tech?.id, config, label } };
+      }),
+      edges,
+    );
+  };
   const toggleDown = (n: SystemNodeType) => {
     const down = !n.data.down;
     client.setNodeDown(n.data.index, down);
@@ -550,10 +572,16 @@ export function App() {
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : (
       <div className="relative flex min-h-0 flex-1">
-        <aside className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
-          <Palette kinds={paletteKinds} catalog={catalog} />
-          <ParticleLegend className="mt-auto" />
-        </aside>
+        {mode === 'sandbox' ? (
+          <aside className="flex w-60 shrink-0 flex-col gap-3 border-r p-3">
+            <TechLibrary />
+          </aside>
+        ) : (
+          <aside className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
+            <Palette kinds={paletteKinds} catalog={catalog} />
+            <ParticleLegend className="mt-auto" />
+          </aside>
+        )}
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           <ReactFlow
@@ -725,6 +753,7 @@ export function App() {
                       onChange={(config, label) => updateNode(selectedNode.id, config, label)}
                       onToggleDown={() => toggleDown(selectedNode)}
                       onDelete={() => onDelete({ nodes: [selectedNode], edges: [] })}
+                      onTech={mode === 'sandbox' ? (t, apply) => setTech(selectedNode.id, t, apply) : undefined}
                     />
                   ) : selectedEdge ? (
                     <EdgeInspector
@@ -753,6 +782,7 @@ export function App() {
         </SidePanel>
       </div>
       )}
+      <TechDialogs />
       <ResultDialog
         summary={result}
         onOpenChange={(open) => !open && setResult(null)}

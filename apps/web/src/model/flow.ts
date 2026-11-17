@@ -21,6 +21,8 @@ export type SystemNodeData = {
   metrics?: NodeWindow;
   down: boolean;
   locked: boolean;
+  /** Real-world technology id (tech/catalog.ts). */
+  tech?: string;
 };
 export type SystemNodeType = Node<SystemNodeData, 'system'>;
 
@@ -161,6 +163,7 @@ export function toFlow(
         config: { ...DEFAULT_CONFIG, ...catalog[n.kind], ...n.config },
         down: false,
         locked: locked.includes(n.id),
+        tech: n.tech,
       },
     })),
     edges: design.edges.map((e, index) => ({
@@ -198,6 +201,7 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       label: n.data.label,
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
       config: n.data.config,
+      ...(n.data.tech ? { tech: n.data.tech } : {}),
     })),
     edges: es.map((e) => {
       const p = e.data!.policy;
@@ -239,7 +243,7 @@ export function wouldCycle(edges: { source: string; target: string }[], source: 
   return false;
 }
 
-export function uniqueId(kind: NodeKind, taken: Set<string>) {
+export function uniqueId(kind: string, taken: Set<string>) {
   for (let i = 1; ; i++) {
     const id = `${kind}-${i}`;
     if (!taken.has(id)) return id;
