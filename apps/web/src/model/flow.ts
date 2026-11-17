@@ -39,6 +39,40 @@ export function policyOf(e: DesignEdge): EdgePolicy {
     backoffMs: e.backoffMs ?? DEFAULT_POLICY.backoffMs,
     jitter: e.jitter ?? true,
     circuitBreaker: e.circuitBreaker ?? null,
+    poolSize: e.poolSize ?? null,
+    poolTimeoutMs: e.poolTimeoutMs ?? DEFAULT_POLICY.poolTimeoutMs,
+  };
+}
+
+/** Give nodes without a position a left-to-right layout by call depth. */
+export function autoLayout(design: Design): Design {
+  if (design.nodes.every((n) => n.position)) return design;
+  const depth = new Map<string, number>();
+  const client = design.nodes.find((n) => n.kind === 'client');
+  const queue = client ? [client.id] : [];
+  if (client) depth.set(client.id, 0);
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const e of design.edges.filter((e) => e.source === id)) {
+      if (!depth.has(e.target)) {
+        depth.set(e.target, depth.get(id)! + 1);
+        queue.push(e.target);
+      }
+    }
+  }
+  const rows = new Map<number, number>();
+  return {
+    ...design,
+    nodes: design.nodes.map((n) => {
+      const d = depth.get(n.id) ?? 0;
+      const row = rows.get(d) ?? 0;
+      rows.set(d, row + 1);
+      return {
+        ...n,
+        label: n.label ?? n.id,
+        position: n.position ?? { x: d * 340, y: 160 + row * 170 },
+      };
+    }),
   };
 }
 
@@ -108,6 +142,10 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
         out.jitter = p.jitter;
       }
       if (p.circuitBreaker) out.circuitBreaker = p.circuitBreaker;
+      if (p.poolSize) {
+        out.poolSize = p.poolSize;
+        out.poolTimeoutMs = p.poolTimeoutMs ?? DEFAULT_POLICY.poolTimeoutMs;
+      }
       return out;
     }),
   };

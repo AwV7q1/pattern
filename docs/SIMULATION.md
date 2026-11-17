@@ -6,7 +6,8 @@
 
 | Ở đâu | Tham số | Ý nghĩa trong mô hình |
 |---|---|---|
-| Node | `instances × concurrency` | Số slot xử lý song song (thread pool / connection pool / worker) |
+| Node | `model` | `threads`: slot giữ suốt request. `cpu`: CPU lane + số request mở (Node.js, Postgres), xem [CAPACITY.md](CAPACITY.md) |
+| Node | `instances × concurrency` | Số slot xử lý song song (thread pool / connection pool / worker). Mỗi instance có slot và hàng đợi riêng, chia theo `balance` |
 | Node | `queueSize` | Số request được chờ khi hết slot. Vượt quá thì **bị từ chối** |
 | Node | `latencyP50Ms`, `latencyP99Ms` | Thời gian xử lý *cục bộ*, phân phối **lognormal** suy ra từ 2 điểm này: `μ = ln p50`, `σ = (ln p99 − ln p50) / 2.326` |
 | Node | `errorRate` | Xác suất một request xử lý xong vẫn lỗi |
@@ -14,6 +15,7 @@
 | Node | `costPerHour` | Chỉ để tính tiền: `Σ instances × costPerHour` |
 | Edge | `latencyMs` | Network một chiều (cố định) |
 | Edge | `timeoutMs`, `retries`, `backoffMs`, `jitter`, `circuitBreaker` | Chính sách phía caller |
+| Edge | `poolSize`, `poolTimeoutMs` | Connection pool mỗi process của caller |
 | Scenario | `traffic` | Hàm bậc thang rps theo thời gian. Request đến theo **quá trình Poisson** (khoảng cách giữa 2 request ~ phân phối mũ) |
 | Scenario | `events` | Chaos theo kịch bản: `down`, `up`, `latency` (×hệ số), `errors` |
 | Scenario | `seed` | Cùng seed thì cùng kết quả, đến từng bit, trên mọi máy |
@@ -34,7 +36,9 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
 
 1. **ClientArrival**: client tạo request rồi hẹn request kế tiếp sau `Exp(rps)` giây.
 2. **Arrive** ở node: còn slot thì chiếm slot, hết slot thì vào hàng đợi, hàng đợi đầy (hoặc node down) thì **reject**.
-3. **LocalDone** sau thời gian lognormal. Node trả lời ngay (lỗi, cache hit, hoặc không có downstream), hoặc gọi xuống **một** downstream (round-robin) và **vẫn giữ slot** trong lúc chờ. Đây là cơ chế sinh ra cascading failure: DB chậm làm slot của API bị giữ lâu hơn, API hết slot và bắt đầu reject.
+3. **LocalDone** sau thời gian lognormal. Node trả lời ngay (lỗi, cache hit, hoặc không có downstream), hoặc gọi xuống downstream (round-robin, `callsPerRequest` lần tuần tự) và **vẫn giữ slot** trong lúc chờ. Đây là cơ chế sinh ra cascading failure: DB chậm làm slot của API bị giữ lâu hơn, API hết slot và bắt đầu reject.
+   - Node `cpu`: request giữ một "suất mở" (`maxInFlight`), còn CPU được chia thành nhiều lát xen giữa các lần gọi. Mỗi lát phải chờ CPU lane rảnh, thời gian chờ này là event loop lag. Lúc chờ downstream, request không chiếm CPU.
+   - Edge có pool: lời gọi phải lấy được kết nối trước, hết kết nối thì xếp hàng.
 4. Phía caller của edge:
    - **Timeout**: caller bỏ cuộc, nhưng callee *vẫn tiếp tục làm* (lãng phí tài nguyên y như thật).
    - **Retry** sau `backoff × 2ⁿ⁻¹` (có jitter). Round-robin nên lần retry có thể rơi vào backend khác.
@@ -69,8 +73,8 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- CPU/GC, băng thông mạng, lock trong DB, cold start, autoscaling.
-- Fan-out: hiện mỗi request chỉ gọi **một** downstream. Chưa có kiểu gọi song song A + B rồi gộp kết quả.
+- Băng thông mạng, cold start, autoscaling. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Fan-out song song: chỉ có gọi tuần tự (`callsPerRequest`), chưa có kiểu gọi song song A + B rồi gộp kết quả.
 - Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
 
@@ -83,4 +87,4 @@ Muốn mô phỏng sát hệ thống của bạn:
 3. Kiểm chứng bằng định luật Little: `số request đang xử lý ≈ rps × latency trung bình` phải khớp với số đo thật.
 4. Chạy load test (k6) ở 2 mức tải và so với `pnpm sim --windows`. Lệch nhiều thì xem lại các giả định ở mục 5.
 
-Bước tiếp theo hợp lý là import trực tiếp từ trace của OpenTelemetry để tự sinh design và tham số.
+Lệnh `pattern-sim calibrate` làm bước 4 tự động: đọc kết quả k6 ở nhiều mức tải, fit tham số, in bảng so sánh và giới hạn dự đoán. Có kèm kết quả kiểm chứng trên server thật trong [CAPACITY.md](CAPACITY.md).

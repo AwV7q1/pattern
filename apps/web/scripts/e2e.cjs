@@ -111,6 +111,30 @@ const check = (name, ok, detail = '') => {
   check('edge shows retry policy badge', retryOpen > 0);
   await shot('6-sandbox-retry-storm');
 
+  // 8. capacity: sizing wizard, open the recommendation in the sandbox
+  await page.getByRole('tab', { name: 'Công suất' }).click();
+  await page.getByText('Biết rps cao điểm').click();
+  await page.locator('label:has-text("RPS cao điểm") + div input').fill('700');
+  await page.getByRole('button', { name: 'Tính và mô phỏng' }).click();
+  await page.getByText('Đề xuất (rẻ nhất').waitFor({ timeout: 60000 });
+  const passing = await page.locator('table tr:has-text("✔ Cao điểm")').count();
+  check('sizing recommends a plan that passes the peak check', passing > 0);
+  await shot('7-sizing');
+  await page.getByRole('button', { name: 'Mở trong Sandbox' }).click();
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  await page.waitForTimeout(3000);
+  const poolBadge = await page.locator('text=/^pool \\d+/').count();
+  check('sizing design opens in the sandbox with a pooled DB edge', (await node('app').count()) === 1 && poolBadge > 0);
+
+  // 9. capacity: calibrate the bundled real measurements
+  await page.getByRole('tab', { name: 'Công suất' }).click();
+  await page.getByRole('tab', { name: 'Hiệu chỉnh từ k6' }).click();
+  await page.getByRole('button', { name: 'Hiệu chỉnh', exact: true }).click();
+  await page.getByText('Tham số đã fit').waitFor({ timeout: 120000 });
+  const cap = Number(((await page.getByText(/^~\d+ rps$/).first().textContent()) ?? '').replace(/\D/g, ''));
+  check('calibration predicts a capacity near the measured knee', cap > 1800 && cap < 3200, `~${cap} rps`);
+  await shot('8-calibrate');
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   await browser.close();
   const failed = results.filter((r) => !r).length;

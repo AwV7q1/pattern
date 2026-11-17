@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { PowerOff, Power, Trash2 } from 'lucide-react';
+import { ChevronRight, PowerOff, Power, Trash2 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_BREAKER, type EdgePolicy, type NodeConfig } from '@/types';
+import { DEFAULT_BREAKER, type Balance, type EdgePolicy, type ExecModel, type NodeConfig } from '@/types';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -42,15 +44,37 @@ function NumberField({
   );
 }
 
-const NODE_FIELDS: Array<{ key: keyof NodeConfig; label: string; step: number; kinds?: string[] }> = [
-  { key: 'instances', label: 'Instances', step: 1 },
-  { key: 'concurrency', label: 'Slot / instance', step: 1 },
-  { key: 'queueSize', label: 'Hàng đợi / instance', step: 10 },
-  { key: 'latencyP50Ms', label: 'Latency p50 (ms)', step: 0.5 },
-  { key: 'latencyP99Ms', label: 'Latency p99 (ms)', step: 0.5 },
+type NumKey = { [K in keyof NodeConfig]: NodeConfig[K] extends number ? K : never }[keyof NodeConfig];
+type Field = { key: NumKey; label: string; step: number; kinds?: string[]; hint?: string };
+
+const COMMON_FIELDS: Field[] = [
+  { key: 'instances', label: 'Instances (server)', step: 1 },
+  { key: 'callsPerRequest', label: 'Lời gọi xuống / request', step: 1, kinds: ['service', 'database'], hint: 'tuần tự, vd. N query' },
   { key: 'errorRate', label: 'Tỉ lệ lỗi (0-1)', step: 0.01 },
   { key: 'hitRate', label: 'Hit rate (0-1)', step: 0.05, kinds: ['cache'] },
   { key: 'costPerHour', label: 'Giá / instance / giờ', step: 0.01 },
+];
+const THREAD_FIELDS: Field[] = [
+  { key: 'concurrency', label: 'Slot / instance', step: 1, hint: 'thread/connection pool' },
+  { key: 'queueSize', label: 'Hàng đợi / instance', step: 10 },
+  { key: 'latencyP50Ms', label: 'Xử lý p50 (ms)', step: 0.5 },
+  { key: 'latencyP99Ms', label: 'Xử lý p99 (ms)', step: 0.5 },
+];
+const CPU_FIELDS: Field[] = [
+  { key: 'cpuLanes', label: 'CPU lane / instance', step: 1, hint: 'Node: số process, DB: số core' },
+  { key: 'maxInFlight', label: 'Request mở tối đa', step: 100, hint: 'Postgres: max_connections' },
+  { key: 'cpuP50Ms', label: 'CPU p50 (ms)', step: 0.1 },
+  { key: 'cpuP99Ms', label: 'CPU p99 (ms)', step: 0.1 },
+  { key: 'ioP50Ms', label: 'Chờ I/O p50 (ms)', step: 0.5, hint: 'không chiếm CPU' },
+  { key: 'ioP99Ms', label: 'Chờ I/O p99 (ms)', step: 0.5 },
+  { key: 'queueSize', label: 'Backlog / instance', step: 10 },
+];
+const ADVANCED_FIELDS: Field[] = [
+  { key: 'contention', label: 'USL contention σ', step: 0.005, hint: 'tranh chấp lock' },
+  { key: 'coherency', label: 'USL coherency κ', step: 0.0005 },
+  { key: 'wakeupMs', label: 'Wake-up (ms)', step: 0.05, kinds: ['cpu'], hint: 'CPU đánh thức process rảnh' },
+  { key: 'gcPauseMs', label: 'GC pause (ms)', step: 1, kinds: ['cpu'] },
+  { key: 'gcEveryRequests', label: 'GC mỗi N request', step: 100, kinds: ['cpu'] },
 ];
 
 interface NodeProps {
@@ -72,7 +96,19 @@ export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown
   }, [node.config, node.label, node.index]);
   const meta = KIND_META[node.kind];
   const Icon = meta.icon;
-  const dirty = label !== node.label || NODE_FIELDS.some((f) => draft[f.key] !== node.config[f.key]);
+  const dirty = label !== node.label || JSON.stringify(draft) !== JSON.stringify(node.config);
+  const [advanced, setAdvanced] = useState(false);
+  const field = (f: Field) => (
+    <NumberField
+      key={f.key}
+      label={f.label}
+      step={f.step}
+      value={draft[f.key]}
+      hint={f.hint}
+      onChange={(v) => setDraft({ ...draft, [f.key]: v })}
+    />
+  );
+  const fits = (f: Field) => !f.kinds || f.kinds.includes(node.kind) || f.kinds.includes(draft.model);
   const editable = !node.locked;
 
   return (
@@ -140,17 +176,57 @@ export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown
             <Label className="text-xs text-muted-foreground">Tên</Label>
             <Input className="h-8" value={label} onChange={(e) => setLabel(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {NODE_FIELDS.filter((f) => !f.kinds || f.kinds.includes(node.kind)).map((f) => (
-              <NumberField
-                key={f.key}
-                label={f.label}
-                step={f.step}
-                value={draft[f.key]}
-                onChange={(v) => setDraft({ ...draft, [f.key]: v })}
-              />
-            ))}
+          <div className="grid gap-1.5">
+            <Label className="text-xs text-muted-foreground">Mô hình thực thi</Label>
+            <ToggleGroup
+              type="single"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              value={draft.model}
+              onValueChange={(v) => v && setDraft({ ...draft, model: v as ExecModel })}
+            >
+              <ToggleGroupItem value="threads" className="text-xs">
+                Thread pool
+              </ToggleGroupItem>
+              <ToggleGroupItem value="cpu" className="text-xs">
+                Event loop / CPU
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {draft.model === 'threads'
+                ? 'Mỗi request giữ một slot suốt thời gian sống, kể cả lúc chờ downstream (Java, Go với pool, PHP-FPM).'
+                : 'Request chỉ cần CPU lúc tính toán; lúc chờ I/O chỉ tính vào số request mở (Node.js, Postgres). CPU xếp hàng = event loop lag.'}
+            </p>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            {(draft.model === 'cpu' ? CPU_FIELDS : THREAD_FIELDS).map(field)}
+            {COMMON_FIELDS.filter(fits).map(field)}
+          </div>
+          {draft.instances > 1 && (
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">Chia tải giữa các instance</Label>
+              <Select value={draft.balance} onValueChange={(v) => setDraft({ ...draft, balance: v as Balance })}>
+                <SelectTrigger size="sm" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="roundRobin">Round-robin (nginx, ALB mặc định)</SelectItem>
+                  <SelectItem value="leastConnections">Least connections</SelectItem>
+                  <SelectItem value="random">Ngẫu nhiên</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <button
+            type="button"
+            className="flex items-center gap-1 text-left text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setAdvanced(!advanced)}
+          >
+            <ChevronRight className={`size-3 transition-transform ${advanced ? 'rotate-90' : ''}`} />
+            Nâng cao: contention, GC, wake-up
+          </button>
+          {advanced && <div className="grid grid-cols-2 gap-3">{ADVANCED_FIELDS.filter(fits).map(field)}</div>}
           <Button size="sm" disabled={!dirty} onClick={() => onChange(draft, label)}>
             Áp dụng và chạy lại
           </Button>
@@ -296,6 +372,51 @@ export function EdgeInspector({ edge, source, target, game, onChange, onDelete }
             onChange={(v) => setP({ ...p, circuitBreaker: { ...cb, openMs: v } })}
           />
         </div>
+      )}
+      {!game && (
+        <>
+          <Separator />
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-xs">Connection pool</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Mỗi process của caller giữ N kết nối (Prisma, TypeORM, HikariCP). Hết kết nối thì xếp hàng.
+              </p>
+            </div>
+            <Switch checked={!!p.poolSize} onCheckedChange={(on) => setP({ ...p, poolSize: on ? 10 : null })} />
+          </div>
+          {!!p.poolSize && (
+            <div className="grid grid-cols-2 gap-3">
+              <NumberField
+                label="Kết nối / process"
+                value={p.poolSize}
+                onChange={(v) => setP({ ...p, poolSize: Math.max(1, Math.round(v)) })}
+              />
+              <NumberField
+                label="Chờ kết nối tối đa (ms)"
+                step={500}
+                value={p.poolTimeoutMs ?? 10000}
+                onChange={(v) => setP({ ...p, poolTimeoutMs: v })}
+              />
+            </div>
+          )}
+          {m && !!p.poolSize && (
+            <div className="grid grid-cols-3 gap-1 rounded-md border bg-muted/30 p-2 text-center font-mono text-[11px]">
+              <div className={m.poolUtilization > 0.9 ? 'text-destructive' : ''}>
+                <div>{fmt.pct(m.poolUtilization, 0)}</div>
+                <div className="text-muted-foreground">pool bận</div>
+              </div>
+              <div>
+                <div>{fmt.ms(m.poolWaitMs)}</div>
+                <div className="text-muted-foreground">chờ TB</div>
+              </div>
+              <div>
+                <div>{m.poolTimeouts}</div>
+                <div className="text-muted-foreground">hết hạn chờ</div>
+              </div>
+            </div>
+          )}
+        </>
       )}
       <div className="flex gap-2">
         <Button size="sm" className="flex-1" disabled={!dirty} onClick={() => onChange(p)}>

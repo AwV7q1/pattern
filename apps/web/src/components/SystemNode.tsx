@@ -5,6 +5,8 @@ import { cn } from '@/lib/utils';
 import { KIND_META, fmt, utilColor } from '@/lib/meta';
 import type { SystemNodeType } from '@/model/flow';
 
+const n2 = (v: number) => +v.toFixed(2);
+
 export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNodeType>) {
   const meta = KIND_META[data.kind];
   const Icon = meta.icon;
@@ -14,6 +16,7 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
   const c = data.config;
   const rejected = m?.rejected ?? 0;
   const hot = !isClient && (util > 0.85 || rejected > 0);
+  // cpu nodes: the bar shows CPU; "q" counts both backlog and CPU queue
 
   return (
     <div
@@ -39,7 +42,10 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
       ) : (
         <>
           <div className="mt-1 truncate text-[11px] text-muted-foreground">
-            {c.instances}×{c.concurrency} slot · p50 {c.latencyP50Ms}ms
+            {c.model === 'cpu'
+              ? `${c.instances}×${c.cpuLanes} CPU · ${n2(c.cpuP50Ms)}ms CPU${c.ioP50Ms ? ` + ${n2(c.ioP50Ms)}ms I/O` : ''}`
+              : `${c.instances}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
+            {c.callsPerRequest > 1 && (data.kind === 'service' || data.kind === 'database') && ` · ${c.callsPerRequest} call`}
             {data.kind === 'cache' && ` · hit ${Math.round(c.hitRate * 100)}%`}
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -51,7 +57,10 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
           <div className="mt-1 flex gap-2 font-mono text-[10px] text-muted-foreground">
             <span>{Math.round(util * 100)}%</span>
             <span>{fmt.rps(m?.arrivals ?? 0)}/s</span>
-            <span>q {m?.queue ?? 0}</span>
+            <span>q {(m?.queue ?? 0) + (m?.cpuQueue ?? 0)}</span>
+            {c.model === 'cpu' && (m?.lagMs ?? 0) >= 0.1 && (
+              <span className={cn((m?.lagMs ?? 0) > 20 && 'text-warning')}>lag {fmt.ms(m!.lagMs)}</span>
+            )}
             {rejected > 0 && <span className="text-destructive">drop {fmt.rps(rejected)}/s</span>}
           </div>
         </>

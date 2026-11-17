@@ -39,7 +39,7 @@ export function utilColor(u: number) {
 }
 
 export const fmt = {
-  ms: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`),
+  ms: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}s` : v < 10 ? `${v.toFixed(1)}ms` : `${Math.round(v)}ms`),
   pct: (v: number, digits = 1) => `${(v * 100).toFixed(digits)}%`,
   money: (v: number) => `$${v.toFixed(2)}`,
   rps: (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`),

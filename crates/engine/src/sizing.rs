@@ -263,6 +263,15 @@ pub struct SizingReport {
     pub input: Option<SimInput>,
 }
 
+/// Keep generated designs readable (and their JSON short).
+fn r2(v: f64) -> f64 {
+    (v * 100.0).round() / 100.0
+}
+
+fn r4(v: f64) -> f64 {
+    (v * 10_000.0).round() / 10_000.0
+}
+
 fn lognormal_mean(p50: f64, p99: f64) -> f64 {
     let p99 = p99.max(p50);
     if p50 <= 0.0 {
@@ -313,7 +322,7 @@ fn build_design(s: &Shape) -> Design {
                 queue_size: 0,
                 latency_p50_ms: 0.2,
                 latency_p99_ms: 1.0,
-                cost_per_hour: spec.load_balancer_per_month / 730.0,
+                cost_per_hour: r4(spec.load_balancer_per_month / 730.0),
                 ..NodeConfig::default()
             },
         });
@@ -331,10 +340,10 @@ fn build_design(s: &Shape) -> Design {
             cpu_lanes: s.app.vcpu.max(1),
             max_in_flight: 5_000,
             queue_size: 0,
-            cpu_p50_ms: spec.app.cpu_ms_p50 / app_speed,
-            cpu_p99_ms: spec.app.cpu_ms_p99.max(spec.app.cpu_ms_p50) / app_speed * app_tail,
+            cpu_p50_ms: r2(spec.app.cpu_ms_p50 / app_speed),
+            cpu_p99_ms: r2(spec.app.cpu_ms_p99.max(spec.app.cpu_ms_p50) / app_speed * app_tail),
             calls_per_request: spec.app.queries_per_request.max(1),
-            cost_per_hour: s.app.price_per_month / 730.0,
+            cost_per_hour: r4(s.app.price_per_month / 730.0),
             ..NodeConfig::default()
         },
     });
@@ -352,11 +361,11 @@ fn build_design(s: &Shape) -> Design {
                 cpu_lanes: s.db.vcpu.max(1),
                 max_in_flight: spec.db.max_connections.max(1),
                 queue_size: 0,
-                cpu_p50_ms: q50 * cpu_f / db_speed,
-                cpu_p99_ms: q99 * cpu_f / db_speed * db_tail,
-                io_p50_ms: q50 * (1.0 - cpu_f),
-                io_p99_ms: q99 * (1.0 - cpu_f),
-                cost_per_hour: s.db.price_per_month / 730.0,
+                cpu_p50_ms: r2(q50 * cpu_f / db_speed),
+                cpu_p99_ms: r2(q99 * cpu_f / db_speed * db_tail),
+                io_p50_ms: r2(q50 * (1.0 - cpu_f)),
+                io_p99_ms: r2(q99 * (1.0 - cpu_f)),
+                cost_per_hour: r4(s.db.price_per_month / 730.0),
                 ..NodeConfig::default()
             },
         });

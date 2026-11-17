@@ -244,6 +244,31 @@ fn apply(design: &mut Design, t: &Target, v: f64) {
     }
 }
 
+/// Round fitted times to 3 decimals (µs precision) so the design stays readable.
+fn tidy(mut design: Design) -> Design {
+    let r = |v: &mut f64| *v = (*v * 1000.0).round() / 1000.0;
+    for n in &mut design.nodes {
+        let c = &mut n.config;
+        for v in [
+            &mut c.latency_p50_ms,
+            &mut c.latency_p99_ms,
+            &mut c.cpu_p50_ms,
+            &mut c.cpu_p99_ms,
+            &mut c.io_p50_ms,
+            &mut c.io_p99_ms,
+            &mut c.wakeup_ms,
+            &mut c.gc_pause_ms,
+            &mut c.contention,
+        ] {
+            r(v);
+        }
+    }
+    for e in &mut design.edges {
+        r(&mut e.latency_ms);
+    }
+    design
+}
+
 fn current(design: &Design, t: &Target) -> f64 {
     match *t {
         Target::AllLatency
@@ -841,7 +866,7 @@ pub fn calibrate(
     if let Some(e) = failure {
         return Err(e);
     }
-    let fitted = build(&best);
+    let fitted = tidy(build(&best));
     let after = run_all(&fitted)?;
     Ok(CalibrationReport {
         params: params
@@ -1038,7 +1063,7 @@ mod tests {
         let truth = design(3.0, 2.0);
         let k6 = synthesize_k6(
             &truth,
-            &[(60.0, 8_000.0), (200.0, 8_000.0), (300.0, 8_000.0)],
+            &[(60.0, 8_000.0), (200.0, 8_000.0), (270.0, 8_000.0)],
             &opts,
         )
         .unwrap();

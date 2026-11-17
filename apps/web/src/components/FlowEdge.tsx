@@ -22,6 +22,8 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
   if (p?.timeoutMs) badges.push(`⏱ ${p.timeoutMs}ms`);
   if (p?.retries) badges.push(`↻ ${p.retries}`);
   if (p?.circuitBreaker) badges.push(breaker === 'closed' ? 'CB' : `CB ${breaker === 'open' ? 'OPEN' : 'half'}`);
+  const pool = data?.metrics?.poolUtilization ?? 0;
+  if (p?.poolSize) badges.push(`pool ${p.poolSize}${pool > 0.01 ? ` · ${Math.round(pool * 100)}%` : ''}`);
 
   // midpoint of the cubic bezier (t = 0.5)
   const mx = (b[0] + 3 * b[2] + 3 * b[4] + b[6]) / 8;
@@ -50,7 +52,7 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
                 key={t}
                 className={cn(
                   'rounded border bg-background/90 px-1 font-mono text-[9px] leading-4 text-muted-foreground',
-                  t.includes('OPEN') && 'border-destructive text-destructive',
+                  (t.includes('OPEN') || (t.startsWith('pool') && pool > 0.9)) && 'border-destructive text-destructive',
                 )}
               >
                 {t}

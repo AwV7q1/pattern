@@ -1,0 +1,115 @@
+{
+  "title": "7. NestJS + Prisma: nghẽn ở connection pool",
+  "description": "2 server × 4 process Node, mỗi process pool 5 kết nối (40 tổng). Mỗi request 3 query tuần tự. Lúc spike, CPU của Node và Postgres vẫn còn dư nhưng pool cạn: request xếp hàng chờ kết nối, p99 vọt lên rồi hết hạn chờ (pool_timeout). Thử tăng pool lên 10/process (80 kết nối, vẫn dưới max_connections = 100).",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "nginx",
+        "position": {
+          "x": 300,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "NestJS (cluster)",
+        "position": {
+          "x": 620,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "model": "cpu",
+          "cpuLanes": 4,
+          "maxInFlight": 5000,
+          "queueSize": 0,
+          "cpuP50Ms": 1.5,
+          "cpuP99Ms": 4.5,
+          "callsPerRequest": 3,
+          "costPerHour": 0.07
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 960,
+          "y": 160
+        },
+        "config": {
+          "model": "cpu",
+          "cpuLanes": 16,
+          "maxInFlight": 100,
+          "queueSize": 0,
+          "cpuP50Ms": 1,
+          "cpuP99Ms": 4,
+          "ioP50Ms": 2,
+          "ioP99Ms": 8,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb",
+        "latencyMs": 10
+      },
+      {
+        "source": "lb",
+        "target": "api",
+        "latencyMs": 0.3
+      },
+      {
+        "source": "api",
+        "target": "db",
+        "latencyMs": 0.3,
+        "poolSize": 5,
+        "poolTimeoutMs": 2000
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 7,
+    "durationMs": 60000,
+    "timeoutMs": 10000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      },
+      {
+        "atMs": 20000,
+        "rps": 3300
+      },
+      {
+        "atMs": 40000,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 300,
+      "errorRate": 0.01
+    }
+  }
+}

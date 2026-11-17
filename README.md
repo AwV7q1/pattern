@@ -19,20 +19,32 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 ```
 
 > Các con số được tạo ra thế nào, giả định gì, chưa mô phỏng gì: xem **[docs/SIMULATION.md](docs/SIMULATION.md)**.
+> Đo hệ thống thật, hiệu chỉnh mô hình, chọn server: **[docs/CAPACITY.md](docs/CAPACITY.md)**.
 
 ## Tính năng
 
 - **Sandbox**: kéo thả thành phần (LB, service, cache, DB, queue), nối dây, xoá. Chỉnh mọi tham số node và chính sách edge (timeout, retry + backoff + jitter, circuit breaker). Điều khiển RPS, spike ×2/×3/×5, tắt node (chaos). Tải design ra JSON để chạy bằng CLI.
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
 - **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
+- **Công suất**:
+  - Sizing wizard: tải mục tiêu cộng chi phí mỗi request đo được, cho ra số vCPU, RAM, pool, gói VPS. Kết quả được kiểm chứng bằng mô phỏng ở các kịch bản cao điểm, đột biến, mất 1 server và DB chậm.
+  - Hiệu chỉnh từ kết quả k6: fit tham số để mô phỏng khớp số đo, rồi dự đoán giới hạn chịu tải.
+- **Mô hình gần thực tế**:
+  - Node `cpu` (event loop, CPU lane tách khỏi số request mở) và `threads` (thread pool).
+  - Mỗi instance có hàng đợi riêng, LB round-robin hoặc least-conn.
+  - Nhiều query tuần tự mỗi request.
+  - Connection pool cho mỗi process.
+  - USL contention, GC pause, chi phí wake-up.
 - **Particle**: WebGPU (ring buffer, vertex shader tính vị trí trên bezier). Nếu trình duyệt không hỗ trợ thì dùng Canvas2D fallback (`?renderer=2d` để ép dùng). Màu: request xanh dương, retry cam, OK xanh lá, lỗi đỏ.
 
 ## Cấu trúc
 
 | Đường dẫn | Vai trò |
 |---|---|
-| `crates/engine` | Discrete-event simulation (`sim.rs`), luật level và catalog (`level.rs`) |
-| `crates/engine-wasm` | Binding `wasm-bindgen`: `Sim`, `run_headless`, `play_level`, `level_input`, `catalog_json` |
+| `crates/engine` | Discrete-event simulation (`sim.rs`), luật level và catalog (`level.rs`), hiệu chỉnh từ k6 (`calibrate.rs`), chọn server (`sizing.rs`) |
+| `crates/engine-wasm` | Binding `wasm-bindgen`: `Sim`, `run_headless`, `play_level`, `level_input`, `catalog_json`, `size_json`, `calibrate_json` |
+| `tools/k6` | `step-load.js` (tải theo bậc, xuất summary cho calibrate), `cpu-per-request.sh` |
+| `examples/calibration` | Số đo thật của server NestJS trong repo, dùng để thử calibrate |
 | `crates/engine-cli` | `pattern-sim`: chạy scenario hoặc chấm design theo level |
 | `examples/*.json` | Scenario sandbox `{ design, scenario }` |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
@@ -55,6 +67,12 @@ pnpm dev                 # http://localhost:5173 (proxy /api → 3000)
 pnpm sim examples/*.json                                   # so sánh pattern
 pnpm sim --windows examples/05-retry-storm.json            # chi tiết từng giây
 pnpm sim --level levels/02-flaky-db.json my-design.json    # chấm design theo level
+pnpm sim sweep examples/07-nestjs-pool.json --rates 1000,2000,3000  # dự đoán ở nhiều mức tải
+pnpm sim size sizing.json                                   # chọn server (xem docs/CAPACITY.md)
+pnpm sim calibrate examples/calibration/nest-server.json examples/calibration/measured-low.json \
+  --fit api.wakeup --fit api.gcPause --fit api.gcEvery       # hiệu chỉnh từ số đo thật
+k6 run -e BASE_URL=http://localhost:3000/api/x -e RATES=100,300,600 \
+  --summary-export=k6.json tools/k6/step-load.js            # đo hệ thống của bạn
 pnpm test               # cargo test + typecheck web + test server
 pnpm test:gpu           # smoke test renderer WebGPU (cần pnpm dev)
 node apps/web/scripts/e2e.cjs   # chơi thử level 1 qua UI thật (cần dev + dev:server)
@@ -66,12 +84,13 @@ Thêm component shadcn: `cd apps/web && pnpm dlx shadcn@latest add <component>` 
 
 ```
 scenario            requests  ok rps   err %   p99 ms  retries  cost/h  SLO   stars
-01-no-cache           130661    1663   23.65    174.5        0    0.73  FAIL  ☆☆☆
+01-no-cache           129886    1664   23.13    174.5        0    0.73  FAIL  ☆☆☆
 02-cache-aside        130391    2173    0.00     68.8        0    0.88  PASS  ★★★
-03-read-replicas      129499    2158    0.00     85.5        0    1.25  PASS  ★★★
-04-queue-leveling     130054    2168    0.00     63.6        0    0.98  PASS  ★★☆   (backlog chưa xử lý hết)
-05-retry-storm         59364     360   63.64    607.6    80105    0.73  FAIL  ☆☆☆   (sập, không tự hồi phục)
-06-circuit-breaker     60268     779   22.43    181.6     2543    0.73  FAIL  ☆☆☆   (hồi phục ngay khi DB khoẻ)
+03-read-replicas      130256    2171    0.00     85.5        0    1.25  PASS  ★★★
+04-queue-leveling     129740    2162    0.00     63.6        0    0.98  PASS  ★★☆   (backlog chưa xử lý hết)
+05-retry-storm         60250     584   41.82    572.6    61036    0.73  FAIL  ☆☆☆   (sập, không tự hồi phục)
+06-circuit-breaker     60219     775   22.80    204.5     2815    0.73  FAIL  ☆☆☆   (hồi phục ngay khi DB khoẻ)
+07-nestjs-pool        125896    2098    0.00   1239.4        0    0.67  FAIL  ☆☆☆   (pool cạn lúc spike; pool 10 → p99 45ms)
 ```
 
 ## Các quyết định thiết kế
@@ -102,6 +121,15 @@ scenario            requests  ok rps   err %   p99 ms  retries  cost/h  SLO   st
     "budgetPerHour": 1.0
   }
 }
+```
+
+Node `cpu` và edge có pool:
+
+```jsonc
+{ "id": "api", "kind": "service", "config": {
+    "instances": 2, "balance": "roundRobin", "model": "cpu", "cpuLanes": 4, "maxInFlight": 5000,
+    "cpuP50Ms": 1.5, "cpuP99Ms": 4.5, "callsPerRequest": 3, "wakeupMs": 0, "gcPauseMs": 0, "gcEveryRequests": 0 } }
+{ "source": "api", "target": "db", "poolSize": 10, "poolTimeoutMs": 10000 }
 ```
 
 Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`.

@@ -11,7 +11,7 @@ import {
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react';
-import { Download, Gamepad2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { Download, Gamepad2, Gauge, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { LEVELS, PRESETS } from './presets';
 import { SimClient } from './sim/client';
 import { clearEdgeGeometry } from './gpu/edgeGeometry';
@@ -19,13 +19,18 @@ import {
   BUILDABLE,
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
+  type Design,
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
+  type Preset,
+  type SizingReport,
   type Summary,
   type WindowMetrics,
 } from './types';
+import { CapacityPage } from './capacity/CapacityPage';
 import {
+  autoLayout,
   reindex,
   toDesign,
   toFlow,
@@ -59,7 +64,7 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'sandbox' | 'game';
+type Mode = 'sandbox' | 'game' | 'capacity';
 type Panel = 'metrics' | 'inspect' | 'level';
 
 const bestKey = (id: string) => `pattern.best.${id}`;
@@ -70,7 +75,10 @@ export function App() {
   const [mode, setMode] = useState<Mode>('game');
   const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
   const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
-  const preset = PRESETS[presetKey];
+  const [custom, setCustom] = useState<Record<string, Preset>>({});
+  const presets = useMemo(() => ({ ...PRESETS, ...custom }), [custom]);
+  const preset = presets[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]];
+  const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
   const level = LEVELS[levelKey];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
@@ -137,9 +145,51 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
+    if (mode === 'capacity') {
+      client.pause();
+      setRunning(false);
+      return;
+    }
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
-  }, [mode, presetKey, levelKey, load]);
+  }, [client, mode, presetKey, levelKey, custom, load]);
+
+  const switchMode = (next: Mode) => {
+    if (mode === 'sandbox') setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
+    setMode(next);
+  };
+
+  /** Load a generated design (sizing, calibration) into the sandbox. */
+  const openInSandbox = (key: string, p: Preset) => {
+    setCustom((c) => ({ ...c, [key]: { ...p, design: autoLayout(p.design) } }));
+    setPresetKey(key);
+    setScripted(false);
+    settings.current.scripted = false;
+    setMode('sandbox');
+  };
+  const openSizing = (r: SizingReport, title: string) => {
+    if (!r.input) return;
+    const t = r.input.scenario.traffic;
+    openInSandbox('custom-sizing', {
+      title,
+      description: `Đề xuất của Sizing wizard: Node cluster (1 process/vCPU) + Postgres, pool mỗi process. Cao điểm ${Math.round(t[0].rps)} rps; bật "Traffic theo kịch bản" để có đột biến ${Math.round(t[1]?.rps ?? 0)} rps ở giây 30–40. Thử tắt app server hoặc làm chậm DB.`,
+      design: r.input.design,
+      scenario: r.input.scenario,
+    });
+  };
+  const openCalibrated = (design: Design, title: string, slo?: { p99Ms: number; errorRate: number }) =>
+    openInSandbox('custom-calibrated', {
+      title,
+      description: 'Design đã hiệu chỉnh từ số đo k6. Kéo RPS để xem hệ thống phản ứng thế nào quanh giới hạn dự đoán.',
+      design,
+      scenario: {
+        seed: 1,
+        timeoutMs: 60000,
+        traffic: [{ atMs: 0, rps: 500 }],
+        slo: slo ?? { p99Ms: 200, errorRate: 0.01 },
+        windowMs: 1000,
+      },
+    });
 
   // worker events
   useEffect(() => {
@@ -318,7 +368,7 @@ export function App() {
           </span>
           Pattern
         </div>
-        <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)}>
+        <Tabs value={mode} onValueChange={(v) => switchMode(v as Mode)}>
           <TabsList>
             <TabsTrigger value="game">
               <Gamepad2 /> Game
@@ -326,9 +376,12 @@ export function App() {
             <TabsTrigger value="sandbox">
               <Shapes /> Sandbox
             </TabsTrigger>
+            <TabsTrigger value="capacity">
+              <Gauge /> Công suất
+            </TabsTrigger>
           </TabsList>
         </Tabs>
-        {mode === 'game' ? (
+        {mode === 'capacity' ? null : mode === 'game' ? (
           <Select value={levelKey} onValueChange={setLevelKey}>
             <SelectTrigger className="w-64">
               <SelectValue />
@@ -347,7 +400,7 @@ export function App() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(PRESETS).map(([key, p]) => (
+              {Object.entries(presets).map(([key, p]) => (
                 <SelectItem key={key} value={key}>
                   {p.title}
                 </SelectItem>
@@ -356,7 +409,7 @@ export function App() {
           </Select>
         )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className={mode === 'capacity' ? 'hidden' : 'ml-auto flex items-center gap-2'}>
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -418,6 +471,9 @@ export function App() {
         </div>
       </header>
 
+      {mode === 'capacity' ? (
+        <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
+      ) : (
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
           <Palette kinds={paletteKinds} catalog={catalog} />
@@ -567,6 +623,7 @@ export function App() {
           </div>
         </aside>
       </div>
+      )}
       <ResultDialog summary={result} onOpenChange={(open) => !open && setResult(null)} />
     </div>
   );
