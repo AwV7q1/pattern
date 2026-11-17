@@ -1,0 +1,17 @@
+[package]
+name = "pattern-engine-wasm"
+description = "WebAssembly bindings for pattern-engine"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pattern-engine = { path = "../engine" }
+serde_json.workspace = true
+wasm-bindgen = "0.2"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

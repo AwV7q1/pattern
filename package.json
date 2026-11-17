@@ -1,0 +1,13 @@
+{
+  "name": "pattern",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "scripts": {
+    "build:wasm": "wasm-pack build crates/engine-wasm --target web --release --out-dir pkg",
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm build:wasm && pnpm --filter web build",
+    "test": "cargo test --workspace && pnpm --filter web typecheck",
+    "sim": "cargo run -q --release -p pattern-sim --",
+    "test:gpu": "node apps/web/scripts/gpu-smoke.cjs"
+  }
+}

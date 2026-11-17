@@ -1,0 +1,10 @@
+[package]
+name = "pattern-sim"
+description = "Run pattern-engine scenarios headless from the command line"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+pattern-engine = { path = "../engine" }
+serde_json.workspace = true

@@ -1,0 +1,153 @@
+{
+  "title": "Queue-based load leveling",
+  "description": "API ghi đơn hàng vào queue rồi trả lời ngay. Worker xử lý dần theo tốc độ của DB, backlog hấp thụ đợt spike thay vì làm sập hệ thống.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 230,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 470,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 80,
+          "queueSize": 50,
+          "latencyP50Ms": 15,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "queue",
+        "kind": "queue",
+        "label": "Order Queue",
+        "position": {
+          "x": 710,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 36,
+          "queueSize": 500000,
+          "latencyP50Ms": 0.3,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.05
+        }
+      },
+      {
+        "id": "worker",
+        "kind": "service",
+        "label": "Worker",
+        "position": {
+          "x": 950,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 20,
+          "queueSize": 10,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 15,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 1190,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb",
+        "latencyMs": 5
+      },
+      {
+        "source": "lb",
+        "target": "api",
+        "latencyMs": 1
+      },
+      {
+        "source": "api",
+        "target": "queue",
+        "latencyMs": 1
+      },
+      {
+        "source": "queue",
+        "target": "worker",
+        "latencyMs": 1
+      },
+      {
+        "source": "worker",
+        "target": "db",
+        "latencyMs": 1
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      },
+      {
+        "atMs": 20000,
+        "rps": 3500
+      },
+      {
+        "atMs": 40000,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000
+  }
+}

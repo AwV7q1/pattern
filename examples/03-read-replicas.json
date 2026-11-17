@@ -1,0 +1,152 @@
+{
+  "title": "Read replicas",
+  "description": "Chia tải đọc cho 2 replica qua một router. Gấp đôi năng lực đọc nhưng chi phí DB cũng gấp đôi.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 230,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 470,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 80,
+          "queueSize": 50,
+          "latencyP50Ms": 15,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "router",
+        "kind": "loadBalancer",
+        "label": "DB Router",
+        "position": {
+          "x": 710,
+          "y": 160
+        },
+        "config": {
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.02
+        }
+      },
+      {
+        "id": "replica1",
+        "kind": "database",
+        "label": "Replica 1",
+        "position": {
+          "x": 950,
+          "y": 60
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5
+        }
+      },
+      {
+        "id": "replica2",
+        "kind": "database",
+        "label": "Replica 2",
+        "position": {
+          "x": 950,
+          "y": 260
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb",
+        "latencyMs": 5
+      },
+      {
+        "source": "lb",
+        "target": "api",
+        "latencyMs": 1
+      },
+      {
+        "source": "api",
+        "target": "router",
+        "latencyMs": 1
+      },
+      {
+        "source": "router",
+        "target": "replica1",
+        "latencyMs": 1
+      },
+      {
+        "source": "router",
+        "target": "replica2",
+        "latencyMs": 1
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      },
+      {
+        "atMs": 20000,
+        "rps": 3500
+      },
+      {
+        "atMs": 40000,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000
+  }
+}
