@@ -36,7 +36,7 @@ export function MetricsPanel({ windows, scenario, cost }: Props) {
 
   return (
     <div className="grid gap-3">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-2 @3xl:grid-cols-6">
         <Stat label="ok / giây" value={fmt.rps(last?.rps ?? 0)} />
         <Stat label="lỗi" value={fmt.pct(errRate)} tone={errRate > scenario.slo.errorRate ? 'bad' : undefined} />
         <Stat
@@ -65,31 +65,33 @@ export function MetricsPanel({ windows, scenario, cost }: Props) {
           {sloRatio === null ? '–' : fmt.pct(sloRatio, 0)}
         </span>
       </div>
-      <Chart
-        title="Throughput"
-        unit="/s"
-        series={[
-          { label: 'ok', color: '#34d399', values: windows.map((w) => w.rps) },
-          { label: 'err', color: '#f87171', values: windows.map((w) => w.errorRps) },
-          { label: 'retry', color: '#ff9e26', values: windows.map((w) => w.retries) },
-        ]}
-      />
-      <Chart
-        title="Latency"
-        unit="ms"
-        threshold={{ value: scenario.slo.p99Ms, label: 'SLO' }}
-        series={[
-          { label: 'p50', color: '#60a5fa', values: windows.map((w) => w.p50Ms) },
-          { label: 'p99', color: '#fbbf24', values: windows.map((w) => w.p99Ms) },
-        ]}
-      />
-      {windows.some((w) => w.asyncOk > 0) && (
+      <div className="grid gap-3 @3xl:grid-cols-2">
         <Chart
-          title="Xử lý bất đồng bộ"
+          title="Throughput"
           unit="/s"
-          series={[{ label: 'done', color: '#22d3ee', values: windows.map((w) => w.asyncOk) }]}
+          series={[
+            { label: 'ok', color: '#34d399', values: windows.map((w) => w.rps) },
+            { label: 'err', color: '#f87171', values: windows.map((w) => w.errorRps) },
+            { label: 'retry', color: '#ff9e26', values: windows.map((w) => w.retries) },
+          ]}
         />
-      )}
+        <Chart
+          title="Latency"
+          unit="ms"
+          threshold={{ value: scenario.slo.p99Ms, label: 'SLO' }}
+          series={[
+            { label: 'p50', color: '#60a5fa', values: windows.map((w) => w.p50Ms) },
+            { label: 'p99', color: '#fbbf24', values: windows.map((w) => w.p99Ms) },
+          ]}
+        />
+        {windows.some((w) => w.asyncOk > 0) && (
+          <Chart
+            title="Xử lý bất đồng bộ"
+            unit="/s"
+            series={[{ label: 'done', color: '#22d3ee', values: windows.map((w) => w.asyncOk) }]}
+          />
+        )}
+      </div>
     </div>
   );
 }

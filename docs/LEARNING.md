@@ -54,6 +54,7 @@ Tab **Trace** → "Theo dõi 1 request". Engine đánh dấu request kế tiếp
 - **Waterfall** giống Jaeger, mỗi chặng một dòng theo cây gọi. Mỗi dòng có các đoạn: chờ connection, request trên mạng, xếp hàng, xử lý, response trên mạng. Vạch đứt đánh dấu lúc người dùng nhận response; phần sau vạch là việc chạy nền (fire-and-forget).
 - **Diễn biến** bằng lời, ví dụ "24ms Checkout gọi cùng lúc Kho, Giá (song song)".
 - Trên canvas, particle của request đó to hơn, có vòng trắng. Bấm "Xem chậm 0.25×" để nhìn kịp.
+- Panel bên phải kéo rộng được ở mép trái (nhấp đúp để về 380 px, độ rộng được nhớ lại). Nút ⤢ mở panel toàn màn hình, Esc để thu lại; canvas vẫn chạy phía sau. Khi đủ rộng, waterfall và phần diễn biến nằm cạnh nhau, biểu đồ Số liệu chia 2 cột.
 
 Trace là một phần của engine (`Simulation::trace_next`, `TraceEvent`), nên CLI và test dùng được.
 

@@ -167,6 +167,23 @@ const check = (name, ok, detail = '') => {
   );
   await shot('6b-trace');
 
+  // 7c. side panel: drag to resize, expand to full size, Esc to dock again
+  const panel = page.locator('aside').last();
+  const before = (await panel.boundingBox()).width;
+  const grip = await page.getByRole('separator').boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 250, grip.y + 200, { steps: 8 });
+  await page.mouse.up();
+  const dragged = (await panel.boundingBox()).width;
+  check('panel resizes by dragging its edge', dragged > before + 200, `${before} -> ${dragged}px`);
+  await page.getByRole('button', { name: 'Mở rộng panel' }).click();
+  const full = (await panel.boundingBox()).width;
+  await page.keyboard.press('Escape');
+  const docked = (await panel.boundingBox()).width;
+  check('panel expands to full size and Esc docks it', full >= 1200 && Math.abs(docked - dragged) < 2, `${full}px, back to ${docked}px`);
+  await page.getByRole('separator').dblclick(); // reset for later screenshots
+
   // 8. capacity: sizing wizard, open the recommendation in the sandbox
   await page.getByRole('tab', { name: 'Công suất' }).click();
   await page.getByText('Biết rps cao điểm').click();

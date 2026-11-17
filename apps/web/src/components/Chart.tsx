@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface Series {
   label: string;
@@ -17,6 +17,13 @@ interface Props {
 /** Tiny dependency-free line chart (canvas). */
 export function Chart({ title, unit, series, threshold, height = 96 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
+  // redraw when the panel is resized, even while the simulation is paused
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const ro = new ResizeObserver(([e]) => setWidth(Math.round(e.contentRect.width)));
+    ro.observe(ref.current!);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = ref.current!;
@@ -61,7 +68,7 @@ export function Chart({ title, unit, series, threshold, height = 96 }: Props) {
       s.values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
       ctx.stroke();
     }
-  }, [series, threshold, height]);
+  }, [series, threshold, height, width]);
 
   return (
     <div className="rounded-lg border bg-muted/30 p-2">

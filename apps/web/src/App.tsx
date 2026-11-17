@@ -12,7 +12,7 @@ import {
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Download, Gamepad2, Gauge, GraduationCap, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, Download, Gamepad2, Gauge, GraduationCap, Maximize2, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { LearnPage } from './learn/LearnPage';
 import { useProgress } from './learn/progress';
@@ -58,6 +58,8 @@ import { ResultDialog } from './components/ResultDialog';
 import { DRAG_MIME, Palette } from './components/Palette';
 import { Button } from './components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
+import { SidePanel } from './components/SidePanel';
+import { cn } from './lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
 import { Slider } from './components/ui/slider';
 import { Switch } from './components/ui/switch';
@@ -110,6 +112,8 @@ export function App() {
   const [multiplier, setMultiplier] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [panel, setPanel] = useState<Panel>('level');
+  const [panelFull, setPanelFull] = useState(false);
+  const exitPanelFull = useCallback(() => setPanelFull(false), []);
   const [catalog, setCatalog] = useState<Record<string, NodeConfig>>({});
   const [verifying, setVerifying] = useState(false);
   const [result, setResult] = useState<Summary | null>(null);
@@ -544,7 +548,7 @@ export function App() {
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : (
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
           <Palette kinds={paletteKinds} catalog={catalog} />
           <ParticleLegend className="mt-auto" />
@@ -590,18 +594,30 @@ export function App() {
           )}
         </main>
 
-        <aside className="flex w-[380px] shrink-0 flex-col border-l">
+        <SidePanel full={panelFull} onExitFull={exitPanelFull}>
           <Tabs value={panel} onValueChange={(v) => setPanel(v as Panel)} className="min-h-0 flex-1 gap-0">
-            <TabsList className="m-3 mb-0 w-[calc(100%-1.5rem)]">
-              {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
-              <TabsTrigger value="metrics">Số liệu</TabsTrigger>
-              <TabsTrigger value="trace">Trace</TabsTrigger>
-              <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
-            </TabsList>
+            <div className="m-3 mb-0 flex items-center gap-2">
+              <TabsList className={cn('flex-1', panelFull && 'mx-auto max-w-xl')}>
+                {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
+                <TabsTrigger value="metrics">Số liệu</TabsTrigger>
+                <TabsTrigger value="trace">Trace</TabsTrigger>
+                <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
+              </TabsList>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 shrink-0"
+                aria-label={panelFull ? 'Thu nhỏ panel' : 'Mở rộng panel'}
+                title={panelFull ? 'Thu nhỏ (Esc)' : 'Mở rộng toàn màn hình'}
+                onClick={() => setPanelFull((v) => !v)}
+              >
+                {panelFull ? <Minimize2 /> : <Maximize2 />}
+              </Button>
+            </div>
             <ScrollArea className="min-h-0 flex-1">
-              <div className="p-3">
+              <div className={cn('p-3', panelFull && 'mx-auto max-w-6xl px-6 py-4')}>
                 {mode === 'game' && (
-                  <TabsContent value="level">
+                  <TabsContent value="level" className="max-w-2xl">
                     <LevelPanel
                       level={level}
                       design={() => toDesign(nodesRef.current, edgesRef.current)}
@@ -687,7 +703,7 @@ export function App() {
                     }}
                   />
                 </TabsContent>
-                <TabsContent value="inspect">
+                <TabsContent value="inspect" className="max-w-2xl">
                   {selectedNode ? (
                     <NodeInspector
                       node={selectedNode.data}
@@ -720,8 +736,9 @@ export function App() {
           </Tabs>
           <div className="border-t px-3 py-2 font-mono text-[11px] text-muted-foreground">
             {nodes.length} node · {edges.length} edge · {fmt.money(cost)}/h
+            {panelFull && running && <span className="ml-2 text-success">· mô phỏng vẫn đang chạy phía sau</span>}
           </div>
-        </aside>
+        </SidePanel>
       </div>
       )}
       <ResultDialog

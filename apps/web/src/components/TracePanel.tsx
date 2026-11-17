@@ -223,16 +223,19 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
         </div>
       )}
 
-      {trace && <Waterfall trace={trace} label={label} />}
+      {/* side by side once the panel is wide (dragged out or full size) */}
+      <div className="grid items-start gap-3 @5xl:grid-cols-[3fr_2fr]">
+        {trace && <Waterfall trace={trace} label={label} />}
 
-      {trace && trace.end !== undefined && (
-        <div className="grid gap-1">
-          <div className="text-xs font-semibold">Diễn biến</div>
-          <pre className="overflow-x-auto rounded-md border bg-muted/30 p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap">
-            {narrate(trace, label).join('\n')}
-          </pre>
-        </div>
-      )}
+        {trace && trace.end !== undefined && (
+          <div className="grid gap-1">
+            <div className="text-xs font-semibold">Diễn biến</div>
+            <pre className="overflow-x-auto rounded-md border bg-muted/30 p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap @3xl:text-[11.5px]">
+              {narrate(trace, label).join('\n')}
+            </pre>
+          </div>
+        )}
+      </div>
 
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
         {(
@@ -280,7 +283,7 @@ function Waterfall({ trace, label }: { trace: Trace; label: (s: Span) => { from:
         </div>
       )}
       {trace.end !== undefined && (
-        <div className="grid grid-cols-[112px_1fr] gap-2">
+        <div className="grid grid-cols-[112px_1fr] @3xl:grid-cols-[180px_1fr] gap-2">
           <span />
           <div className="relative h-0">
             <div
@@ -295,7 +298,7 @@ function Waterfall({ trace, label }: { trace: Trace; label: (s: Span) => { from:
         const { from, to } = label(s);
         const workStart = s.start ?? s.arrive;
         return (
-          <div key={s.id} className="grid grid-cols-[112px_1fr] items-center gap-2">
+          <div key={s.id} className="grid grid-cols-[112px_1fr] @3xl:grid-cols-[180px_1fr] items-center gap-2">
             <div
               className="truncate text-[11px]"
               style={{ paddingLeft: s.depth * 8 }}
