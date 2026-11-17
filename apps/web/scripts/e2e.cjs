@@ -1,5 +1,7 @@
-// End-to-end smoke test: plays level 1 through the real UI (drag & drop,
-// wiring, scoring, leaderboard) and checks the sandbox renders particles.
+// End-to-end smoke test: the learning path (lesson, engine-checked
+// prediction, practice level round-trip), then plays level 1 through the
+// real UI (drag & drop, wiring, scoring, leaderboard), the sandbox
+// (particles, request trace), and the capacity tools.
 // Needs `pnpm dev` (5173) and, for the leaderboard step, `pnpm dev:server`.
 // Usage: node apps/web/scripts/e2e.cjs [screenshot-dir]
 const { chromium } = require('playwright');
@@ -21,7 +23,44 @@ const check = (name, ok, detail = '') => {
   const shot = (name) => shots && page.screenshot({ path: `${shots}/${name}.png` });
 
   await page.goto(URL);
+
+  // 0. learning path: the default tab
+  await page.getByText('Phần 7 · Nâng cao').waitFor();
+  check('learning path shows 7 units', (await page.getByText(/^Phần \d · /).count()) === 7);
+  await shot('0-learn-path');
+  await page.getByLabel('Tôi biết rồi, mở khoá tất cả').click();
+  await page.getByRole('button', { name: 'Độ trễ', exact: true }).click();
+  await page.getByRole('button', { name: 'Bắt đầu', exact: true }).click();
+  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  await page.getByText('50 ms', { exact: true }).click();
+  await page.getByRole('button', { name: 'Kiểm tra' }).click();
+  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  await page.getByText('khoảng 50 ms').click();
+  await page.getByRole('button', { name: 'Chạy mô phỏng' }).click();
+  const verdict = page.getByText(/Simulator đo được p50 = /);
+  await verdict.waitFor({ timeout: 15000 });
+  check('prediction is checked by the engine', (await page.getByText('Chính xác!').count()) === 1, await verdict.textContent());
+  await shot('0-learn-predict');
+  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  await page.getByText('Hoàn thành bài học!').waitFor();
+  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  const xp = async () => Number(await page.locator('text=tổng XP').locator('..').locator('div').first().innerText());
+  const xpBefore = await xp();
+  await page.getByRole('button', { name: 'Thực hành: trang sản phẩm' }).click();
+  await page.getByRole('button', { name: 'Vào thực hành' }).click();
+  await page.getByRole('button', { name: 'Mở bài thực hành' }).click();
   await page.waitForSelector('.react-flow__node');
+  await page.locator('.react-flow__node', { hasText: 'Product page' }).click();
+  await page.getByRole('radio', { name: /Song song/ }).click();
+  await page.getByRole('tab', { name: 'Level' }).click();
+  await page.getByRole('button', { name: /Chấm điểm/ }).click();
+  await page.getByRole('button', { name: /Về lộ trình/ }).click({ timeout: 20000 });
+  await page.getByText('tổng XP').waitFor();
+  const xpAfter = await xp();
+  check('practice level completes the lesson', xpAfter >= xpBefore + 20, `${xpBefore} -> ${xpAfter} XP`);
+
+  await page.getByRole('tab', { name: /Game/ }).click();
+  await page.waitForSelector('.react-flow__node', { hasText: 'PostgreSQL' });
   await page.waitForTimeout(800);
   await shot('1-level-start');
 
@@ -110,6 +149,23 @@ const check = (name, ok, detail = '') => {
   const retryOpen = await page.locator('text=↻ 3').count();
   check('edge shows retry policy badge', retryOpen > 0);
   await shot('6-sandbox-retry-storm');
+
+  // 7b. sandbox: follow one request of the checkout fan-out
+  await page.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: /Checkout/ }).click();
+  await page.waitForTimeout(500);
+  check('sequence steps are numbered on the edges', (await page.locator('text=②').count()) >= 2);
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  await page.getByRole('tab', { name: 'Trace' }).click();
+  await page.getByRole('button', { name: /Theo dõi 1 request/ }).click();
+  await page.getByText('Diễn biến').waitFor({ timeout: 10000 });
+  const story = (await page.locator('pre').innerText()) ?? '';
+  check(
+    'trace shows the call order (parallel step, fire-and-forget)',
+    /song song/.test(story) && /không chờ/.test(story),
+    story.split('\n').length + ' lines',
+  );
+  await shot('6b-trace');
 
   // 8. capacity: sizing wizard, open the recommendation in the sandbox
   await page.getByRole('tab', { name: 'Công suất' }).click();

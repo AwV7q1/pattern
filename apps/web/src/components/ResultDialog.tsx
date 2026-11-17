@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 import { fmt } from '@/lib/meta';
 import type { Summary } from '@/types';
@@ -37,9 +38,12 @@ const TITLES = ['Hệ thống chưa trụ được', 'Sống sót!', 'Tốt và 
 export function ResultDialog({
   summary,
   onOpenChange,
+  action,
 }: {
   summary: Summary | null;
   onOpenChange: (open: boolean) => void;
+  /** Extra footer content (e.g. back to the learning path). */
+  action?: ReactNode;
 }) {
   const s = summary;
   return (
@@ -64,7 +68,11 @@ export function ResultDialog({
               <Check3
                 ok={s.budgetPerHour === null || s.costPerHour <= s.budgetPerHour + 1e-9}
                 label="Trong ngân sách"
-                detail={`${fmt.money(s.costPerHour)} / ${fmt.money(s.budgetPerHour ?? 0)} mỗi giờ`}
+                detail={
+                  s.budgetPerHour === null
+                    ? `${fmt.money(s.costPerHour)}/giờ · level không giới hạn ngân sách`
+                    : `${fmt.money(s.costPerHour)} / ${fmt.money(s.budgetPerHour)} mỗi giờ`
+                }
               />
               <Check3
                 ok={s.sloWindowRatio >= 0.98 && s.backlog === 0}
@@ -87,7 +95,10 @@ export function ResultDialog({
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={() => onOpenChange(false)}>Đóng</Button>
+              {action}
+              <Button variant={action ? 'outline' : 'default'} onClick={() => onOpenChange(false)}>
+                Đóng
+              </Button>
             </DialogFooter>
           </>
         )}

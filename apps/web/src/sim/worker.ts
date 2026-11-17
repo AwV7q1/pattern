@@ -59,6 +59,9 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
       case 'nodeDown':
         sim?.set_node_down(msg.index, msg.down);
         break;
+      case 'trace':
+        sim?.trace_next(msg.count);
+        break;
       case 'verify':
         try {
           post({ type: 'verified', id: msg.id, summary: JSON.parse(play_level(msg.level, msg.design)) });
@@ -86,5 +89,6 @@ setInterval(() => {
   // wasm-bindgen copies Vec<f32> into a fresh (non-shared) Float32Array
   const particles = sim.take_particles() as Float32Array<ArrayBuffer>;
   const windows = JSON.parse(sim.take_windows_json());
-  post({ type: 'tick', simMs: sim.now_ms(), particles, windows, done }, [particles.buffer]);
+  const traces = JSON.parse(sim.take_traces_json());
+  post({ type: 'tick', simMs: sim.now_ms(), particles, windows, traces, done }, [particles.buffer]);
 }, TICK_MS);

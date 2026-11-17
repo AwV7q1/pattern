@@ -1,7 +1,12 @@
 import type { FromWorker, ToWorker } from './protocol';
-import type { NodeConfig, Summary, WindowMetrics } from '../types';
+import type { NodeConfig, Summary, TraceEvent, WindowMetrics } from '../types';
 
-type TickListener = (particles: Float32Array<ArrayBuffer>, windows: WindowMetrics[], done: boolean) => void;
+type TickListener = (
+  particles: Float32Array<ArrayBuffer>,
+  windows: WindowMetrics[],
+  done: boolean,
+  traces: TraceEvent[],
+) => void;
 
 /** Main-thread handle to the simulation worker, plus an interpolated clock. */
 export class SimClient {
@@ -39,7 +44,7 @@ export class SimClient {
             this.running = false;
             this.onStop();
           }
-          this.tickListeners.forEach((fn) => fn(msg.particles, msg.windows, msg.done));
+          this.tickListeners.forEach((fn) => fn(msg.particles, msg.windows, msg.done, msg.traces));
           break;
         case 'error':
           this.input = null;
@@ -93,6 +98,10 @@ export class SimClient {
   }
   setNodeDown(index: number, down: boolean) {
     this.send({ type: 'nodeDown', index, down });
+  }
+  /** Follow the next `count` user requests (events arrive with ticks). */
+  trace(count = 1) {
+    this.send({ type: 'trace', count });
   }
   verify(level: object, design: object): Promise<{ summary?: Summary; error?: string }> {
     const id = this.nextId++;

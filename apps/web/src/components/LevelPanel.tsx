@@ -38,9 +38,11 @@ interface Props {
   onVerify: () => Promise<Summary | null>;
   verifying: boolean;
   best: number;
+  /** Shared leaderboard on the NestJS server (learning-path levels are local only). */
+  online?: boolean;
 }
 
-export function LevelPanel({ level, design, onVerify, verifying, best }: Props) {
+export function LevelPanel({ level, design, onVerify, verifying, best, online = true }: Props) {
   const [showHint, setShowHint] = useState(false);
   const [player, setPlayer] = useState(() => localStorage.getItem('pattern.player') ?? '');
   const [board, setBoard] = useState<Entry[] | null>(null);
@@ -49,13 +51,14 @@ export function LevelPanel({ level, design, onVerify, verifying, best }: Props) 
   const sc = level.scenario;
 
   const loadBoard = useCallback(async () => {
+    if (!online) return;
     try {
       const res = await fetch(`/api/levels/${level.id}/leaderboard`);
       setBoard(res.ok ? await res.json() : null);
     } catch {
       setBoard(null);
     }
-  }, [level.id]);
+  }, [level.id, online]);
 
   useEffect(() => {
     setShowHint(false);
@@ -111,7 +114,7 @@ export function LevelPanel({ level, design, onVerify, verifying, best }: Props) 
           <span className="text-muted-foreground">lỗi</span>
           <span>≤ {fmt.pct(sc.slo.errorRate, 0)}</span>
           <span className="text-muted-foreground">ngân sách</span>
-          <span>≤ {fmt.money(sc.budgetPerHour ?? 0)}/h</span>
+          <span>{sc.budgetPerHour != null ? `≤ ${fmt.money(sc.budgetPerHour)}/h` : 'không giới hạn'}</span>
           <span className="text-muted-foreground">thời lượng</span>
           <span>{(sc.durationMs ?? 0) / 1000}s</span>
         </div>
@@ -148,49 +151,53 @@ export function LevelPanel({ level, design, onVerify, verifying, best }: Props) 
         Chấm điểm (chạy đủ {(sc.durationMs ?? 0) / 1000}s)
       </Button>
 
-      <Separator />
+      {online && (
+        <>
+          <Separator />
 
-      <div className="grid gap-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Trophy className="size-4 text-warning" /> Leaderboard
-        </div>
-        <div className="flex gap-2">
-          <div className="grid flex-1 gap-1">
-            <Label htmlFor="player" className="sr-only">
-              Tên người chơi
-            </Label>
-            <Input
-              id="player"
-              className="h-8"
-              placeholder="Tên của bạn"
-              value={player}
-              maxLength={24}
-              onChange={(e) => setPlayer(e.target.value)}
-            />
+          <div className="grid gap-2">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Trophy className="size-4 text-warning" /> Leaderboard
+            </div>
+            <div className="flex gap-2">
+              <div className="grid flex-1 gap-1">
+                <Label htmlFor="player" className="sr-only">
+                  Tên người chơi
+                </Label>
+                <Input
+                  id="player"
+                  className="h-8"
+                  placeholder="Tên của bạn"
+                  value={player}
+                  maxLength={24}
+                  onChange={(e) => setPlayer(e.target.value)}
+                />
+              </div>
+              <Button size="sm" variant="secondary" disabled={!player.trim() || sending} onClick={() => void submit()}>
+                {sending ? <Loader2 className="animate-spin" /> : <Send />} Gửi
+              </Button>
+            </div>
+            {status && <p className="text-xs text-muted-foreground">{status}</p>}
+            {board === null ? (
+              <p className="text-xs text-muted-foreground">Leaderboard cần server NestJS (`pnpm dev:server`).</p>
+            ) : board.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Chưa có ai. Bạn là người đầu tiên!</p>
+            ) : (
+              <ol className="grid gap-1 text-xs">
+                {board.map((e, i) => (
+                  <li key={e.player} className="flex items-center gap-2 rounded px-2 py-1 odd:bg-muted/30">
+                    <span className="w-4 text-right font-mono text-muted-foreground">{i + 1}</span>
+                    <span className="flex-1 truncate">{e.player}</span>
+                    <Stars count={e.stars} className="[&_svg]:size-3" />
+                    <span className="w-12 text-right font-mono">{fmt.money(e.costPerHour)}</span>
+                    <span className="w-12 text-right font-mono text-muted-foreground">{fmt.ms(e.p99Ms)}</span>
+                  </li>
+                ))}
+              </ol>
+            )}
           </div>
-          <Button size="sm" variant="secondary" disabled={!player.trim() || sending} onClick={() => void submit()}>
-            {sending ? <Loader2 className="animate-spin" /> : <Send />} Gửi
-          </Button>
-        </div>
-        {status && <p className="text-xs text-muted-foreground">{status}</p>}
-        {board === null ? (
-          <p className="text-xs text-muted-foreground">Leaderboard cần server NestJS (`pnpm dev:server`).</p>
-        ) : board.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Chưa có ai. Bạn là người đầu tiên!</p>
-        ) : (
-          <ol className="grid gap-1 text-xs">
-            {board.map((e, i) => (
-              <li key={e.player} className="flex items-center gap-2 rounded px-2 py-1 odd:bg-muted/30">
-                <span className="w-4 text-right font-mono text-muted-foreground">{i + 1}</span>
-                <span className="flex-1 truncate">{e.player}</span>
-                <Stars count={e.stars} className="[&_svg]:size-3" />
-                <span className="w-12 text-right font-mono">{fmt.money(e.costPerHour)}</span>
-                <span className="w-12 text-right font-mono text-muted-foreground">{fmt.ms(e.p99Ms)}</span>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

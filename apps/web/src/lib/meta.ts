@@ -25,13 +25,6 @@ export const KIND_META: Record<NodeKind, { name: string; color: string; icon: Lu
   },
 };
 
-export const PARTICLE_LEGEND = [
-  { label: 'request', color: '#4db3ff' },
-  { label: 'retry', color: '#ff9e26' },
-  { label: 'response OK', color: '#4df28c' },
-  { label: 'error', color: '#ff4747' },
-];
-
 export function utilColor(u: number) {
   if (u < 0.6) return 'var(--success)';
   if (u < 0.85) return 'var(--warning)';

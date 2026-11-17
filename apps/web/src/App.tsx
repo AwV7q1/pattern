@@ -7,12 +7,16 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  MarkerType,
   type Connection,
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react';
-import { Download, Gamepad2, Gauge, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
-import { LEVELS, PRESETS } from './presets';
+import { ArrowLeft, Download, Gamepad2, Gauge, GraduationCap, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { LEARN_LEVELS, LEVELS, PRESETS } from './presets';
+import { LearnPage } from './learn/LearnPage';
+import { useProgress } from './learn/progress';
+import { LESSONS } from './learn/curriculum';
 import { SimClient } from './sim/client';
 import { clearEdgeGeometry } from './gpu/edgeGeometry';
 import {
@@ -26,11 +30,13 @@ import {
   type Preset,
   type SizingReport,
   type Summary,
+  type TraceEvent,
   type WindowMetrics,
 } from './types';
 import { CapacityPage } from './capacity/CapacityPage';
 import {
   autoLayout,
+  decorateEdges,
   reindex,
   toDesign,
   toFlow,
@@ -39,7 +45,9 @@ import {
   type FlowEdgeType,
   type SystemNodeType,
 } from './model/flow';
-import { KIND_META, PARTICLE_LEGEND, fmt } from './lib/meta';
+import { KIND_META, fmt } from './lib/meta';
+import { ParticleLegend } from './components/ParticleLegend';
+import { TracePanel } from './components/TracePanel';
 import { SystemNode } from './components/SystemNode';
 import { FlowEdge } from './components/FlowEdge';
 import { ParticleLayer } from './components/ParticleLayer';
@@ -64,22 +72,27 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'sandbox' | 'game' | 'capacity';
-type Panel = 'metrics' | 'inspect' | 'level';
+type Mode = 'learn' | 'sandbox' | 'game' | 'capacity';
+type Panel = 'metrics' | 'inspect' | 'level' | 'trace';
+const MAX_TRACE_EVENTS = 6000;
 
 const bestKey = (id: string) => `pattern.best.${id}`;
+const ALL_LEVELS = { ...LEVELS, ...LEARN_LEVELS };
 
 export function App() {
   const client = useMemo(() => new SimClient(), []);
   const { screenToFlowPosition } = useReactFlow();
-  const [mode, setMode] = useState<Mode>('game');
+  const [mode, setMode] = useState<Mode>('learn');
+  /** Practice level opened from a lesson of the learning path. */
+  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(null);
+  const { complete } = useProgress();
   const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
   const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
   const [custom, setCustom] = useState<Record<string, Preset>>({});
   const presets = useMemo(() => ({ ...PRESETS, ...custom }), [custom]);
   const preset = presets[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]];
   const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
-  const level = LEVELS[levelKey];
+  const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<SystemNodeType>([]);
@@ -101,6 +114,8 @@ export function App() {
   const [verifying, setVerifying] = useState(false);
   const [result, setResult] = useState<Summary | null>(null);
   const [best, setBest] = useState(0);
+  const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
+  const [autoTrace, setAutoTrace] = useState(false);
 
   // ------------------------------------------------------------------ simulation lifecycle
 
@@ -113,6 +128,7 @@ export function App() {
       const s = settings.current;
       setError(null);
       setWindows([]);
+      setTraceEvents([]);
       const design = toDesign(ns, es);
       if (s.mode === 'game') {
         client.initLevel(s.level, design);
@@ -145,7 +161,7 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (mode === 'capacity') {
+    if (mode === 'capacity' || mode === 'learn') {
       client.pause();
       setRunning(false);
       return;
@@ -156,7 +172,23 @@ export function App() {
 
   const switchMode = (next: Mode) => {
     if (mode === 'sandbox') setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
+    if (next !== 'game') setPractice(null);
+    // learning-path levels are only reachable from their lesson
+    if (next === 'game' && !practice && levelKey.startsWith('learn/')) setLevelKey(Object.keys(LEVELS)[0]);
     setMode(next);
+  };
+
+  /** A lesson asks for its practice level on the canvas. */
+  const openPractice = (levelId: string, lessonId: string) => {
+    if (!ALL_LEVELS[levelId]) return;
+    setPractice({ lessonId, level: levelId });
+    setLevelKey(levelId);
+    setMode('game');
+  };
+  const backToPath = () => {
+    setPractice(null);
+    setLevelKey(Object.keys(LEVELS)[0]);
+    setMode('learn');
   };
 
   /** Load a generated design (sizing, calibration) into the sandbox. */
@@ -208,7 +240,8 @@ export function App() {
         }),
       );
     };
-    return client.onTick((_, ws) => {
+    return client.onTick((_, ws, _done, traces) => {
+      if (traces.length) setTraceEvents((prev) => [...prev, ...traces].slice(-MAX_TRACE_EVENTS));
       if (!ws.length) return;
       setWindows((prev) => [...prev, ...ws].slice(-HISTORY));
       const last = ws[ws.length - 1];
@@ -221,6 +254,29 @@ export function App() {
       setEdges((es) => es.map((e) => ({ ...e, data: { ...e.data!, metrics: last.edges[e.data!.index] } })));
     });
   }, [client, setEdges, setNodes]);
+
+  // follow one request every 2 s of wall time
+  useEffect(() => {
+    if (!autoTrace || !running) return;
+    client.trace(1);
+    const id = setInterval(() => client.trace(1), 2000);
+    return () => clearInterval(id);
+  }, [autoTrace, running, client]);
+
+  /** Edges as drawn: fanned out, numbered, with an arrow at the callee. */
+  const viewEdges = useMemo(
+    () =>
+      decorateEdges(nodes, edges).map((e) => ({
+        ...e,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
+        },
+      })),
+    [nodes, edges],
+  );
 
   // ------------------------------------------------------------------ editing
 
@@ -303,7 +359,7 @@ export function App() {
   );
 
   const selectedNode = nodes.find((n) => n.selected);
-  const selectedEdge = selectedNode ? undefined : edges.find((e) => e.selected);
+  const selectedEdge = selectedNode ? undefined : viewEdges.find((e) => e.selected);
   const selectionKey = selectedNode?.id ?? selectedEdge?.id;
   useEffect(() => {
     if (selectionKey) setPanel('inspect');
@@ -334,6 +390,9 @@ export function App() {
     if (err || !summary) {
       setError(err ?? 'verify failed');
       return null;
+    }
+    if (practice && practice.level === levelKey && summary.stars >= 1 && practice.xp === undefined) {
+      setPractice({ ...practice, xp: complete(practice.lessonId, summary.stars * 5) });
     }
     setResult(summary);
     if (summary.stars > best) {
@@ -370,6 +429,9 @@ export function App() {
         </div>
         <Tabs value={mode} onValueChange={(v) => switchMode(v as Mode)}>
           <TabsList>
+            <TabsTrigger value="learn">
+              <GraduationCap /> Học
+            </TabsTrigger>
             <TabsTrigger value="game">
               <Gamepad2 /> Game
             </TabsTrigger>
@@ -381,13 +443,19 @@ export function App() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        {mode === 'capacity' ? null : mode === 'game' ? (
-          <Select value={levelKey} onValueChange={setLevelKey}>
+        {mode === 'capacity' || mode === 'learn' ? null : mode === 'game' ? (
+          <Select
+            value={levelKey}
+            onValueChange={(v) => {
+              setPractice(null);
+              setLevelKey(v);
+            }}
+          >
             <SelectTrigger className="w-64">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(LEVELS).map(([key, l]) => (
+              {Object.entries(practice ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
                 <SelectItem key={key} value={key}>
                   {l.title}
                 </SelectItem>
@@ -409,7 +477,7 @@ export function App() {
           </Select>
         )}
 
-        <div className={mode === 'capacity' ? 'hidden' : 'ml-auto flex items-center gap-2'}>
+        <div className={mode === 'capacity' || mode === 'learn' ? 'hidden' : 'ml-auto flex items-center gap-2'}>
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -471,25 +539,21 @@ export function App() {
         </div>
       </header>
 
-      {mode === 'capacity' ? (
+      {mode === 'learn' ? (
+        <LearnPage onBuild={openPractice} />
+      ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : (
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col gap-4 border-r p-3">
           <Palette kinds={paletteKinds} catalog={catalog} />
-          <div className="mt-auto grid gap-1 text-[11px] text-muted-foreground">
-            {PARTICLE_LEGEND.map((l) => (
-              <span key={l.label} className="flex items-center gap-2">
-                <i className="size-2 rounded-full" style={{ background: l.color }} /> {l.label}
-              </span>
-            ))}
-          </div>
+          <ParticleLegend className="mt-auto" />
         </aside>
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           <ReactFlow
             nodes={nodes}
-            edges={edges}
+            edges={viewEdges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             onNodesChange={onNodesChange}
@@ -507,6 +571,18 @@ export function App() {
             <ParticleLayer client={client} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
+          {practice && mode === 'game' && (
+            <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
+              <GraduationCap className="size-4 text-primary" />
+              <span>
+                Bài học: <b>{LESSONS.find((l) => l.id === practice.lessonId)?.title}</b>
+                {practice.xp === undefined ? ' · đạt ≥ 1★ khi chấm điểm để hoàn thành' : ` · đã hoàn thành (+${practice.xp} XP)`}
+              </span>
+              <Button size="sm" variant="secondary" className="h-7 rounded-full" onClick={backToPath}>
+                <ArrowLeft /> Lộ trình
+              </Button>
+            </div>
+          )}
           {error && (
             <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
               {error}
@@ -519,6 +595,7 @@ export function App() {
             <TabsList className="m-3 mb-0 w-[calc(100%-1.5rem)]">
               {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
               <TabsTrigger value="metrics">Số liệu</TabsTrigger>
+              <TabsTrigger value="trace">Trace</TabsTrigger>
               <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
             </TabsList>
             <ScrollArea className="min-h-0 flex-1">
@@ -531,6 +608,7 @@ export function App() {
                       onVerify={verify}
                       verifying={verifying}
                       best={best}
+                      online={!levelKey.startsWith('learn/')}
                     />
                   </TabsContent>
                 )}
@@ -589,10 +667,31 @@ export function App() {
                   )}
                   <MetricsPanel windows={windows} scenario={scenario} cost={cost} />
                 </TabsContent>
+                <TabsContent value="trace">
+                  <TracePanel
+                    events={traceEvents}
+                    nodeLabel={(i) => nodes.find((n) => n.data.index === i)?.data.label ?? `#${i}`}
+                    edgeEnds={(i) => {
+                      const e = edges.find((x) => x.data?.index === i);
+                      if (!e) return undefined;
+                      const name = (id: string) => nodes.find((n) => n.id === id)?.data.label ?? id;
+                      return { source: name(e.source), target: name(e.target) };
+                    }}
+                    running={running}
+                    auto={autoTrace}
+                    onAuto={setAutoTrace}
+                    onTrace={() => client.trace(1)}
+                    onSlow={() => {
+                      setSpeed('0.25');
+                      client.setSpeed(0.25);
+                    }}
+                  />
+                </TabsContent>
                 <TabsContent value="inspect">
                   {selectedNode ? (
                     <NodeInspector
                       node={selectedNode.data}
+                      outDegree={edges.filter((e) => e.source === selectedNode.id).length}
                       game={mode === 'game'}
                       maxInstances={level.maxInstances ?? 10}
                       onChange={(config, label) => updateNode(selectedNode.id, config, label)}
@@ -605,6 +704,7 @@ export function App() {
                       source={nodes.find((n) => n.id === selectedEdge.source)?.data.label ?? selectedEdge.source}
                       target={nodes.find((n) => n.id === selectedEdge.target)?.data.label ?? selectedEdge.target}
                       game={mode === 'game'}
+                      allowFireAndForget={mode !== 'game' || !!level.allowFireAndForget}
                       onChange={(p) => updateEdge(selectedEdge.id, p)}
                       onDelete={() => onDelete({ nodes: [], edges: [selectedEdge] })}
                     />
@@ -624,7 +724,22 @@ export function App() {
         </aside>
       </div>
       )}
-      <ResultDialog summary={result} onOpenChange={(open) => !open && setResult(null)} />
+      <ResultDialog
+        summary={result}
+        onOpenChange={(open) => !open && setResult(null)}
+        action={
+          practice?.xp !== undefined && result && result.stars >= 1 ? (
+            <Button
+              onClick={() => {
+                setResult(null);
+                backToPath();
+              }}
+            >
+              <GraduationCap /> Về lộ trình (+{practice.xp} XP)
+            </Button>
+          ) : undefined
+        }
+      />
     </div>
   );
 }

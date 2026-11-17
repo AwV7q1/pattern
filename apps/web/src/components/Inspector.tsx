@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ChevronRight, PowerOff, Power, Trash2 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_BREAKER, type Balance, type EdgePolicy, type ExecModel, type NodeConfig } from '@/types';
+import { DEFAULT_BREAKER, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -47,9 +47,45 @@ function NumberField({
 type NumKey = { [K in keyof NodeConfig]: NodeConfig[K] extends number ? K : never }[keyof NodeConfig];
 type Field = { key: NumKey; label: string; step: number; kinds?: string[]; hint?: string };
 
+const ROUTING_HELP: Record<Routing, string> = {
+  pick: 'Mỗi lần gọi chọn MỘT nhánh, xoay vòng (như load balancer, chia cho các replica).',
+  sequence:
+    'Gọi LẦN LƯỢT mọi nhánh theo thứ tự ①②③ (await a; await b). Latency = tổng các nhánh. Nhánh cùng số thứ tự chạy cùng lúc.',
+  parallel:
+    'Gọi CÙNG LÚC mọi nhánh rồi chờ tất cả (Promise.all). Latency = nhánh chậm nhất; một nhánh lỗi là cả request lỗi ngay.',
+};
+
+/** How a node with several outgoing edges calls them. */
+export function RoutingField({ value, onChange }: { value: Routing; onChange: (r: Routing) => void }) {
+  return (
+    <div className="grid gap-1.5">
+      <Label className="text-xs text-muted-foreground">Gọi các nhánh phía sau</Label>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        className="w-full"
+        value={value}
+        onValueChange={(v) => v && onChange(v as Routing)}
+      >
+        <ToggleGroupItem value="pick" className="text-xs">
+          ⇄ Chọn 1
+        </ToggleGroupItem>
+        <ToggleGroupItem value="sequence" className="text-xs">
+          ①② Tuần tự
+        </ToggleGroupItem>
+        <ToggleGroupItem value="parallel" className="text-xs">
+          ∥ Song song
+        </ToggleGroupItem>
+      </ToggleGroup>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">{ROUTING_HELP[value]}</p>
+    </div>
+  );
+}
+
 const COMMON_FIELDS: Field[] = [
   { key: 'instances', label: 'Instances (server)', step: 1 },
-  { key: 'callsPerRequest', label: 'Lời gọi xuống / request', step: 1, kinds: ['service', 'database'], hint: 'tuần tự, vd. N query' },
+  { key: 'callsPerRequest', label: 'Lời gọi xuống / request', step: 1, kinds: ['service', 'database'], hint: 'chế độ Chọn 1: N lần tuần tự, vd. N query' },
   { key: 'errorRate', label: 'Tỉ lệ lỗi (0-1)', step: 0.01 },
   { key: 'hitRate', label: 'Hit rate (0-1)', step: 0.05, kinds: ['cache'] },
   { key: 'costPerHour', label: 'Giá / instance / giờ', step: 0.01 },
@@ -79,6 +115,8 @@ const ADVANCED_FIELDS: Field[] = [
 
 interface NodeProps {
   node: SystemNodeData;
+  /** Outgoing edges: routing only matters with more than one. */
+  outDegree: number;
   /** Game mode: only the instance count is up to the player. */
   game: boolean;
   maxInstances: number;
@@ -87,7 +125,7 @@ interface NodeProps {
   onDelete: () => void;
 }
 
-export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown, onDelete }: NodeProps) {
+export function NodeInspector({ node, outDegree, game, maxInstances, onChange, onToggleDown, onDelete }: NodeProps) {
   const [draft, setDraft] = useState(node.config);
   const [label, setLabel] = useState(node.label);
   useEffect(() => {
@@ -110,6 +148,17 @@ export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown
   );
   const fits = (f: Field) => !f.kinds || f.kinds.includes(node.kind) || f.kinds.includes(draft.model);
   const editable = !node.locked;
+  const canRoute = outDegree > 1 && node.kind !== 'client' && node.kind !== 'loadBalancer';
+  const routing = canRoute && (
+    <RoutingField
+      value={draft.routing ?? 'pick'}
+      onChange={(r) => {
+        const next = { ...draft, routing: r };
+        setDraft(next);
+        if (game) onChange(next, label);
+      }}
+    />
+  );
 
   return (
     <div className="grid gap-4">
@@ -132,6 +181,7 @@ export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown
         <p className="text-sm text-muted-foreground">Traffic được điều khiển ở tab Số liệu hoặc theo kịch bản level.</p>
       ) : game ? (
         <div className="grid gap-3">
+          {routing}
           {editable ? (
             <div className="grid gap-2">
               <div className="flex justify-between text-xs">
@@ -176,6 +226,7 @@ export function NodeInspector({ node, game, maxInstances, onChange, onToggleDown
             <Label className="text-xs text-muted-foreground">Tên</Label>
             <Input className="h-8" value={label} onChange={(e) => setLabel(e.target.value)} />
           </div>
+          {routing}
           <div className="grid gap-1.5">
             <Label className="text-xs text-muted-foreground">Mô hình thực thi</Label>
             <ToggleGroup
@@ -263,16 +314,19 @@ interface EdgeProps {
   source: string;
   target: string;
   game: boolean;
+  /** Game levels decide whether calls may skip waiting. */
+  allowFireAndForget?: boolean;
   onChange: (policy: EdgePolicy) => void;
   onDelete: () => void;
 }
 
-export function EdgeInspector({ edge, source, target, game, onChange, onDelete }: EdgeProps) {
+export function EdgeInspector({ edge, source, target, game, allowFireAndForget = true, onChange, onDelete }: EdgeProps) {
   const [p, setP] = useState(edge.policy);
   useEffect(() => setP(edge.policy), [edge.policy, edge.index]);
   const dirty = JSON.stringify(p) !== JSON.stringify(edge.policy);
   const cb = p.circuitBreaker;
   const m = edge.metrics;
+  const routing = edge.view?.routing ?? 'pick';
 
   return (
     <div className="grid gap-4">
@@ -300,6 +354,48 @@ export function EdgeInspector({ edge, source, target, game, onChange, onDelete }
             <div>{m.breaker}</div>
             <div className="text-muted-foreground">CB</div>
           </div>
+        </div>
+      )}
+
+      {routing !== 'pick' && (
+        <div className="grid gap-3 rounded-md border border-primary/30 bg-primary/5 p-2.5">
+          <div className="text-xs">
+            {routing === 'sequence' ? (
+              <>
+                <b>{source}</b> gọi các nhánh <b>tuần tự</b>. Nhánh này là bước{' '}
+                <b className="font-mono">{edge.view?.step}</b>/{edge.view?.steps}.
+              </>
+            ) : (
+              <>
+                <b>{source}</b> gọi các nhánh <b>song song</b> và chờ tất cả.
+              </>
+            )}
+          </div>
+          <div className="grid grid-cols-2 items-end gap-3">
+            {routing === 'sequence' && (
+              <NumberField
+                label="Thứ tự (nhỏ chạy trước)"
+                value={p.order ?? 0}
+                onChange={(v) => setP({ ...p, order: Math.max(0, Math.round(v)) })}
+                hint="trùng số = chạy cùng lúc"
+              />
+            )}
+            {(!game || allowFireAndForget) && (
+              <div className="grid gap-1.5">
+                <Label className="text-xs text-muted-foreground">Không chờ trả lời</Label>
+                <div className="flex h-8 items-center gap-2">
+                  <Switch checked={!!p.fireAndForget} onCheckedChange={(fireAndForget) => setP({ ...p, fireAndForget })} />
+                  <span className="text-[11px] text-muted-foreground">fire-and-forget</span>
+                </div>
+              </div>
+            )}
+          </div>
+          {p.fireAndForget && (
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Gửi đi rồi làm tiếp ngay (gửi email, bắn event). Nhanh hơn nhưng lỗi ở nhánh này không ai biết: nó được
+              đếm vào &ldquo;async&rdquo;, không vào lỗi của request.
+            </p>
+          )}
         </div>
       )}
 
@@ -375,6 +471,41 @@ export function EdgeInspector({ edge, source, target, game, onChange, onDelete }
       )}
       {!game && (
         <>
+          <Separator />
+          <div>
+            <Label className="text-xs">Payload và băng thông</Label>
+            <p className="text-[11px] text-muted-foreground">
+              Body lớn thì truyền lâu hơn, và các body xếp hàng nối đuôi nhau trên đường truyền. Particle to hơn khi payload
+              lớn.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <NumberField
+              label="Request (KB)"
+              step={1}
+              value={p.requestKb ?? 0}
+              onChange={(v) => setP({ ...p, requestKb: Math.max(0, v) })}
+            />
+            <NumberField
+              label="Response (KB)"
+              step={1}
+              value={p.responseKb ?? 0}
+              onChange={(v) => setP({ ...p, responseKb: Math.max(0, v) })}
+            />
+            <NumberField
+              label="Băng thông (Mbps)"
+              step={100}
+              value={p.bandwidthMbps ?? 1000}
+              onChange={(v) => setP({ ...p, bandwidthMbps: Math.max(1, v) })}
+            />
+          </div>
+          {(p.requestKb || p.responseKb) ? (
+            <p className="font-mono text-[11px] text-muted-foreground">
+              truyền: ↑ {fmt.ms(((p.requestKb ?? 0) * 8) / (p.bandwidthMbps ?? 1000))} · ↓{' '}
+              {fmt.ms(((p.responseKb ?? 0) * 8) / (p.bandwidthMbps ?? 1000))}
+              {m && <> · link bận {fmt.pct(m.bandwidthUtilization ?? 0, 0)}</>}
+            </p>
+          ) : null}
           <Separator />
           <div className="flex items-center justify-between">
             <div>

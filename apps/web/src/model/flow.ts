@@ -9,6 +9,7 @@ import {
   type NodeConfig,
   type NodeKind,
   type NodeWindow,
+  type Routing,
 } from '@/types';
 
 export type SystemNodeData = {
@@ -28,7 +29,22 @@ export type FlowEdgeData = {
   index: number;
   policy: EdgePolicy;
   metrics?: EdgeWindow;
+  /** Derived for drawing (see `decorateEdges`), never stored. */
+  view?: EdgeView;
 };
+
+export interface EdgeView {
+  /** Slot of this edge among the source's outgoing / target's incoming edges. */
+  outSlot: number;
+  outCount: number;
+  inSlot: number;
+  inCount: number;
+  /** Routing of the source node. */
+  routing: Routing;
+  /** 1-based step for `sequence` routing (equal steps run together). */
+  step: number;
+  steps: number;
+}
 export type FlowEdgeType = Edge<FlowEdgeData, 'flow'>;
 
 export function policyOf(e: DesignEdge): EdgePolicy {
@@ -41,7 +57,58 @@ export function policyOf(e: DesignEdge): EdgePolicy {
     circuitBreaker: e.circuitBreaker ?? null,
     poolSize: e.poolSize ?? null,
     poolTimeoutMs: e.poolTimeoutMs ?? DEFAULT_POLICY.poolTimeoutMs,
+    order: e.order ?? 0,
+    fireAndForget: e.fireAndForget ?? false,
+    requestKb: e.requestKb ?? 0,
+    responseKb: e.responseKb ?? 0,
+    bandwidthMbps: e.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps,
   };
+}
+
+/** Routing the engine really uses (clients and LBs always pick one edge). */
+export function effectiveRouting(kind: NodeKind, config: NodeConfig): Routing {
+  return kind === 'client' || kind === 'loadBalancer' ? 'pick' : (config.routing ?? 'pick');
+}
+
+/**
+ * Drawing hints for every edge: spread edges that share a node side so they
+ * do not overlap (sorted by the other end's height), and number the steps
+ * of `sequence` routing exactly like the engine groups them.
+ */
+export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): FlowEdgeType[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const y = (id: string) => byId.get(id)?.position.y ?? 0;
+  const outs = new Map<string, FlowEdgeType[]>();
+  const ins = new Map<string, FlowEdgeType[]>();
+  for (const e of edges) {
+    outs.set(e.source, [...(outs.get(e.source) ?? []), e]);
+    ins.set(e.target, [...(ins.get(e.target) ?? []), e]);
+  }
+  const outSlot = new Map<string, number>();
+  const inSlot = new Map<string, number>();
+  outs.forEach((list) => [...list].sort((a, b) => y(a.target) - y(b.target)).forEach((e, i) => outSlot.set(e.id, i)));
+  ins.forEach((list) => [...list].sort((a, b) => y(a.source) - y(b.source)).forEach((e, i) => inSlot.set(e.id, i)));
+  const steps = new Map<string, [number, number]>();
+  outs.forEach((list, src) => {
+    const n = byId.get(src);
+    if (!n || effectiveRouting(n.data.kind, n.data.config) !== 'sequence') return;
+    const orders = [...new Set(list.map((e) => e.data?.policy.order ?? 0))].sort((a, b) => a - b);
+    list.forEach((e) => steps.set(e.id, [orders.indexOf(e.data?.policy.order ?? 0) + 1, orders.length]));
+  });
+  return edges.map((e) => {
+    const src = byId.get(e.source);
+    const [step, count] = steps.get(e.id) ?? [0, 0];
+    const view: EdgeView = {
+      outSlot: outSlot.get(e.id) ?? 0,
+      outCount: outs.get(e.source)?.length ?? 1,
+      inSlot: inSlot.get(e.id) ?? 0,
+      inCount: ins.get(e.target)?.length ?? 1,
+      routing: src ? effectiveRouting(src.data.kind, src.data.config) : 'pick',
+      step,
+      steps: count,
+    };
+    return { ...e, data: { ...e.data!, view } };
+  });
 }
 
 /** Give nodes without a position a left-to-right layout by call depth. */
@@ -146,6 +213,11 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
         out.poolSize = p.poolSize;
         out.poolTimeoutMs = p.poolTimeoutMs ?? DEFAULT_POLICY.poolTimeoutMs;
       }
+      if (p.order) out.order = p.order;
+      if (p.fireAndForget) out.fireAndForget = true;
+      if (p.requestKb) out.requestKb = p.requestKb;
+      if (p.responseKb) out.responseKb = p.responseKb;
+      if (p.requestKb || p.responseKb) out.bandwidthMbps = p.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps;
       return out;
     }),
   };

@@ -5,10 +5,13 @@ export const BUILDABLE: NodeKind[] = ['loadBalancer', 'service', 'cache', 'datab
 
 export type ExecModel = 'threads' | 'cpu';
 export type Balance = 'roundRobin' | 'leastConnections' | 'random';
+/** Several outgoing edges: pick one (LB), call all one after another, or all at once. */
+export type Routing = 'pick' | 'sequence' | 'parallel';
 
 export interface NodeConfig {
   instances: number;
   balance: Balance;
+  routing: Routing;
   /** `threads`: slot held for the whole request. `cpu`: event loop / CPU lanes. */
   model: ExecModel;
   concurrency: number;
@@ -50,6 +53,13 @@ export interface EdgePolicy {
   /** Connections per caller process (Prisma `connection_limit`). */
   poolSize?: number | null;
   poolTimeoutMs?: number;
+  /** `sequence` routing: lower first, equal orders run together. */
+  order?: number;
+  /** Do not wait for the answer (emit event, send email). */
+  fireAndForget?: boolean;
+  requestKb?: number;
+  responseKb?: number;
+  bandwidthMbps?: number;
 }
 
 export const DEFAULT_POLICY: EdgePolicy = {
@@ -60,6 +70,11 @@ export const DEFAULT_POLICY: EdgePolicy = {
   jitter: true,
   poolSize: null,
   poolTimeoutMs: 10000,
+  order: 0,
+  fireAndForget: false,
+  requestKb: 0,
+  responseKb: 0,
+  bandwidthMbps: 1000,
 };
 export const DEFAULT_BREAKER: CircuitBreaker = { failureThreshold: 0.5, minRequests: 20, windowMs: 1000, openMs: 5000 };
 
@@ -115,6 +130,7 @@ export interface Level extends Preset {
   palette: NodeKind[];
   locked: string[];
   maxInstances?: number;
+  allowFireAndForget?: boolean;
 }
 
 export interface NodeWindow {
@@ -137,6 +153,22 @@ export interface EdgeWindow {
   poolUtilization: number;
   poolWaitMs: number;
   poolTimeouts: number;
+  bandwidthUtilization: number;
+}
+
+/** One step of a traced request (crates/engine/src/sim.rs `TraceEvent`). */
+export interface TraceEvent {
+  trace: number;
+  ev: 'begin' | 'send' | 'arrive' | 'start' | 'reject' | 'reply' | 'recv' | 'timeout' | 'end';
+  span: number;
+  parent: number;
+  node: number;
+  edge: number | null;
+  tMs: number;
+  ok: boolean;
+  attempt: number;
+  waitMs: number;
+  fireAndForget: boolean;
 }
 
 export interface WindowMetrics {
@@ -182,6 +214,7 @@ export interface Summary {
 export const DEFAULT_CONFIG: NodeConfig = {
   instances: 1,
   balance: 'roundRobin',
+  routing: 'pick',
   model: 'threads',
   concurrency: 100,
   queueSize: 100,

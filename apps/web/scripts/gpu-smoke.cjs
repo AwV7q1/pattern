@@ -65,12 +65,13 @@ const BASE = process.env.BASE_URL ?? 'http://localhost:5173';
           if (px[i + 3] < 30) continue;
           const red = bgra ? px[i + 2] : px[i];
           const blue = bgra ? px[i] : px[i + 2];
-          let b = out.find((o) => Math.abs(o.x / o.n - x) < 20);
-          if (!b) out.push((b = { x: 0, y: 0, n: 0, red: 0, blue: 0 }));
-          b.x += x; b.y += y; b.n++; b.red += red; b.blue += blue;
+          const white = Math.min(px[i], px[i + 1], px[i + 2]) > 170;
+          let b = out.find((o) => Math.abs(o.x / o.n - x) < 30);
+          if (!b) out.push((b = { x: 0, y: 0, n: 0, red: 0, blue: 0, white: 0 }));
+          b.x += x; b.y += y; b.n++; b.red += red; b.blue += blue; b.white += white ? 1 : 0;
         }
       }
-      return out.map((b) => ({ x: b.x / b.n, y: b.y / b.n, color: b.red > b.blue ? 'red' : 'blue' }));
+      return out.map((b) => ({ x: b.x / b.n, y: b.y / b.n, n: b.n, white: b.white, color: b.red > b.blue ? 'red' : 'blue' }));
     };
 
     r.render(0.5, 1, { x: 0, y: 0, zoom: 1 });
@@ -78,7 +79,23 @@ const BASE = process.env.BASE_URL ?? 'http://localhost:5173';
     const liveActive = r.liveParticles;
     r.render(10, 1, { x: 0, y: 0, zoom: 1 });
     const later = await blobs();
-    return { active, liveActive, later, liveLater: r.liveParticles, errors };
+    const liveLater = r.liveParticles;
+
+    // edge style: payload scale and traced requests (12 floats per edge)
+    r.reset();
+    r.setEdges(new Float32Array([
+      50, 100, 183.33, 100, 316.67, 100, 450, 100, 1, 1, 0, 0,   // edge 0: no payload
+      50, 100, 183.33, 100, 316.67, 100, 450, 100, 2.5, 1, 0, 0, // edge 1: big requests
+    ]));
+    // render at t = 1 s; travel takes 1 s, so t0 sets the position
+    r.push(new Float32Array([
+      0, 0.75, 1.0, 0, // plain request: t = 0.25 -> x = 150
+      1, 0.5, 1.0, 0,  // big request: t = 0.5 -> x = 250
+      0, 0.25, 1.0, 4, // traced request: t = 0.75 -> x = 350
+    ]), 1.0);
+    r.render(1.0, 1, { x: 0, y: 0, zoom: 1 });
+    const styled = await blobs();
+    return { active, liveActive, later, liveLater, styled, errors };
   });
   await browser.close();
 
@@ -95,6 +112,10 @@ const BASE = process.env.BASE_URL ?? 'http://localhost:5173';
   check('error response at x≈350, lower lane, red', b && Math.abs(b.x - 350) < 3 && b.y > 100 && b.color === 'red');
   check('expired batches leave the live range', result.liveActive === 4 && result.liveLater === 0);
   check('nothing drawn after expiry', result.later.length === 0);
+  const [plain, big, traced] = [...(result.styled ?? [])].sort((p, q) => p.x - q.x);
+  check('three styled particles', result.styled.length === 3);
+  check('bigger payload draws a bigger arrow', plain && big && big.n > plain.n * 3);
+  check('traced request is larger with a white ring', plain && traced && traced.n > plain.n * 3 && traced.white > 10 && plain.white === 0);
 
   for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}`);
   if (result.errors.length) console.log(result.errors);

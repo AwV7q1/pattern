@@ -9,6 +9,7 @@
     "test": "cargo test --workspace && pnpm --filter web typecheck && pnpm --filter server test",
     "sim": "cargo run -q --release -p pattern-sim --",
     "test:gpu": "node apps/web/scripts/gpu-smoke.cjs",
-    "dev:server": "pnpm --filter server dev"
+    "dev:server": "pnpm --filter server dev",
+    "check:learn": "node --experimental-strip-types apps/web/scripts/check-curriculum.mjs"
   }
 }

@@ -23,6 +23,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 ## Tính năng
 
+- **Học** (tab mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 29 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
 - **Sandbox**: kéo thả thành phần (LB, service, cache, DB, queue), nối dây, xoá. Chỉnh mọi tham số node và chính sách edge (timeout, retry + backoff + jitter, circuit breaker). Điều khiển RPS, spike ×2/×3/×5, tắt node (chaos). Tải design ra JSON để chạy bằng CLI.
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
 - **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
@@ -35,7 +36,10 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
   - Nhiều query tuần tự mỗi request.
   - Connection pool cho mỗi process.
   - USL contention, GC pause, chi phí wake-up.
-- **Particle**: WebGPU (ring buffer, vertex shader tính vị trí trên bezier). Nếu trình duyệt không hỗ trợ thì dùng Canvas2D fallback (`?renderer=2d` để ép dùng). Màu: request xanh dương, retry cam, OK xanh lá, lỗi đỏ.
+- **Gọi nhiều nhánh**: node có nhiều edge đi ra chọn cách gọi: ⇄ chọn 1 (round-robin), ①②③ tuần tự (`await` nối tiếp, edge cùng số thứ tự chạy cùng lúc), ∥ song song (`Promise.all`, lỗi là fail ngay). Edge có thể đánh dấu fire-and-forget (không chờ trả lời).
+- **Payload và băng thông**: mỗi edge có kích thước request/response (KB) và băng thông. Body truyền nối đuôi nhau trên đường truyền (FIFO), nên đường truyền có thể nghẽn trước cả server.
+- **Trace**: theo dõi từng request, xem waterfall (mạng, chờ connection, xếp hàng, xử lý) và diễn biến theo thời gian. Request đó được vẽ to hơn, có vòng trắng trên canvas.
+- **Particle**: WebGPU (ring buffer, vertex shader tính vị trí trên bezier). Nếu trình duyệt không hỗ trợ thì dùng Canvas2D fallback (`?renderer=2d` để ép dùng). Request là **mũi tên** xanh dương chỉ hướng đi, retry là mũi tên cam, response OK là chấm xanh lá ở làn ngược lại, lỗi là dấu × đỏ. Particle to hơn khi payload lớn. Edge chung một node được tách ra, có mũi tên ở đầu đích và dày lên theo lưu lượng.
 
 ## Cấu trúc
 
@@ -91,6 +95,7 @@ scenario            requests  ok rps   err %   p99 ms  retries  cost/h  SLO   st
 05-retry-storm         60250     584   41.82    572.6    61036    0.73  FAIL  ☆☆☆   (sập, không tự hồi phục)
 06-circuit-breaker     60219     775   22.80    204.5     2815    0.73  FAIL  ☆☆☆   (hồi phục ngay khi DB khoẻ)
 07-nestjs-pool        125896    2098    0.00   1239.4        0    0.67  FAIL  ☆☆☆   (pool cạn lúc spike; pool 10 → p99 45ms)
+08-checkout-fan-out     6078     101    0.00   1315.3        0    1.05  FAIL  ☆☆☆   (đường truyền 100 Mbps nghẽn ở ~208 rps lúc spike)
 ```
 
 ## Các quyết định thiết kế
@@ -130,6 +135,17 @@ Node `cpu` và edge có pool:
     "instances": 2, "balance": "roundRobin", "model": "cpu", "cpuLanes": 4, "maxInFlight": 5000,
     "cpuP50Ms": 1.5, "cpuP99Ms": 4.5, "callsPerRequest": 3, "wakeupMs": 0, "gcPauseMs": 0, "gcEveryRequests": 0 } }
 { "source": "api", "target": "db", "poolSize": 10, "poolTimeoutMs": 10000 }
+```
+
+Gọi nhiều nhánh, payload và băng thông:
+
+```jsonc
+{ "id": "checkout", "kind": "service", "config": { "routing": "sequence" } }   // "pick" | "sequence" | "parallel"
+{ "source": "checkout", "target": "auth", "order": 1 }
+{ "source": "checkout", "target": "inventory", "order": 2 }                     // cùng order = chạy cùng lúc
+{ "source": "checkout", "target": "pricing", "order": 2 }
+{ "source": "checkout", "target": "email", "order": 3, "fireAndForget": true }
+{ "source": "client", "target": "checkout", "requestKb": 2, "responseKb": 60, "bandwidthMbps": 100 }
 ```
 
 Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`.

@@ -47,6 +47,8 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
               : `${c.instances}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
             {c.callsPerRequest > 1 && (data.kind === 'service' || data.kind === 'database') && ` · ${c.callsPerRequest} call`}
             {data.kind === 'cache' && ` · hit ${Math.round(c.hitRate * 100)}%`}
+            {c.routing === 'sequence' && data.kind !== 'loadBalancer' && ' · ①② tuần tự'}
+            {c.routing === 'parallel' && data.kind !== 'loadBalancer' && ' · ∥ song song'}
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
             <div

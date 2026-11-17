@@ -1,4 +1,4 @@
-import type { CalibrationResult, Design, SizingReport, SizingSpec } from '@/types';
+import type { CalibrationResult, Design, SizingReport, SizingSpec, Summary } from '@/types';
 import type { ComputeRequest } from './compute.worker';
 
 type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;
@@ -33,6 +33,11 @@ class Compute {
 
   size(spec: SizingSpec) {
     return this.call<SizingReport>({ op: 'size', spec: JSON.stringify(spec) });
+  }
+
+  /** Run `{ design, scenario }` (with `durationMs`) to the end. */
+  run(input: object) {
+    return this.call<Summary>({ op: 'run', input: JSON.stringify(input) });
   }
 
   calibrate(design: Design, request: CalibrateRequest) {

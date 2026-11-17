@@ -1,4 +1,5 @@
 import { PARTICLE_SHADER } from './particleShader';
+import { FLOATS_PER_EDGE } from './edgeGeometry';
 
 const CAPACITY = 1 << 18; // particles alive in the ring buffer
 const FLOATS_PER_PARTICLE = 4;
@@ -92,7 +93,7 @@ export class ParticleRenderer implements ParticleSink {
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const edgeBuffer = device.createBuffer({
-      size: MAX_EDGES * 8 * 4,
+      size: MAX_EDGES * FLOATS_PER_EDGE * 4,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     const bindGroup = device.createBindGroup({
@@ -125,10 +126,10 @@ export class ParticleRenderer implements ParticleSink {
   }
 
   setEdges(packed: Float32Array) {
-    const data = packed.subarray(0, MAX_EDGES * 8);
+    const data = packed.subarray(0, MAX_EDGES * FLOATS_PER_EDGE);
     // Storage-bound arrayLength() is the full buffer, so pad unused edges
     // with zeros; particles never reference them.
-    const full = new Float32Array(MAX_EDGES * 8);
+    const full = new Float32Array(MAX_EDGES * FLOATS_PER_EDGE);
     full.set(data);
     this.device.queue.writeBuffer(this.edgeBuffer, 0, full);
   }
