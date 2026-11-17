@@ -12,9 +12,29 @@ export interface Progress {
   days: Record<string, number>;
   /** Unlock every lesson (for people who already know the basics). */
   unlockAll: boolean;
+  /** Spaced repetition deck: card key (`lessonId#index`) -> schedule. */
+  review: Record<string, ReviewItem>;
 }
 
-const empty = (): Progress => ({ done: {}, xp: 0, days: {}, unlockAll: false });
+/**
+ * Leitner box: a wrong answer puts the card in box 0, due tomorrow; each
+ * right answer when it is due moves it up a box and pushes the next review
+ * out (3, 7, 21 days). Past the last box it counts as learned.
+ */
+export interface ReviewItem {
+  box: number;
+  /** `YYYY-MM-DD`; null once learned. */
+  due: string | null;
+  misses: number;
+  last: string;
+}
+
+/** Days until the next review after landing in box `i` (box 0 = after a miss). */
+export const INTERVALS = [1, 3, 7, 21];
+export const LEARNED = INTERVALS.length;
+export const REVIEW_SIZE = 10;
+
+const empty = (): Progress => ({ done: {}, xp: 0, days: {}, unlockAll: false, review: {} });
 
 export const today = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -25,6 +45,37 @@ function load(): Progress {
   } catch {
     return empty();
   }
+}
+
+export const addDays = (day: string, n: number) => {
+  const [y, m, d] = day.split('-').map(Number);
+  return today(new Date(y, m - 1, d + n));
+};
+
+/** Next schedule of a card after an answer; `undefined` = leave it out of the deck. */
+export function schedule(item: ReviewItem | undefined, correct: boolean, day: string, force = false): ReviewItem | undefined {
+  if (!correct) return { box: 0, due: addDays(day, INTERVALS[0]), misses: (item?.misses ?? 0) + 1, last: day };
+  if (!item || item.due === null) return item;
+  // a right answer only counts once the card is due (or in a review session)
+  if (!force && item.due > day) return item;
+  const box = item.box + 1;
+  return { ...item, box, due: box >= LEARNED ? null : addDays(day, INTERVALS[box]), last: day };
+}
+
+/** Keys due today or earlier, most overdue / weakest first. */
+export function dueKeys(p: Progress, day = today()) {
+  return Object.entries(p.review)
+    .filter(([, r]) => r.due !== null && r.due <= day)
+    .sort(([, a], [, b]) => a.due!.localeCompare(b.due!) || a.box - b.box)
+    .map(([k]) => k);
+}
+
+/** Cards still being learned, weakest first (for an early review). */
+export function weakKeys(p: Progress) {
+  return Object.entries(p.review)
+    .filter(([, r]) => r.due !== null)
+    .sort(([, a], [, b]) => a.box - b.box || b.misses - a.misses || a.due!.localeCompare(b.due!))
+    .map(([k]) => k);
 }
 
 /** Consecutive days with XP, ending today (or yesterday, if today has none yet). */
@@ -85,7 +136,30 @@ export function useProgress() {
     },
     [save],
   );
+  /** Update the review deck after the first answer to a card. */
+  const recordAnswer = useCallback(
+    (key: string, correct: boolean, force = false) => {
+      const cur = load();
+      const next = schedule(cur.review[key], correct, today(), force);
+      if (next === cur.review[key]) return;
+      const review = { ...cur.review };
+      if (next) review[key] = next;
+      else delete review[key];
+      save({ ...cur, review });
+    },
+    [save],
+  );
+  /** XP not tied to a lesson (review sessions). */
+  const addXp = useCallback(
+    (gained: number) => {
+      const cur = load();
+      const day = today();
+      save({ ...cur, xp: cur.xp + gained, days: { ...cur.days, [day]: (cur.days[day] ?? 0) + gained } });
+      return gained;
+    },
+    [save],
+  );
   const setUnlockAll = useCallback((unlockAll: boolean) => save({ ...load(), unlockAll }), [save]);
   const reset = useCallback(() => save(empty()), [save]);
-  return { progress: p, complete, setUnlockAll, reset };
+  return { progress: p, complete, recordAnswer, addXp, setUnlockAll, reset };
 }

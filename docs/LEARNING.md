@@ -56,6 +56,8 @@ Tab **Trace** → "Theo dõi 1 request". Engine đánh dấu request kế tiếp
 - Trên canvas, particle của request đó to hơn, có vòng trắng. Bấm "Xem chậm 0.25×" để nhìn kịp.
 - Panel bên phải kéo rộng được ở mép trái (nhấp đúp để về 380 px, độ rộng được nhớ lại). Nút ⤢ mở panel toàn màn hình, Esc để thu lại; canvas vẫn chạy phía sau. Khi đủ rộng, waterfall và phần diễn biến nằm cạnh nhau, biểu đồ Số liệu chia 2 cột.
 
+**So sánh trước / sau**: bấm "Ghim làm mốc" trên một request, đổi design (vd. Checkout từ Tuần tự sang Song song), rồi theo dõi một request mới. Panel "So sánh trước / sau" đặt hai waterfall **cùng một thang thời gian** và có bảng từng chặng: lúc bắt đầu, thời gian, chênh lệch. Sau khi đổi sang song song, mọi lời gọi cùng bắt đầu ở một mốc, và tổng thời gian giảm. Mốc được giữ khi đổi design hay đổi tab; nhãn được chụp lại lúc ghim.
+
 Trace là một phần của engine (`Simulation::trace_next`, `TraceEvent`), nên CLI và test dùng được.
 
 ## 2. Lộ trình học
@@ -71,12 +73,16 @@ Tab **Học** là tab mặc định. Nội dung nằm trong `apps/web/src/learn/
   - `choice`: trắc nghiệm, luôn có giải thích.
   - `order`: bấm các bước theo đúng thứ tự (thứ tự xử lý request, vòng đời circuit breaker, backoff).
   - `predict`: người học đoán một con số (p50, p99, tỉ lệ lỗi), rồi **engine chạy thật** kịch bản đó ngay trong trình duyệt. Đáp án đúng là khoảng chứa kết quả mô phỏng, không phải con số viết tay.
+  - `fix`: **sửa design trên canvas mini** ngay trong bài. Thẻ cho sẵn một design hỏng và chỉ một vài "núm" được phép đổi (`knobs`: chế độ gọi của node, số máy, fire-and-forget của một edge…). "Chạy thử" chạy engine không tính điểm và ghi lại từng lần; "Kiểm tra" chấm theo `goals` (vd. `p50 < 60 ms`, `chi phí ≤ $0.30/h`). Một núm có thể có `trap`: lựa chọn đạt số liệu nhưng sai thiết kế (vd. không chờ Database khi đăng ký) bị chấm sai kèm giải thích.
   - `build`: mở level trên canvas, đạt ≥ 1★ là qua bài. Chấm điểm bằng đúng engine của Game.
+
+Canvas mini, panel Ôn tập và panel So sánh đều là **panel tách được**: nút ⤢ mở panel thành tab toàn màn hình (bên dưới thanh header), Esc hoặc ⤡ để thu lại. Trạng thái bên trong được giữ nguyên vì cùng một phần tử chỉ đổi kiểu hiển thị. Khi tách ra, canvas mini to hơn và có bảng so sánh mọi lần chạy, Ôn tập hiện cả bộ thẻ, So sánh đặt waterfall cạnh bảng chặng.
 
 ### Cơ chế kiểu Duolingo
 
 - Đường đi uốn lượn, mỗi bài một nút tròn. Bài đã xong có dấu ✓, bài hiện tại có vòng sáng và nhãn "Bắt đầu/Tiếp tục", bài chưa tới bị khoá.
 - Câu trả lời sai được **hỏi lại ở cuối bài** (một lần).
+- **Ôn tập ngắt quãng** (Leitner): câu sai được đưa vào bộ ôn, hỏi lại sau 1 ngày; mỗi lần đúng khi đến hạn thì lên một hộp và giãn ra 3, 7, 21 ngày; qua hộp cuối là "đã thuộc". Sai lại thì về hộp đầu. Có banner "N câu cần ôn hôm nay" trên lộ trình và panel Ôn tập ở sidebar (ôn ngay, ôn sớm các câu yếu nhất, ôn từng câu). Khoá thẻ là `lessonId#vịTrí`, nên khi thêm thẻ mới hãy thêm vào cuối bài.
 - **XP**: bài học 10, thực hành 20. Đúng 100% được thêm 5, mỗi ★ ở bài thực hành thêm 5. Học lại một bài được 1/3 số XP.
 - **Mục tiêu ngày** 30 XP và **chuỗi ngày liên tiếp**.
 - "Tôi biết rồi, mở khoá tất cả" cho người đã có nền tảng.
@@ -102,7 +108,8 @@ Level thực hành nằm ở `levels/learn/`, có lời giải ở `levels/learn
 ### Kiểm tra nội dung
 
 ```bash
-pnpm check:learn       # chạy mọi thẻ predict bằng engine, kiểm tra kết quả rơi vào đúng 1 lựa chọn
+pnpm check:learn       # chạy mọi thẻ predict/fix bằng engine: predict rơi vào đúng 1 lựa chọn,
+                       # fix: design ban đầu phải trượt mục tiêu, `solution` phải đạt và không dính trap
 cargo test -p pattern-engine --test levels   # level ban đầu phải thua, lời giải phải được 3★
 ```
 
@@ -112,11 +119,10 @@ cargo test -p pattern-engine --test levels   # level ban đầu phải thua, l�
 
 1. Thêm `Lesson` vào `UNITS` trong `curriculum.ts`.
 2. Với `predict`: dựng kịch bản bằng các helper `oneHop`, `fanOut`, hoặc viết `{ design, scenario }`, rồi chạy `pnpm check:learn` để chỉnh các khoảng đáp án.
-3. Với `build`: thêm level vào `levels/learn/` và lời giải vào `levels/learn/solutions/`.
+3. Với `fix`: viết `sim`, các `knobs`, `goals` và `solution`, chạy `pnpm check:learn`.
+4. Với `build`: thêm level vào `levels/learn/` và lời giải vào `levels/learn/solutions/`.
 
 ## Hướng phát triển
 
-- Thẻ "sửa design": cho sẵn một design hỏng, người học sửa trên một canvas mini ngay trong bài.
-- Ôn tập ngắt quãng (spaced repetition): đưa lại các câu hay sai sau vài ngày.
 - Bài kiểm tra nhảy cóc để mở nhanh cả một phần.
-- Trace so sánh: đặt hai waterfall cạnh nhau, trước và sau khi đổi Tuần tự → Song song.
+- Thêm thẻ `fix` cho phần Dữ liệu và Khi mọi thứ hỏng (cache, timeout/retry).

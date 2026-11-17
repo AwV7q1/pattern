@@ -208,6 +208,78 @@ const check = (name, ok, detail = '') => {
   check('calibration predicts a capacity near the measured knee', cap > 1800 && cap < 3200, `~${cap} rps`);
   await shot('8-calibrate');
 
+  // 9. fix-the-design card on the mini canvas (+ pop-out), and spaced repetition
+  await page.evaluate(() =>
+    localStorage.setItem('pattern.learn.v1', JSON.stringify({ done: {}, xp: 0, days: {}, unlockAll: true, review: {} })),
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'Gọi song song' }).click();
+  await page.getByRole('button', { name: 'Bắt đầu', exact: true }).click();
+  let missed = false;
+  for (let i = 0; i < 12 && !(await page.getByText('Sửa design, simulator chấm').count()); i++) {
+    const cont = page.getByRole('button', { name: 'Tiếp tục' });
+    if (await cont.count()) {
+      await cont.click();
+      continue;
+    }
+    if (await page.getByText('Bấm các bước bên dưới theo thứ tự…').count()) {
+      for (const t of ['Gọi Auth và chờ', 'Gọi Kho và Giá cùng lúc', 'Chờ cả Kho và Giá trả lời', 'Gọi Thanh toán'])
+        await page.getByRole('button', { name: t }).click();
+    } else {
+      await page.locator('button.w-full.rounded-xl').nth(missed ? 1 : 0).click(); // miss the first question on purpose
+      missed = true;
+    }
+    await page.getByRole('button', { name: 'Kiểm tra' }).click();
+    await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  }
+  await page.getByRole('button', { name: '∥ Song song' }).click();
+  await page.getByRole('button', { name: 'Tách ra toàn màn hình' }).click();
+  const popped = await page.locator('[data-popout]').count();
+  await page.getByRole('button', { name: /Chạy thử/ }).click();
+  await page.getByText('Các lần chạy').waitFor();
+  await shot('9-fix-popout');
+  await page.keyboard.press('Escape');
+  await page.getByRole('button', { name: 'Kiểm tra' }).click();
+  await page.getByText(/Chính xác!|Chưa đúng/).waitFor({ timeout: 15000 });
+  check('fix card: popped out, parallel meets the goal', popped === 1 && (await page.getByText('Chính xác!').count()) === 1);
+  for (let i = 0; i < 6 && !(await page.getByText('Hoàn thành bài học!').count()); i++) {
+    const cont = page.getByRole('button', { name: 'Tiếp tục' });
+    if (await cont.count()) {
+      await cont.click();
+      continue;
+    }
+    await page.locator('button.w-full.rounded-xl').nth(1).click();
+    await page.getByRole('button', { name: 'Kiểm tra' }).click();
+  }
+  await page.getByRole('button', { name: 'Tiếp tục' }).click();
+  const deck = JSON.parse(await page.evaluate(() => localStorage.getItem('pattern.learn.v1'))).review;
+  check('missed question is scheduled for review tomorrow', deck['u2-parallel#1']?.box === 0, JSON.stringify(deck));
+  await page.getByRole('button', { name: 'Ôn sớm các câu yếu nhất' }).click();
+  await page.locator('button.w-full.rounded-xl').nth(1).click();
+  await page.getByRole('button', { name: 'Kiểm tra' }).click();
+  const after = JSON.parse(await page.evaluate(() => localStorage.getItem('pattern.learn.v1'))).review;
+  check('a right answer in review moves the card up a box', after['u2-parallel#1']?.box === 1, JSON.stringify(after));
+
+  // 10. trace: pin a request, switch Checkout to parallel, compare before/after
+  await page.getByRole('tab', { name: 'Sandbox' }).click();
+  await page.getByRole('combobox').first().click();
+  await page.getByRole('option', { name: /Checkout/ }).click();
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  await page.getByRole('tab', { name: 'Trace' }).click();
+  await page.getByRole('button', { name: /Theo dõi 1 request/ }).click();
+  await page.getByText('Diễn biến').waitFor({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Ghim làm mốc' }).click();
+  await page.locator('.react-flow__node', { hasText: 'Checkout' }).first().click();
+  await page.getByRole('radio', { name: '∥ Song song' }).click();
+  await page.getByRole('button', { name: 'Áp dụng và chạy lại' }).first().click();
+  await page.getByRole('tab', { name: 'Trace' }).click();
+  await page.getByRole('button', { name: /Theo dõi 1 request/ }).click();
+  const head = page.getByText('So sánh trước / sau ·');
+  await head.waitFor({ timeout: 10000 });
+  const title = (await head.innerText()).replace(/\s+/g, ' ');
+  check('trace compare: parallel checkout is faster than the pinned one', /−\d/.test(title), title);
+  await shot('10-trace-compare');
+
   check('no page errors', errors.length === 0, errors.join(' | '));
   await browser.close();
   const failed = results.filter((r) => !r).length;

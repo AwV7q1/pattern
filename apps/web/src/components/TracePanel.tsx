@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Crosshair, Repeat } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Crosshair, GitCompareArrows, Pin, PinOff, Repeat } from 'lucide-react';
 import type { TraceEvent } from '@/types';
 import { fmt } from '@/lib/meta';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { PopoutPanel } from '@/components/PopoutPanel';
 
 /** One call over one edge, rebuilt from trace events. */
 export interface Span {
@@ -96,6 +97,20 @@ export function buildTraces(events: TraceEvent[]): Trace[] {
 }
 
 /** End of a span as seen by its caller. */
+type LabelFn = (s: Span) => { from: string; to: string };
+
+/**
+ * A trace frozen as the "before" of a comparison. Labels are resolved when
+ * pinned, since the design (and its trace events) changes afterwards.
+ */
+export interface PinnedTrace {
+  trace: Trace;
+  labels: Record<number, { from: string; to: string }>;
+  note: string;
+}
+
+export const sameTrace = (a: Trace, b: Trace) => a.id === b.id && a.begin === b.begin;
+
 const spanEnd = (s: Span) => s.recv ?? s.timeout ?? s.reply ?? s.arrive ?? s.send;
 
 /** Plain-language explanation of what happened, in time order. */
@@ -161,6 +176,11 @@ interface Props {
   onAuto: (on: boolean) => void;
   onTrace: () => void;
   onSlow: () => void;
+  /** Baseline for the before/after comparison (kept by the app across design edits). */
+  pinned: PinnedTrace | null;
+  onPin: (p: PinnedTrace | null) => void;
+  /** Describes the current design, stored with a pin ("Checkout · tuần tự"). */
+  pinNote: () => string;
 }
 
 /**
@@ -169,7 +189,7 @@ interface Props {
  * timeline. The followed request is also drawn bigger, with a white ring,
  * on the canvas.
  */
-export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto, onTrace, onSlow }: Props) {
+export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto, onTrace, onSlow, pinned, onPin, pinNote }: Props) {
   const traces = useMemo(() => buildTraces(events), [events]);
   const [picked, setPicked] = useState<number | null>(null);
   const done = traces.filter((t) => t.end !== undefined);
@@ -223,9 +243,50 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
         </div>
       )}
 
+      {trace && trace.end !== undefined && (
+        <div className="grid gap-1.5 rounded-md border border-dashed px-2.5 py-2 text-xs">
+          <div className="flex items-start gap-2">
+            <GitCompareArrows className="mt-px size-4 shrink-0 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              {pinned ? (
+                <>
+                  <b className="text-foreground">Mốc:</b> request #{pinned.trace.id} · {fmt.ms(pinned.trace.end! - pinned.trace.begin)}
+                  {pinned.note && ` · ${pinned.note}`}
+                  {sameTrace(pinned.trace, trace) && (
+                    <span className="block">Đổi design (vd. Tuần tự → Song song), rồi theo dõi một request mới để so sánh.</span>
+                  )}
+                </>
+              ) : (
+                'So sánh trước / sau: ghim request này, đổi design, rồi theo dõi request mới.'
+              )}
+            </span>
+          </div>
+          <div className="flex flex-wrap justify-end gap-1">
+            {pinned && !sameTrace(pinned.trace, trace) && (
+              <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => onPin(pinTrace(trace, label, pinNote()))}>
+                <Pin /> Ghim request này làm mốc
+              </Button>
+            )}
+            {pinned ? (
+              <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => onPin(null)}>
+                <PinOff /> Bỏ ghim
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => onPin(pinTrace(trace, label, pinNote()))}>
+                <Pin /> Ghim làm mốc
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pinned && trace && trace.end !== undefined && !sameTrace(pinned.trace, trace) && (
+        <TraceCompare before={pinned} after={trace} afterLabel={label} afterNote={pinNote()} />
+      )}
+
       {/* side by side once the panel is wide (dragged out or full size) */}
       <div className="grid items-start gap-3 @5xl:grid-cols-[3fr_2fr]">
-        {trace && <Waterfall trace={trace} label={label} />}
+        {trace && !(pinned && trace.end !== undefined && !sameTrace(pinned.trace, trace)) && <Waterfall trace={trace} label={label} />}
 
         {trace && trace.end !== undefined && (
           <div className="grid gap-1">
@@ -256,9 +317,141 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
   );
 }
 
-function Waterfall({ trace, label }: { trace: Trace; label: (s: Span) => { from: string; to: string } }) {
+function pinTrace(trace: Trace, label: LabelFn, note: string): PinnedTrace {
+  return { trace, labels: Object.fromEntries(trace.spans.map((s) => [s.id, label(s)])), note };
+}
+
+/** Time from the request's start to the end of everything it set off. */
+const extent = (t: Trace) => Math.max(t.end ?? 0, ...t.spans.map(spanEnd)) - t.begin;
+
+/** Spans keyed by their call path ("API/DB#1"), to line up hops of two traces. */
+function byPath(trace: Trace, label: LabelFn) {
+  const out = new Map<string, Span>();
+  const path = new Map<number, string>();
+  for (const s of trace.spans) {
+    const base = `${path.get(s.parent) ?? ''}/${label(s).to}`;
+    let key = base;
+    for (let n = 2; out.has(key); n++) key = `${base}#${n}`;
+    path.set(s.id, key);
+    out.set(key, s);
+  }
+  return out;
+}
+
+function Delta({ before, after }: { before: number; after: number }) {
+  const d = after - before;
+  if (Math.abs(d) < 0.05) return <span className="text-muted-foreground">=</span>;
+  const pct = before > 0 ? ` (${d > 0 ? '+' : ''}${Math.round((d / before) * 100)}%)` : '';
+  return (
+    <span className={d < 0 ? 'text-emerald-400' : 'text-red-400'}>
+      {d > 0 ? '+' : '−'}
+      {fmt.ms(Math.abs(d))}
+      {pct}
+    </span>
+  );
+}
+
+/**
+ * Two waterfalls on one time scale (before = pinned, after = current) plus a
+ * per-hop table: when each call started and how long it took. Sequence →
+ * parallel shows up as bars that used to follow each other now overlapping.
+ */
+function TraceCompare({ before, after, afterLabel, afterNote }: { before: PinnedTrace; after: Trace; afterLabel: LabelFn; afterNote: string }) {
+  const beforeLabel: LabelFn = (s) => before.labels[s.id] ?? { from: '?', to: '?' };
+  const scale = Math.max(extent(before.trace), extent(after));
+  const b = byPath(before.trace, beforeLabel);
+  const a = byPath(after, afterLabel);
+  const keys = [...new Set([...b.keys(), ...a.keys()])];
+  const total = (t: Trace) => t.end! - t.begin;
+  const name = (k: string) => k.split('/').filter(Boolean).at(-1)!;
+  const depth = (k: string) => k.split('/').length - 2;
+
+  return (
+    <PopoutPanel
+      icon={<GitCompareArrows />}
+      title={
+        <span>
+          So sánh trước / sau ·{' '}
+          <span className="font-mono">
+            {fmt.ms(total(before.trace))} → {fmt.ms(total(after))}
+          </span>{' '}
+          <Delta before={total(before.trace)} after={total(after)} />
+        </span>
+      }
+    >
+      <div className="grid items-start gap-4 @5xl:grid-cols-[3fr_2fr]">
+        <div className="grid gap-2">
+          <Waterfall trace={before.trace} label={beforeLabel} scaleMs={scale} title={<>Trước{before.note && ` · ${before.note}`}</>} muted />
+          <Waterfall trace={after} label={afterLabel} scaleMs={scale} title={<>Sau{afterNote && ` · ${afterNote}`}</>} />
+        </div>
+        <table className="w-full text-[11px]">
+          <thead className="text-left text-[10px] text-muted-foreground">
+            <tr className="border-b">
+              <th className="py-1 pr-2 font-normal">Chặng</th>
+              <th className="pr-2 text-right font-normal" title="lúc lời gọi được gửi đi, tính từ đầu request">
+                bắt đầu
+              </th>
+              <th className="pr-2 text-right font-normal">mất</th>
+              <th className="text-right font-normal">chênh</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {keys.map((k) => {
+              const x = b.get(k);
+              const y = a.get(k);
+              const dur = (s: Span) => spanEnd(s) - s.send;
+              const at = (s: Span, t: Trace) => s.send - t.begin;
+              return (
+                <tr key={k} className="border-b border-border/40">
+                  <td className="py-1 pr-2 font-sans" style={{ paddingLeft: depth(k) * 8 }}>
+                    {depth(k) > 0 && <span className="text-muted-foreground">↳ </span>}
+                    {name(k).replace(/#\d+$/, '')}
+                    {!x && <span className="text-sky-400"> mới</span>}
+                    {!y && <span className="text-muted-foreground"> bỏ</span>}
+                  </td>
+                  <td className="pr-2 text-right whitespace-nowrap">
+                    {x ? fmt.ms(at(x, before.trace)) : '–'} → {y ? fmt.ms(at(y, after)) : '–'}
+                  </td>
+                  <td className="pr-2 text-right whitespace-nowrap">
+                    {x ? fmt.ms(dur(x)) : '–'} → {y ? fmt.ms(dur(y)) : '–'}
+                  </td>
+                  <td className="text-right whitespace-nowrap">{x && y ? <Delta before={dur(x)} after={dur(y)} /> : ''}</td>
+                </tr>
+              );
+            })}
+            <tr className="font-semibold">
+              <td className="py-1 pr-2 font-sans">Người dùng chờ</td>
+              <td />
+              <td className="pr-2 text-right whitespace-nowrap">
+                {fmt.ms(total(before.trace))} → {fmt.ms(total(after))}
+              </td>
+              <td className="text-right whitespace-nowrap">
+                <Delta before={total(before.trace)} after={total(after)} />
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </PopoutPanel>
+  );
+}
+
+function Waterfall({
+  trace,
+  label,
+  scaleMs,
+  title,
+  muted,
+}: {
+  trace: Trace;
+  label: LabelFn;
+  /** Shared time scale when shown next to another trace. */
+  scaleMs?: number;
+  title?: ReactNode;
+  muted?: boolean;
+}) {
   const t0 = trace.begin;
-  const t1 = Math.max(trace.end ?? 0, ...trace.spans.map(spanEnd), t0 + 0.001);
+  const t1 = Math.max(trace.end ?? 0, ...trace.spans.map(spanEnd), t0 + 0.001, t0 + (scaleMs ?? 0));
   const span = t1 - t0;
   const x = (t: number) => `${((t - t0) / span) * 100}%`;
   const w = (a: number, b: number) => `${(Math.max(0, b - a) / span) * 100}%`;
@@ -268,7 +461,8 @@ function Waterfall({ trace, label }: { trace: Trace; label: (s: Span) => { from:
     ) : null;
 
   return (
-    <div className="grid gap-0.5 rounded-md border p-2">
+    <div className={cn('grid gap-0.5 rounded-md border p-2', muted && 'opacity-80')}>
+      {title && <div className="text-xs font-semibold">{title}</div>}
       <div className="flex justify-between font-mono text-[10px] text-muted-foreground">
         <span>0</span>
         <span>

@@ -43,8 +43,48 @@ export type Card =
       options: { label: string; min: number; max: number }[];
       explain: string;
     }
+  /**
+   * Fix a broken design on a mini canvas inside the lesson: only the listed
+   * knobs can be changed; the engine runs the edited design and every goal
+   * must hold. `solution` (knob id -> value) is checked by `check:learn`.
+   */
+  | {
+      type: 'fix';
+      question: string;
+      sim: SimSpec;
+      knobs: Knob[];
+      goals: Goal[];
+      solution: Record<string, KnobValue>;
+      hint?: string;
+      explain: string;
+    }
   /** Hands-on: a level on the canvas; the lesson is passed with ≥ 1 star. */
   | { type: 'build'; level: string; intro: string };
+
+export type KnobValue = string | number | boolean;
+
+/** One thing the learner may change in a `fix` card. */
+export interface Knob {
+  id: string;
+  label: string;
+  /** Node id (sets `config[field]`) or edge `[source, target]` (sets the edge field). */
+  target: { node: string } | { edge: [string, string] };
+  field: string;
+  control:
+    | { kind: 'select'; options: { value: KnobValue; label: string }[] }
+    | { kind: 'number'; min: number; max: number; step?: number; unit?: string }
+    | { kind: 'switch' };
+  help?: string;
+  /** A value that meets the numbers but is a wrong design; picking it fails the card with `why`. */
+  trap?: { value: KnobValue; why: string };
+}
+
+/** A goal on the run summary, e.g. `p50Ms < 80` or `costPerHour <= 0.5`. */
+export interface Goal {
+  metric: Metric | 'costPerHour';
+  op: '<' | '<=';
+  value: number;
+}
 
 export interface Lesson {
   id: string;

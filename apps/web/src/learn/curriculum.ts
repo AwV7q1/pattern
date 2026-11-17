@@ -43,6 +43,59 @@ function fanOut(n: number, p50: number, p99: number): SimSpec {
   };
 }
 
+/** Give a scenario node a display name for the mini canvas (the engine ignores it). */
+const named = <T extends object>(node: T, label: string) => ({ ...node, label });
+
+/** Product page calling three independent services one after another. */
+const productPage: SimSpec = {
+  design: {
+    nodes: [
+      named({ id: 'client', kind: 'client' }, 'Users'),
+      named(svc('page', 1, 2, 1000, 1000, { routing: 'sequence' }), 'Product page'),
+      named(svc('reviews', 30, 45), 'Reviews'),
+      named(svc('prices', 40, 60), 'Prices'),
+      named(svc('stock', 35, 50), 'Stock'),
+    ],
+    edges: [
+      { source: 'client', target: 'page', latencyMs: 0.5 },
+      { source: 'page', target: 'reviews', latencyMs: 0.5, order: 1 },
+      { source: 'page', target: 'prices', latencyMs: 0.5, order: 2 },
+      { source: 'page', target: 'stock', latencyMs: 0.5, order: 3 },
+    ],
+  },
+  scenario: scenario(100),
+};
+
+/** Signup that waits for a slow email provider. */
+const signup: SimSpec = {
+  design: {
+    nodes: [
+      named({ id: 'client', kind: 'client' }, 'Users'),
+      named(svc('signup', 2, 4, 1000, 1000, { routing: 'sequence' }), 'Signup'),
+      named({ id: 'db', kind: 'database', config: { latencyP50Ms: 5, latencyP99Ms: 15, concurrency: 1000, queueSize: 1000 } }, 'Database'),
+      named(svc('email', 300, 1500), 'Email provider'),
+    ],
+    edges: [
+      { source: 'client', target: 'signup', latencyMs: 0.5 },
+      { source: 'signup', target: 'db', latencyMs: 0.5, order: 1 },
+      { source: 'signup', target: 'email', latencyMs: 0.5, order: 2 },
+    ],
+  },
+  scenario: scenario(50),
+};
+
+/** 500 rps on an API whose instances handle ~200 rps each (4 slots × 20 ms). */
+const undersized: SimSpec = {
+  design: {
+    nodes: [
+      named({ id: 'client', kind: 'client' }, 'Users'),
+      named(svc('api', 20, 40, 4, 200, { instances: 1, costPerHour: 0.1 }), 'API'),
+    ],
+    edges: [{ source: 'client', target: 'api', latencyMs: 0.5 }],
+  },
+  scenario: scenario(500),
+};
+
 // ---------------------------------------------------------------- the path
 
 export const UNITS: Unit[] = [
@@ -297,6 +350,31 @@ export const UNITS: Unit[] = [
             items: ['Gọi Auth và chờ', 'Gọi Kho và Giá cùng lúc', 'Chờ cả Kho và Giá trả lời', 'Gọi Thanh toán'],
             explain: 'Đây là kết hợp: tuần tự giữa các bước có phụ thuộc, song song bên trong một bước. Trong simulator: chế độ Tuần tự, đặt Kho và Giá cùng số thứ tự.',
           },
+          {
+            type: 'fix',
+            question: 'Trang sản phẩm mất hơn 100 ms vì gọi lần lượt 3 dịch vụ không phụ thuộc nhau. Sửa để p50 dưới 60 ms.',
+            sim: productPage,
+            knobs: [
+              {
+                id: 'routing',
+                label: 'Product page gọi các nhánh',
+                target: { node: 'page' },
+                field: 'routing',
+                control: {
+                  kind: 'select',
+                  options: [
+                    { value: 'sequence', label: '①②③ Tuần tự' },
+                    { value: 'parallel', label: '∥ Song song' },
+                  ],
+                },
+                help: 'Tuần tự = await từng cái. Song song = Promise.all.',
+              },
+            ],
+            goals: [{ metric: 'p50Ms', op: '<', value: 60 }],
+            solution: { routing: 'parallel' },
+            hint: 'Reviews, Prices, Stock không cần kết quả của nhau.',
+            explain: 'Gọi song song thì trang chỉ chờ nhánh chậm nhất (Prices, khoảng 40 ms), thay vì cộng cả ba.',
+          },
         ],
       },
       {
@@ -325,6 +403,35 @@ export const UNITS: Unit[] = [
             options: ['Gửi email chào mừng', 'Ghi sự kiện analytics', 'Trừ tiền thẻ tín dụng', 'Xoá cache cũ'],
             answer: 2,
             explain: 'Trừ tiền thì phải biết chắc thành công hay thất bại trước khi báo cho người dùng.',
+          },
+          {
+            type: 'fix',
+            question: 'Người dùng đăng ký phải chờ tới 1.7 giây vì Signup đợi nhà cung cấp email. Sửa để p99 dưới 100 ms, nhưng vẫn phải lưu vào database trước khi báo thành công.',
+            sim: signup,
+            knobs: [
+              {
+                id: 'email-ff',
+                label: 'Signup → Email: không chờ trả lời (fire-and-forget)',
+                target: { edge: ['signup', 'email'] },
+                field: 'fireAndForget',
+                control: { kind: 'switch' },
+              },
+              {
+                id: 'db-ff',
+                label: 'Signup → Database: không chờ trả lời',
+                target: { edge: ['signup', 'db'] },
+                field: 'fireAndForget',
+                control: { kind: 'switch' },
+                trap: {
+                  value: true,
+                  why: 'Nhanh thật, nhưng Signup báo "thành công" trước khi biết dữ liệu đã được lưu. Database lỗi thì người dùng mất tài khoản mà không ai hay.',
+                },
+              },
+            ],
+            goals: [{ metric: 'p99Ms', op: '<', value: 100 }],
+            solution: { 'email-ff': true },
+            hint: 'Việc nào người dùng không cần chờ kết quả?',
+            explain: 'Chỉ email là không cần chờ. Bỏ chờ cả Database thì cũng nhanh, nhưng sẽ báo "thành công" khi dữ liệu có thể chưa được lưu.',
           },
         ],
       },
@@ -491,6 +598,29 @@ export const UNITS: Unit[] = [
               { label: 'trên 250 ms', min: 250, max: Infinity },
             ],
             explain: 'Server không chậm đi, nhưng request phải xếp hàng. Ở 93% tải, đuôi latency dài gấp nhiều lần thời gian xử lý.',
+          },
+          {
+            type: 'fix',
+            question: 'API nhận 500 rps nhưng mỗi máy chỉ xử lý được khoảng 200 rps. Chọn số máy vừa đủ: không lỗi, p99 dưới 100 ms, và không vượt ngân sách $0.30/giờ.',
+            sim: undersized,
+            knobs: [
+              {
+                id: 'instances',
+                label: 'Số máy API',
+                target: { node: 'api' },
+                field: 'instances',
+                control: { kind: 'number', min: 1, max: 6, unit: ' máy' },
+                help: 'Mỗi máy: 4 slot, xử lý ~20 ms, $0.10/giờ.',
+              },
+            ],
+            goals: [
+              { metric: 'errorRate', op: '<', value: 0.01 },
+              { metric: 'p99Ms', op: '<', value: 100 },
+              { metric: 'costPerHour', op: '<=', value: 0.3 },
+            ],
+            solution: { instances: 3 },
+            hint: '500 ÷ 200 = 2.5 máy. Làm tròn lên, rồi xem tải mỗi máy còn bao nhiêu %.',
+            explain: '2 máy là 125% tải: hàng đợi tràn, lỗi. 3 máy là khoảng 83% tải, p99 ~65 ms. 4 máy nhanh hơn chút nhưng vượt ngân sách.',
           },
         ],
       },
@@ -804,4 +934,18 @@ export const LESSONS = UNITS.flatMap((u) => u.lessons.map((l) => ({ ...l, unit: 
 
 export function lessonXp(kind: 'learn' | 'practice') {
   return kind === 'practice' ? 20 : 10;
+}
+
+/** Resolve a review key (`lessonId#index`) to its card; null if the path changed. */
+export function cardByKey(key: string) {
+  const [id, i] = key.split('#');
+  const lesson = LESSONS.find((l) => l.id === id);
+  const card = lesson?.cards[Number(i)];
+  if (!lesson || !card || card.type === 'read' || card.type === 'build') return null;
+  return { lesson, card, index: Number(i) };
+}
+
+/** Short text of a question card, for lists. */
+export function cardPrompt(card: { type: string } & Record<string, unknown>) {
+  return String(card.question ?? card.title ?? '');
 }

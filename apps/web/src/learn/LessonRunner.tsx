@@ -1,10 +1,12 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
-import { Check, Dumbbell, Flame, FlaskConical, Loader2, X, Zap } from 'lucide-react';
+import { Check, Dumbbell, Flame, FlaskConical, Loader2, Wrench, X, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { compute } from '@/sim/compute';
-import type { Card, Lesson, Metric } from './types';
+import type { Card, KnobValue, Lesson, Metric } from './types';
 import { SequenceAnim } from './SequenceAnim';
+import { FixCard, defaultValues, type Attempt } from './FixCard';
+import { applyKnobs, formatMetric, goalMet, goalText, trapsHit } from './fix';
 
 // ---------------------------------------------------------------- markdown-lite
 
@@ -122,6 +124,10 @@ interface Props {
   /** Lesson finished; returns the XP awarded. */
   onComplete: (accuracy: number) => number;
   onBuild: (level: string) => void;
+  /** Stable key per card (spaced repetition); defaults to `lessonId#index`. */
+  keys?: string[];
+  /** First answer to each question card in this session. */
+  onAnswer?: (key: string, correct: boolean) => void;
 }
 
 /**
@@ -129,7 +135,7 @@ interface Props {
  * again at the end (once), like Duolingo; the lesson ends when the queue is
  * empty.
  */
-export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }: Props) {
+export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild, keys, onAnswer }: Props) {
   const [queue, setQueue] = useState(() => lesson.cards.map((_, i) => i));
   const [pos, setPos] = useState(0);
   const [verdict, setVerdict] = useState<Verdict>(null);
@@ -139,6 +145,10 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
   const [mistakes, setMistakes] = useState(0);
   const [retried, setRetried] = useState<Set<number>>(new Set());
   const [finished, setFinished] = useState<{ xp: number; accuracy: number } | null>(null);
+  const [answered, setAnswered] = useState<Set<number>>(new Set());
+  // `fix` card state, reset per card
+  const [fixValues, setFixValues] = useState<Record<string, KnobValue> | null>(null);
+  const [attempts, setAttempts] = useState<Attempt[]>([]);
   const banks = useMemo(
     () => lesson.cards.map((c) => (c.type === 'order' ? shuffled(c.items) : [])),
     [lesson],
@@ -159,6 +169,8 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
     setVerdict(null);
     setChoice(null);
     setOrder([]);
+    setFixValues(null);
+    setAttempts([]);
     if (pos + 1 >= q.length) {
       const accuracy = questions ? Math.max(0, (questions - mistakes) / questions) : 1;
       setFinished({ xp: onComplete(accuracy), accuracy });
@@ -168,6 +180,24 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
   const judge = (correct: boolean, detail?: string) => {
     if (!correct) setMistakes((m) => m + 1);
     setVerdict({ correct, detail });
+    if (!answered.has(index)) {
+      setAnswered(new Set(answered).add(index));
+      onAnswer?.(keys?.[index] ?? `${lesson.id}#${index}`, correct);
+    }
+  };
+
+  const values = card?.type === 'fix' ? (fixValues ?? defaultValues(card)) : {};
+  /** Run the edited design of a `fix` card and record the attempt. */
+  const tryFix = async () => {
+    if (card?.type !== 'fix') return null;
+    setRunning(true);
+    try {
+      const summary = await compute.run(applyKnobs(card.sim, card.knobs, values));
+      setAttempts((a) => [...a, { values, summary }]);
+      return summary;
+    } finally {
+      setRunning(false);
+    }
   };
 
   const check = async () => {
@@ -186,6 +216,18 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
         judge(false, `Không chạy được mô phỏng: ${err instanceof Error ? err.message : err}`);
       } finally {
         setRunning(false);
+      }
+    } else if (card.type === 'fix') {
+      try {
+        const summary = await tryFix();
+        if (!summary) return;
+        const m = summary as unknown as Record<string, number>;
+        const parts = card.goals.map((g) => `${goalText(g)}: đo được ${formatMetric(g.metric, m[g.metric])} ${goalMet(g, m) ? '✓' : '✗'}`);
+        const traps = trapsHit(card.knobs, values);
+        if (traps.length) judge(false, `${parts.join(' · ')}. Đạt số liệu nhưng sai thiết kế: ${traps.map((k) => k.trap!.why).join(' ')}`);
+        else judge(card.goals.every((g) => goalMet(g, m)), parts.join(' · '));
+      } catch (err) {
+        judge(false, `Không chạy được mô phỏng: ${err instanceof Error ? err.message : err}`);
       }
     }
   };
@@ -216,7 +258,8 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
   const canCheck =
     (card.type === 'choice' && choice !== null) ||
     (card.type === 'predict' && choice !== null) ||
-    (card.type === 'order' && order.length === card.items.length);
+    (card.type === 'order' && order.length === card.items.length) ||
+    card.type === 'fix';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -327,6 +370,24 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
             </>
           )}
 
+          {card.type === 'fix' && (
+            <>
+              <div className="flex items-center gap-2 text-sm font-semibold text-sky-400">
+                <Wrench className="size-4" /> Sửa design, simulator chấm
+              </div>
+              <h2 className="text-xl font-bold">{card.question}</h2>
+              <FixCard
+                card={card}
+                values={values}
+                onChange={setFixValues}
+                attempts={attempts}
+                onTry={() => void tryFix().catch(() => {})}
+                busy={running}
+                locked={!!verdict}
+              />
+            </>
+          )}
+
           {card.type === 'build' && (
             <div className="grid justify-items-center gap-5 py-6 text-center">
               <div className="flex size-20 items-center justify-center rounded-full bg-primary/15 text-primary">
@@ -385,7 +446,7 @@ export function LessonRunner({ lesson, streakDays, onExit, onComplete, onBuild }
             ) : (
               <Button size="lg" className="w-40" disabled={!canCheck || running} onClick={check}>
                 {running ? <Loader2 className="animate-spin" /> : null}
-                {card.type === 'predict' ? (running ? 'Đang chạy…' : 'Chạy mô phỏng') : 'Kiểm tra'}
+                {card.type === 'predict' ? (running ? 'Đang chạy…' : 'Chạy mô phỏng') : card.type === 'fix' && running ? 'Đang chạy…' : 'Kiểm tra'}
               </Button>
             )}
           </div>

@@ -47,7 +47,7 @@ import {
 } from './model/flow';
 import { KIND_META, fmt } from './lib/meta';
 import { ParticleLegend } from './components/ParticleLegend';
-import { TracePanel } from './components/TracePanel';
+import { TracePanel, type PinnedTrace } from './components/TracePanel';
 import { SystemNode } from './components/SystemNode';
 import { FlowEdge } from './components/FlowEdge';
 import { ParticleLayer } from './components/ParticleLayer';
@@ -120,6 +120,7 @@ export function App() {
   const [best, setBest] = useState(0);
   const [traceEvents, setTraceEvents] = useState<TraceEvent[]>([]);
   const [autoTrace, setAutoTrace] = useState(false);
+  const [pinnedTrace, setPinnedTrace] = useState<PinnedTrace | null>(null);
 
   // ------------------------------------------------------------------ simulation lifecycle
 
@@ -697,6 +698,17 @@ export function App() {
                     auto={autoTrace}
                     onAuto={setAutoTrace}
                     onTrace={() => client.trace(1)}
+                    pinned={pinnedTrace}
+                    onPin={setPinnedTrace}
+                    pinNote={() => {
+                      const ROUTING = { sequence: 'tuần tự', parallel: 'song song' } as const;
+                      const parts = nodes
+                        .filter((n) => n.data.config.routing !== 'pick' && edges.filter((e) => e.source === n.id).length > 1)
+                        .map((n) => `${n.data.label} ${ROUTING[n.data.config.routing as keyof typeof ROUTING]}`);
+                      const ff = edges.filter((e) => e.data?.policy.fireAndForget).length;
+                      if (ff) parts.push(`${ff} lời gọi không chờ`);
+                      return parts.join(', ');
+                    }}
                     onSlow={() => {
                       setSpeed('0.25');
                       client.setSpeed(0.25);

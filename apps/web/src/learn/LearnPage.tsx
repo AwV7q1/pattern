@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Dumbbell, Flame, Lock, RotateCcw, Star, Target, Zap } from 'lucide-react';
+import { BookOpen, Brain, Check, Dumbbell, Flame, Lock, RotateCcw, Star, Target, Wrench, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
-import { LESSONS, UNITS, lessonXp } from './curriculum';
-import { DAILY_GOAL, isUnlocked, nextLesson, streak, today, useProgress } from './progress';
+import { LESSONS, UNITS, cardByKey, lessonXp } from './curriculum';
+import { DAILY_GOAL, REVIEW_SIZE, dueKeys, isUnlocked, nextLesson, streak, today, useProgress } from './progress';
 import { LessonRunner } from './LessonRunner';
+import { ReviewPanel } from './ReviewPanel';
+import type { Lesson } from './types';
+
+const REVIEW_UNIT = { title: 'Ôn tập', color: '#f59e0b' };
 
 /** Horizontal offsets of the winding path, in px. */
 const ZIGZAG = [0, 44, 72, 44, 0, -44, -72, -44];
@@ -26,7 +30,8 @@ interface Props {
  * predictions checked by the engine, and practice levels on the canvas.
  */
 export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
-  const { progress, complete, setUnlockAll, reset } = useProgress();
+  const { progress, complete, recordAnswer, addXp, setUnlockAll, reset } = useProgress();
+  const [review, setReview] = useState<{ id: number; keys: string[] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const current = nextLesson(progress);
@@ -44,6 +49,32 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
     if (!active) currentRef.current?.scrollIntoView({ block: 'center' });
   }, [active]);
 
+  if (review) {
+    const refs = review.keys
+      .map((k) => ({ k, ref: cardByKey(k) }))
+      .filter((x) => x.ref)
+      .slice(0, REVIEW_SIZE);
+    const session: Lesson & { unit: typeof REVIEW_UNIT } = {
+      id: `review-${review.id}`,
+      title: `${refs.length} câu cần nhớ`,
+      kind: 'learn',
+      cards: refs.map((x) => x.ref!.card),
+      unit: REVIEW_UNIT,
+    };
+    return (
+      <LessonRunner
+        key={session.id}
+        lesson={session}
+        keys={refs.map((x) => x.k)}
+        streakDays={days || 1}
+        onExit={() => setReview(null)}
+        onAnswer={(key, correct) => recordAnswer(key, correct, true)}
+        onComplete={(accuracy) => addXp(5 + refs.length + (accuracy === 1 ? 5 : 0))}
+        onBuild={() => {}}
+      />
+    );
+  }
+
   const lesson = LESSONS.find((l) => l.id === active);
   if (lesson) {
     return (
@@ -52,6 +83,7 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
         lesson={lesson}
         streakDays={days || 1}
         onExit={() => setActive(null)}
+        onAnswer={(key, correct) => recordAnswer(key, correct)}
         onComplete={(accuracy) => complete(lesson.id, accuracy === 1 && lesson.kind === 'learn' ? 5 : 0)}
         onBuild={(level) => onBuild(level, lesson.id)}
       />
@@ -59,11 +91,29 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
   }
 
   const done = LESSONS.filter((l) => progress.done[l.id]).length;
+  const due = dueKeys(progress).filter((k) => cardByKey(k));
+  const startReview = (keys: string[]) => setReview({ id: Date.now(), keys });
 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto" onClick={() => setPicked(null)}>
         <div className="mx-auto grid max-w-xl gap-10 px-6 py-8">
+          {due.length > 0 && (
+            <button
+              type="button"
+              onClick={() => startReview(due)}
+              className="flex items-center gap-3 rounded-2xl border-2 border-b-4 border-warning/60 bg-warning/10 p-4 text-left hover:bg-warning/15"
+            >
+              <Brain className="size-8 shrink-0 text-warning" />
+              <span className="flex-1">
+                <b>{due.length} câu cần ôn hôm nay</b>
+                <span className="block text-xs text-muted-foreground">
+                  Những câu bạn từng trả lời sai. Ôn đúng lúc là cách nhớ lâu nhất.
+                </span>
+              </span>
+              <span className="rounded-lg bg-warning px-3 py-1.5 text-xs font-bold text-black uppercase">Ôn ngay</span>
+            </button>
+          )}
           {UNITS.map((unit, u) => {
             const unitDone = unit.lessons.filter((l) => progress.done[l.id]).length;
             return (
@@ -85,7 +135,7 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
                     const isDone = !!progress.done[l.id];
                     const isCurrent = current?.id === l.id;
                     const open = isUnlocked(progress, l.id);
-                    const Icon = l.kind === 'practice' ? Dumbbell : isDone ? Check : l.cards.some((c) => c.type === 'predict') ? Target : BookOpen;
+                    const Icon = l.kind === 'practice' ? Dumbbell : isDone ? Check : l.cards.some((c) => c.type === 'fix') ? Wrench : l.cards.some((c) => c.type === 'predict') ? Target : BookOpen;
                     return (
                       <div
                         key={l.id}
@@ -195,6 +245,7 @@ export function LearnPage({ onBuild, openLesson, onOpened }: Props) {
             {todayXp >= DAILY_GOAL ? 'Đạt mục tiêu rồi! Giữ chuỗi ngày vào ngày mai.' : 'Khoảng 2–3 bài là đủ cho hôm nay.'}
           </p>
         </div>
+        <ReviewPanel progress={progress} onStart={startReview} />
         {current && (
           <Button size="lg" onClick={() => setActive(current.id)}>
             <Star /> {done === 0 ? 'Bắt đầu học' : `Tiếp tục: ${current.title}`}
