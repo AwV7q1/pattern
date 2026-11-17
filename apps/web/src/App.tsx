@@ -12,7 +12,7 @@ import {
   type EdgeTypes,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Download, Gamepad2, Gauge, GraduationCap, Maximize2, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { LearnPage } from './learn/LearnPage';
 import { useProgress } from './learn/progress';
@@ -59,6 +59,22 @@ import { DRAG_MIME, Palette } from './components/Palette';
 import { TECH_MIME, TechLibrary } from './tech/TechLibrary';
 import { TechDialogs } from './tech/TechDialogs';
 import { techOf } from './tech/catalog';
+import { ProjectsHome } from './projects/ProjectsHome';
+import { SaveStatus, type SaveState } from './projects/SaveStatus';
+import { VersionHistory } from './projects/VersionHistory';
+import { Textarea } from './components/ui/textarea';
+import { Input } from './components/ui/input';
+import {
+  download,
+  exportJson,
+  projectFromPreset,
+  slug,
+  snapshotOf,
+  store,
+  type Project,
+  type RunSnapshot,
+  type Version,
+} from './projects/store';
 import { Button } from './components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { SidePanel } from './components/SidePanel';
@@ -78,7 +94,9 @@ const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
 type Mode = 'learn' | 'sandbox' | 'game' | 'capacity';
-type Panel = 'metrics' | 'inspect' | 'level' | 'trace';
+type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
+const AUTO_VERSION_MS = 5 * 60 * 1000;
+const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
 
 const bestKey = (id: string) => `pattern.best.${id}`;
@@ -93,9 +111,21 @@ export function App() {
   const { complete } = useProgress();
   const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
   const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
-  const [custom, setCustom] = useState<Record<string, Preset>>({});
-  const presets = useMemo(() => ({ ...PRESETS, ...custom }), [custom]);
-  const preset = presets[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]];
+  /** Studio project open on the sandbox canvas (null = projects home). */
+  const [project, setProject] = useState<Project | null>(null);
+  const projectRef = useRef(project);
+  const [reloadTick, setReloadTick] = useState(0);
+  const projectPreset = useMemo<Preset | null>(
+    () =>
+      project
+        ? { title: project.name, description: project.description, design: project.design, scenario: project.scenario }
+        : null,
+    [project],
+  );
+  const preset =
+    project && presetKey === projectKey(project.id) && projectPreset
+      ? projectPreset
+      : (PRESETS[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]]);
   const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
   const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
@@ -127,8 +157,10 @@ export function App() {
 
   // ------------------------------------------------------------------ simulation lifecycle
 
-  const settings = useRef({ mode, level, preset, rps, multiplier, scripted });
-  settings.current = { mode, level, preset, rps, multiplier, scripted };
+  const settings = useRef({ mode, level, preset, rps, multiplier, scripted, presetKey });
+  settings.current = { mode, level, preset, rps, multiplier, scripted, presetKey };
+  /** Preset key and design JSON last put on the canvas by `load` (autosave compares against it). */
+  const loaded = useRef({ key: '', design: '' });
 
   /** (Re)start the engine from a design. Always call with reindexed nodes/edges. */
   const restart = useCallback(
@@ -154,6 +186,7 @@ export function App() {
     const s = settings.current;
     const source = s.mode === 'game' ? s.level : s.preset;
     const flow = toFlow(source.design, s.mode === 'game' ? s.level.locked : ['client'], client.catalog);
+    loaded.current = { key: s.mode === 'game' ? '' : s.presetKey, design: JSON.stringify(toDesign(flow.nodes, flow.edges)) };
     clearEdgeGeometry();
     setNodes(flow.nodes);
     setEdges(flow.edges);
@@ -176,10 +209,13 @@ export function App() {
     }
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
-  }, [client, mode, presetKey, levelKey, custom, load]);
+  }, [client, mode, presetKey, levelKey, load, reloadTick]);
 
   const switchMode = (next: Mode) => {
-    if (mode === 'sandbox') setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
+    if (mode === 'sandbox') {
+      setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
+      flushSave.current?.();
+    }
     if (next !== 'game') setPractice(null);
     // learning-path levels are only reachable from their lesson
     if (next === 'game' && !practice && levelKey.startsWith('learn/')) setLevelKey(Object.keys(LEVELS)[0]);
@@ -199,13 +235,169 @@ export function App() {
     setMode('learn');
   };
 
-  /** Load a generated design (sizing, calibration) into the sandbox. */
-  const openInSandbox = (key: string, p: Preset) => {
-    setCustom((c) => ({ ...c, [key]: { ...p, design: autoLayout(p.design) } }));
-    setPresetKey(key);
+  // ------------------------------------------------------------------ studio projects
+
+  const [homeTab, setHomeTab] = useState('mine');
+  const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
+  const [notes, setNotes] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versionRev, setVersionRev] = useState(0);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  const saved = useRef({ design: '', notes: '' });
+  const lastVersionAt = useRef(0);
+  const flushSave = useRef<(() => void) | null>(null);
+  projectRef.current = project;
+
+  const showFlash = (text: string) => {
+    setFlash(text);
+    setTimeout(() => setFlash((f) => (f === text ? null : f)), 2500);
+  };
+
+  const openProject = useCallback((p: Project) => {
+    const opened = { ...p, design: { ...autoLayout(p.design), groups: p.design.groups } };
+    projectRef.current = opened;
+    setProject(opened);
+    setNotes(opened.notes);
+    saved.current = { design: '', notes: opened.notes };
+    setSaveState({ status: 'saved', at: opened.updatedAt });
+    setPresetKey(projectKey(opened.id));
+    setReloadTick((t) => t + 1);
     setScripted(false);
     settings.current.scripted = false;
-    setMode('sandbox');
+    lastVersionAt.current = Date.now();
+    store.versions(opened.id).then((vs) => {
+      if (vs.length) lastVersionAt.current = vs[0].at;
+      else store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+    });
+  }, []);
+
+  const closeProject = () => {
+    flushSave.current?.();
+    client.pause();
+    setRunning(false);
+    setProject(null);
+    setPresetKey(Object.keys(PRESETS)[0]);
+  };
+
+  /** Write the canvas + notes to IndexedDB now. */
+  const persist = useCallback(async (design: string, nextNotes: string) => {
+    const current = projectRef.current;
+    if (!current) return null;
+    const p: Project = {
+      ...current,
+      design: { ...JSON.parse(design), groups: current.design.groups },
+      notes: nextNotes,
+      updatedAt: Date.now(),
+    };
+    projectRef.current = p;
+    setSaveState({ status: 'saving' });
+    try {
+      await store.put(p);
+      saved.current = { design, notes: nextNotes };
+      setProject(p);
+      setSaveState({ status: 'saved', at: p.updatedAt });
+      if (Date.now() - lastVersionAt.current > AUTO_VERSION_MS) {
+        lastVersionAt.current = Date.now();
+        await store.addVersion(snapshotOf(p));
+        setVersionRev((r) => r + 1);
+      }
+      return p;
+    } catch (e) {
+      setSaveState({ status: 'error', message: String((e as Error).message ?? e) });
+      return null;
+    }
+  }, []);
+
+  const designJson = useMemo(
+    () => (project && mode === 'sandbox' ? JSON.stringify(toDesign(nodes, edges)) : null),
+    [project, mode, nodes, edges],
+  );
+
+  // autosave: debounce edits (drag, config, wiring, notes) 800 ms
+  useEffect(() => {
+    if (!designJson || !project || loaded.current.key !== projectKey(project.id)) return;
+    if (!saved.current.design) saved.current.design = loaded.current.design;
+    const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
+    if (!dirty) {
+      flushSave.current = null;
+      setSaveState((st) => (st.status === 'saving' ? { status: 'saved', at: projectRef.current?.updatedAt ?? Date.now() } : st));
+      return;
+    }
+    setSaveState({ status: 'saving' });
+    const run = () => {
+      flushSave.current = null;
+      persist(designJson, notes);
+    };
+    flushSave.current = run;
+    const t = setTimeout(run, 800);
+    return () => clearTimeout(t);
+  }, [designJson, notes, project, persist]);
+
+  // do not lose the last 800 ms when the tab closes
+  useEffect(() => {
+    const flush = () => flushSave.current?.();
+    window.addEventListener('pagehide', flush);
+    const onVis = () => document.visibilityState === 'hidden' && flush();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
+
+  const saveNamedVersion = useCallback(async () => {
+    const current = projectRef.current;
+    if (!current) return;
+    const p = (await persist(designJson ?? JSON.stringify(current.design), notes)) ?? current;
+    const label = `Phiên bản ${new Date().toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}`;
+    await store.addVersion(snapshotOf(p, label));
+    lastVersionAt.current = Date.now();
+    setVersionRev((r) => r + 1);
+    showFlash(`Đã lưu “${label}”`);
+  }, [designJson, notes, persist]);
+
+  // ⌘S / Ctrl+S: named version
+  useEffect(() => {
+    if (mode !== 'sandbox' || !project) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        saveNamedVersion();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, project, saveNamedVersion]);
+
+  const restoreVersion = async (v: Version) => {
+    const current = projectRef.current;
+    if (!current) return;
+    await store.addVersion(snapshotOf(current, 'Trước khi khôi phục'));
+    const p: Project = { ...current, design: v.design, scenario: v.scenario, notes: v.notes, updatedAt: Date.now() };
+    await store.put(p);
+    setVersionRev((r) => r + 1);
+    openProject(p);
+    showFlash('Đã khôi phục phiên bản');
+  };
+
+  const renameProject = async (name: string) => {
+    setRenaming(false);
+    const current = projectRef.current;
+    if (!current || !name.trim() || name === current.name) return;
+    const p = { ...current, name: name.trim(), updatedAt: Date.now() };
+    projectRef.current = p;
+    setProject(p);
+    await store.put(p);
+  };
+
+  /** Load a generated design (sizing, calibration) into the sandbox as a new project. */
+  const openInSandbox = (key: string, p: Preset) => {
+    const created = projectFromPreset({ ...p, design: autoLayout(p.design) }, p.title, key);
+    store.put(created).then(() => {
+      openProject(created);
+      setMode('sandbox');
+    });
   };
   const openSizing = (r: SizingReport, title: string) => {
     if (!r.input) return;
@@ -262,6 +454,47 @@ export function App() {
       setEdges((es) => es.map((e) => ({ ...e, data: { ...e.data!, metrics: last.edges[e.data!.index] } })));
     });
   }, [client, setEdges, setNodes]);
+
+  // remember how the open project behaved (feeds the agent prompt)
+  useEffect(() => {
+    const current = projectRef.current;
+    if (!current || mode !== 'sandbox' || windows.length < 5 || windows.length % 5 !== 0) return;
+    const recent = windows.slice(-10);
+    const avg = (f: (w: WindowMetrics) => number) => recent.reduce((s, w) => s + f(w), 0) / recent.length;
+    const total = recent.reduce((s, w) => s + w.okCount + w.errorCount, 0);
+    const errors = recent.reduce((s, w) => s + w.errorCount, 0);
+    const last = recent[recent.length - 1];
+    const ns = [...nodesRef.current].sort((a, b) => a.data.index - b.data.index);
+    const hot = ns
+      .filter((n) => n.data.kind !== 'client')
+      .map((n) => ({
+        label: n.data.label,
+        utilization: avg((w) => w.nodes[n.data.index]?.utilization ?? 0),
+        dropped: Math.round(avg((w) => w.nodes[n.data.index]?.rejected ?? 0)),
+        queue: last.nodes[n.data.index]?.queue ?? 0,
+      }))
+      .filter((h) => h.utilization > 0.7 || h.dropped > 0)
+      .sort((a, b) => b.utilization - a.utilization)
+      .slice(0, 5);
+    const lastRun: RunSnapshot = {
+      at: Date.now(),
+      simSeconds: Math.round(last.tMs / 1000),
+      rps: Math.round(avg((w) => w.rps)),
+      p50Ms: avg((w) => w.p50Ms),
+      p99Ms: avg((w) => w.p99Ms),
+      errorRate: total ? errors / total : 0,
+      sloOk: recent.filter((w) => w.sloOk).length / recent.length,
+      costPerHour: nodesRef.current.reduce(
+        (sum, n) => sum + (n.data.kind === 'client' ? 0 : n.data.config.costPerHour * n.data.config.instances),
+        0,
+      ),
+      hot,
+    };
+    const p = { ...current, lastRun };
+    projectRef.current = p;
+    setProject(p);
+    store.put(p).catch(() => {});
+  }, [windows, mode]);
 
   // follow one request every 2 s of wall time
   useEffect(() => {
@@ -430,11 +663,13 @@ export function App() {
   };
 
   const exportDesign = () => {
+    const current = projectRef.current;
+    if (current) {
+      download(`${slug(current.name)}.json`, exportJson({ ...current, design: { ...toDesign(nodes, edges), groups: current.design.groups }, notes }));
+      return;
+    }
     const data = { title: preset.title, description: preset.description, design: toDesign(nodes, edges), scenario };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const a = Object.assign(document.createElement('a'), { href: url, download: 'design.json' });
-    a.click();
-    URL.revokeObjectURL(url);
+    download('design.json', JSON.stringify(data, null, 2));
   };
 
   const cost = nodes.reduce(
@@ -489,22 +724,43 @@ export function App() {
               ))}
             </SelectContent>
           </Select>
-        ) : (
-          <Select value={presetKey} onValueChange={setPresetKey}>
-            <SelectTrigger className="w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(presets).map(([key, p]) => (
-                <SelectItem key={key} value={key}>
-                  {p.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+        ) : project ? (
+          <div className="flex min-w-0 items-center gap-1 text-sm">
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" onClick={closeProject}>
+              <ChevronLeft /> Dự án
+            </Button>
+            <span className="text-muted-foreground">/</span>
+            {renaming ? (
+              <Input
+                autoFocus
+                defaultValue={project.name}
+                className="h-7 w-56 text-sm"
+                onBlur={(e) => renameProject(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') renameProject((e.target as HTMLInputElement).value);
+                  if (e.key === 'Escape') setRenaming(false);
+                }}
+              />
+            ) : (
+              <button
+                className="max-w-64 truncate rounded px-1.5 py-0.5 font-medium hover:bg-accent"
+                title="Bấm để đổi tên"
+                onClick={() => setRenaming(true)}
+              >
+                {project.name}
+              </button>
+            )}
+            <span className="ml-2">
+              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} />}
+            </span>
+          </div>
+        ) : null}
 
-        <div className={mode === 'capacity' || mode === 'learn' ? 'hidden' : 'ml-auto flex items-center gap-2'}>
+        <div
+          className={
+            mode === 'capacity' || mode === 'learn' || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
+          }
+        >
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -554,14 +810,32 @@ export function App() {
             </SelectContent>
           </Select>
           {mode === 'sandbox' && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button size="icon-sm" variant="ghost" onClick={exportDesign}>
-                  <Download />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Tải design JSON (chạy được bằng `pnpm sim`)</TooltipContent>
-            </Tooltip>
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={saveNamedVersion} aria-label="Lưu phiên bản">
+                    <Bookmark />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Lưu phiên bản có tên (⌘/Ctrl+S)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={() => setHistoryOpen(true)} aria-label="Lịch sử phiên bản">
+                    <History />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Lịch sử phiên bản</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={exportDesign} aria-label="Tải JSON">
+                    <Download />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Tải design JSON (chạy được bằng `pnpm sim`)</TooltipContent>
+              </Tooltip>
+            </>
           )}
         </div>
       </header>
@@ -570,6 +844,8 @@ export function App() {
         <LearnPage onBuild={openPractice} />
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
+      ) : mode === 'sandbox' && !project ? (
+        <ProjectsHome presets={PRESETS} onOpen={openProject} tab={homeTab} onTab={setHomeTab} />
       ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
@@ -631,6 +907,7 @@ export function App() {
                 <TabsTrigger value="metrics">Số liệu</TabsTrigger>
                 <TabsTrigger value="trace">Trace</TabsTrigger>
                 <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
+                {mode === 'sandbox' && project && <TabsTrigger value="notes">Ghi chú</TabsTrigger>}
               </TabsList>
               <Button
                 size="icon"
@@ -743,6 +1020,26 @@ export function App() {
                     }}
                   />
                 </TabsContent>
+                {mode === 'sandbox' && project && (
+                  <TabsContent value="notes" className="grid max-w-2xl gap-2">
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Mục tiêu, yêu cầu nghiệp vụ, ràng buộc (ngân sách, đội ngũ, hạ tầng hiện có…). Ghi chú được lưu tự
+                      động và đưa vào prompt cho agent triển khai.
+                    </p>
+                    <Textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder={'Ví dụ:\n- Đồng bộ user từ Authentik sang DB nội bộ trong < 5 giây\n- Không mất event khi worker chết\n- Team 3 dev NestJS, chạy trên K8s on-prem'}
+                      className="min-h-72 font-mono text-xs leading-relaxed"
+                    />
+                    {project.lastRun && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Lần mô phỏng gần nhất: {project.lastRun.rps} rps · p99 {fmt.ms(project.lastRun.p99Ms)} · lỗi{' '}
+                        {fmt.pct(project.lastRun.errorRate)}
+                      </p>
+                    )}
+                  </TabsContent>
+                )}
                 <TabsContent value="inspect" className="max-w-2xl">
                   {selectedNode ? (
                     <NodeInspector
@@ -783,6 +1080,16 @@ export function App() {
       </div>
       )}
       <TechDialogs />
+      {project && (
+        <VersionHistory
+          projectId={project.id}
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          onRestore={restoreVersion}
+          onSaveNamed={saveNamedVersion}
+          revision={versionRev}
+        />
+      )}
       <ResultDialog
         summary={result}
         onOpenChange={(open) => !open && setResult(null)}
