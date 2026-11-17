@@ -71,6 +71,15 @@ pub struct Level {
     pub edge_latency_ms: f64,
     #[serde(default = "default_client_latency")]
     pub client_latency_ms: f64,
+    /// Whether players may mark calls fire-and-forget (otherwise a read
+    /// could "skip" waiting for its data).
+    #[serde(default)]
+    pub allow_fire_and_forget: bool,
+    /// `[source, target]` calls the design must keep (the business logic:
+    /// a product page needs its prices), so a level about call order cannot
+    /// be won by deleting calls.
+    #[serde(default)]
+    pub required_edges: Vec<(String, String)>,
     pub scenario: Scenario,
 }
 
@@ -110,11 +119,19 @@ impl Level {
             if n.kind == NodeKind::Client {
                 return Err("the client is provided by the level".into());
             }
-            if !self.palette.contains(&n.kind) {
+            // nodes of the starting design may stay even if their kind is
+            // not in the palette (the player tunes them, cannot add more)
+            let from_level = self
+                .design
+                .nodes
+                .iter()
+                .any(|d| d.id == n.id && d.kind == n.kind);
+            if !self.palette.contains(&n.kind) && !from_level {
                 return Err(format!("'{:?}' is not available in this level", n.kind));
             }
             let mut config = self.catalog_for(n.kind);
             config.instances = n.config.instances.clamp(1, self.max_instances.max(1));
+            config.routing = n.config.routing;
             nodes.push(NodeSpec {
                 id: n.id.clone(),
                 kind: n.kind,
@@ -127,7 +144,7 @@ impl Level {
 
         let kinds: HashMap<&str, NodeKind> =
             nodes.iter().map(|n| (n.id.as_str(), n.kind)).collect();
-        let edges = player
+        let edges: Vec<EdgeSpec> = player
             .edges
             .iter()
             .map(|e| {
@@ -142,10 +159,22 @@ impl Level {
                     retries: e.retries.min(MAX_RETRIES),
                     backoff_ms: e.backoff_ms.clamp(0.0, 10_000.0),
                     pool_size: None,
+                    fire_and_forget: e.fire_and_forget && self.allow_fire_and_forget,
+                    request_kb: 0.0,
+                    response_kb: 0.0,
+                    bandwidth_mbps: 1000.0,
                     ..e.clone()
                 }
             })
             .collect();
+
+        if let Some((s, t)) = self
+            .required_edges
+            .iter()
+            .find(|(s, t)| !edges.iter().any(|e| &e.source == s && &e.target == t))
+        {
+            return Err(format!("the call {s} -> {t} is required by this level"));
+        }
 
         let mut scenario = self.scenario.clone();
         if scenario.duration_ms.is_none() {

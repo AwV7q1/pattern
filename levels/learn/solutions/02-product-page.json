@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    { "id": "client", "kind": "client" },
+    { "id": "page", "kind": "service", "config": { "instances": 1, "routing": "parallel" } },
+    { "id": "reviews", "kind": "service" },
+    { "id": "prices", "kind": "service" },
+    { "id": "stock", "kind": "database" }
+  ],
+  "edges": [
+    { "source": "client", "target": "page" },
+    { "source": "page", "target": "reviews" },
+    { "source": "page", "target": "prices" },
+    { "source": "page", "target": "stock" }
+  ]
+}

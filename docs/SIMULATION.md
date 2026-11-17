@@ -39,6 +39,13 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
 3. **LocalDone** sau thời gian lognormal. Node trả lời ngay (lỗi, cache hit, hoặc không có downstream), hoặc gọi xuống downstream (round-robin, `callsPerRequest` lần tuần tự) và **vẫn giữ slot** trong lúc chờ. Đây là cơ chế sinh ra cascading failure: DB chậm làm slot của API bị giữ lâu hơn, API hết slot và bắt đầu reject.
    - Node `cpu`: request giữ một "suất mở" (`maxInFlight`), còn CPU được chia thành nhiều lát xen giữa các lần gọi. Mỗi lát phải chờ CPU lane rảnh, thời gian chờ này là event loop lag. Lúc chờ downstream, request không chiếm CPU.
    - Edge có pool: lời gọi phải lấy được kết nối trước, hết kết nối thì xếp hàng.
+   - Nhiều edge đi ra (`routing` của node):
+     - `pick` (mặc định, luôn dùng cho client và LB): mỗi lời gọi chọn một edge, round-robin.
+     - `sequence`: gọi mọi edge theo `order` tăng dần. Các edge cùng `order` chạy cùng lúc.
+     - `parallel`: gọi tất cả cùng lúc và chờ đủ. Một nhánh lỗi thì cả bước lỗi ngay (fail fast như `Promise.all`), các nhánh còn lại vẫn chạy tiếp ở phía dưới.
+
+     Mỗi nhánh là một "branch call" riêng, áp đúng timeout, retry, pool và circuit breaker của edge đó. Edge `fireAndForget` không được chờ, kết quả của nó tính vào `async`.
+   - Payload: `requestKb`/`responseKb` cộng thêm thời gian truyền `KB × 8 / Mbps`. Mỗi chiều của edge là một đường truyền FIFO, body sau phải chờ body trước truyền xong.
 4. Phía caller của edge:
    - **Timeout**: caller bỏ cuộc, nhưng callee *vẫn tiếp tục làm* (lãng phí tài nguyên y như thật).
    - **Retry** sau `backoff × 2ⁿ⁻¹` (có jitter). Round-robin nên lần retry có thể rơi vào backend khác.
@@ -73,8 +80,8 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- Băng thông mạng, cold start, autoscaling. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
-- Fan-out song song: chỉ có gọi tuần tự (`callsPerRequest`), chưa có kiểu gọi song song A + B rồi gộp kết quả.
+- Cold start, autoscaling. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
 - Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
 

@@ -1,0 +1,7 @@
+{
+  "nodes": [
+    { "id": "client", "kind": "client" },
+    { "id": "api", "kind": "service", "config": { "instances": 4 } }
+  ],
+  "edges": [{ "source": "client", "target": "api" }]
+}

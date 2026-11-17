@@ -17,9 +17,9 @@ pub mod sizing;
 pub use level::{default_catalog, level_input, play_level, Level};
 pub use model::{
     Arrival, ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
-    NodeKind, NodeSpec, Scenario, SimInput, Slo, TrafficPhase,
+    NodeKind, NodeSpec, Routing, Scenario, SimInput, Slo, TrafficPhase,
 };
-pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, WindowMetrics};
+pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, TraceEvent, WindowMetrics};
 
 /// Parse a JSON input, run it to `scenario.durationMs` and return the summary.
 pub fn run_headless(input_json: &str) -> Result<Summary, String> {

@@ -1,0 +1,30 @@
+{
+  "id": "learn-01-busy-cafe",
+  "title": "Quán cà phê đông khách",
+  "brief": "API của bạn chỉ có 1 server, mỗi server xử lý tối đa khoảng 350 request/giây. Giờ cao điểm có 900 request/giây. Tăng số instance của API để không ai phải chờ quá lâu, nhưng đừng vượt ngân sách $0.50/giờ.",
+  "hint": "Chọn node API rồi kéo thanh Instances. Mỗi server nên chạy ở mức 60–80% công suất, không phải 100%.",
+  "palette": [],
+  "locked": ["client"],
+  "maxInstances": 8,
+  "catalog": {
+    "service": { "instances": 1, "concurrency": 8, "queueSize": 20, "latencyP50Ms": 20, "latencyP99Ms": 60, "costPerHour": 0.1 }
+  },
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Khách hàng", "position": { "x": 0, "y": 160 } },
+      { "id": "api", "kind": "service", "label": "API", "position": { "x": 380, "y": 160 }, "config": { "instances": 1 } }
+    ],
+    "edges": [{ "source": "client", "target": "api" }]
+  },
+  "requiredEdges": [["client", "api"]],
+  "scenario": {
+    "seed": 11,
+    "durationMs": 20000,
+    "timeoutMs": 1000,
+    "traffic": [{ "atMs": 0, "rps": 900 }],
+    "slo": { "p99Ms": 150, "errorRate": 0.01 },
+    "windowMs": 1000,
+    "events": [],
+    "budgetPerHour": 0.5
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "learn-04-scale-out",
+  "title": "Một máy không đủ",
+  "brief": "Mỗi node API chạy tối đa 2 server (giới hạn của một zone), mỗi server chịu khoảng 350 rps. Traffic là 1400 rps. Thêm load balancer và các node API phía sau để chia tải, trong ngân sách $0.70/giờ.",
+  "hint": "Kéo Load balancer và thêm node Service vào canvas, nối Users → LB → các API. Load balancer chia ĐỀU cho các nhánh (⇄ round-robin), nên nhánh nào ít server sẽ quá tải trước.",
+  "palette": ["loadBalancer", "service"],
+  "locked": ["client"],
+  "maxInstances": 2,
+  "catalog": {
+    "service": { "instances": 1, "concurrency": 8, "queueSize": 20, "latencyP50Ms": 20, "latencyP99Ms": 60, "costPerHour": 0.1 }
+  },
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Users", "position": { "x": 0, "y": 200 } },
+      { "id": "api", "kind": "service", "label": "API", "position": { "x": 380, "y": 200 }, "config": { "instances": 1 } }
+    ],
+    "edges": [{ "source": "client", "target": "api" }]
+  },
+  "scenario": {
+    "seed": 21,
+    "durationMs": 20000,
+    "timeoutMs": 1000,
+    "traffic": [{ "atMs": 0, "rps": 1400 }],
+    "slo": { "p99Ms": 150, "errorRate": 0.01 },
+    "windowMs": 1000,
+    "events": [],
+    "budgetPerHour": 0.7
+  }
+}

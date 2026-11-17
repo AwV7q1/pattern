@@ -1,0 +1,67 @@
+{
+  "title": "Checkout: tuần tự, song song, fire-and-forget",
+  "description": "Checkout gọi ① Auth, rồi ② Kho và Giá CÙNG LÚC, rồi ③ Thanh toán, cuối cùng ④ bắn email không chờ. Mở tab Trace để xem waterfall. Thử đổi Checkout sang 'Tuần tự' hoàn toàn (đặt thứ tự Kho/Giá khác nhau) hoặc tắt fire-and-forget ở Email để thấy p50 tăng. Response về Users nặng 60 KB trên đường 100 Mbps: kéo RPS lên ~200 là đường truyền nghẽn trước cả server.",
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Users", "position": { "x": 0, "y": 260 } },
+      {
+        "id": "checkout",
+        "kind": "service",
+        "label": "Checkout",
+        "position": { "x": 340, "y": 260 },
+        "config": { "instances": 2, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 3, "latencyP99Ms": 10, "routing": "sequence", "costPerHour": 0.1 }
+      },
+      {
+        "id": "auth",
+        "kind": "service",
+        "label": "Auth",
+        "position": { "x": 760, "y": 20 },
+        "config": { "instances": 1, "concurrency": 300, "queueSize": 200, "latencyP50Ms": 5, "latencyP99Ms": 15, "costPerHour": 0.1 }
+      },
+      {
+        "id": "inventory",
+        "kind": "database",
+        "label": "Kho (Inventory DB)",
+        "position": { "x": 760, "y": 160 },
+        "config": { "instances": 1, "concurrency": 100, "queueSize": 200, "latencyP50Ms": 20, "latencyP99Ms": 60, "costPerHour": 0.5 }
+      },
+      {
+        "id": "pricing",
+        "kind": "service",
+        "label": "Giá (Pricing)",
+        "position": { "x": 760, "y": 300 },
+        "config": { "instances": 1, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 15, "latencyP99Ms": 45, "costPerHour": 0.1 }
+      },
+      {
+        "id": "payment",
+        "kind": "service",
+        "label": "Thanh toán (Payment)",
+        "position": { "x": 760, "y": 440 },
+        "config": { "instances": 1, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 40, "latencyP99Ms": 150, "costPerHour": 0.1 }
+      },
+      {
+        "id": "email",
+        "kind": "service",
+        "label": "Email",
+        "position": { "x": 760, "y": 580 },
+        "config": { "instances": 1, "concurrency": 100, "queueSize": 500, "latencyP50Ms": 120, "latencyP99Ms": 400, "costPerHour": 0.05 }
+      }
+    ],
+    "edges": [
+      { "source": "client", "target": "checkout", "latencyMs": 10, "requestKb": 2, "responseKb": 60, "bandwidthMbps": 100 },
+      { "source": "checkout", "target": "auth", "latencyMs": 1, "order": 1 },
+      { "source": "checkout", "target": "inventory", "latencyMs": 1, "order": 2, "responseKb": 8 },
+      { "source": "checkout", "target": "pricing", "latencyMs": 1, "order": 2 },
+      { "source": "checkout", "target": "payment", "latencyMs": 2, "order": 3, "timeoutMs": 500 },
+      { "source": "checkout", "target": "email", "latencyMs": 2, "order": 4, "fireAndForget": true }
+    ]
+  },
+  "scenario": {
+    "seed": 3,
+    "durationMs": 60000,
+    "timeoutMs": 3000,
+    "traffic": [{ "atMs": 0, "rps": 60 }, { "atMs": 30000, "rps": 230 }, { "atMs": 45000, "rps": 60 }],
+    "slo": { "p99Ms": 400, "errorRate": 0.01 },
+    "windowMs": 1000
+  }
+}

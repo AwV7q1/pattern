@@ -1,0 +1,15 @@
+{
+  "nodes": [
+    { "id": "client", "kind": "client" },
+    { "id": "lb", "kind": "loadBalancer" },
+    { "id": "api", "kind": "service", "config": { "instances": 2 } },
+    { "id": "api2", "kind": "service", "config": { "instances": 2 } },
+    { "id": "api3", "kind": "service", "config": { "instances": 2 } }
+  ],
+  "edges": [
+    { "source": "client", "target": "lb" },
+    { "source": "lb", "target": "api" },
+    { "source": "lb", "target": "api2" },
+    { "source": "lb", "target": "api3" }
+  ]
+}

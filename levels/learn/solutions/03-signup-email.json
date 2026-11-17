@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    { "id": "client", "kind": "client" },
+    { "id": "signup", "kind": "service", "config": { "instances": 1, "routing": "sequence" } },
+    { "id": "db", "kind": "database" },
+    { "id": "email", "kind": "service" }
+  ],
+  "edges": [
+    { "source": "client", "target": "signup" },
+    { "source": "signup", "target": "db", "order": 1 },
+    { "source": "signup", "target": "email", "order": 2, "fireAndForget": true }
+  ]
+}

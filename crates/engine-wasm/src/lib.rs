@@ -49,6 +49,15 @@ impl Sim {
         self.inner.set_traffic_multiplier(m);
     }
 
+    /// Trace the next `n` user requests; read them with `take_traces_json`.
+    pub fn trace_next(&mut self, n: u32) {
+        self.inner.trace_next(n);
+    }
+
+    pub fn take_traces_json(&mut self) -> String {
+        serde_json::to_string(&self.inner.take_traces()).unwrap_or_else(|_| "[]".into())
+    }
+
     pub fn set_node_down(&mut self, node: u32, down: bool) -> Result<(), JsError> {
         self.inner
             .set_node_down(node as usize, down)

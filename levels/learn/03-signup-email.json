@@ -1,0 +1,35 @@
+{
+  "id": "learn-03-signup-email",
+  "title": "Đăng ký mà phải chờ email",
+  "brief": "Khi đăng ký, API lưu user vào DB rồi gửi email chào mừng. Dịch vụ email rất chậm (p50 300 ms, có lúc vài giây), nên người dùng ngồi chờ email được gửi xong mới thấy màn hình 'Thành công'. Hãy làm cho p99 của đăng ký dưới 150 ms mà vẫn gửi email.",
+  "hint": "Người dùng không cần chờ email. Chọn edge Signup → Email và bật \"Không chờ trả lời\" (fire-and-forget). Ngoài đời, cách bền hơn là đẩy vào một queue.",
+  "palette": [],
+  "locked": ["client", "db", "email"],
+  "allowFireAndForget": true,
+  "catalog": {
+    "service": { "instances": 1, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 5, "latencyP99Ms": 15, "costPerHour": 0.1 }
+  },
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Người dùng", "position": { "x": 0, "y": 160 } },
+      { "id": "signup", "kind": "service", "label": "Signup API", "position": { "x": 360, "y": 160 }, "config": { "instances": 1, "routing": "sequence" } },
+      { "id": "db", "kind": "database", "label": "Users DB", "position": { "x": 760, "y": 40 }, "config": { "concurrency": 100, "queueSize": 200, "latencyP50Ms": 8, "latencyP99Ms": 30, "costPerHour": 0.5 } },
+      { "id": "email", "kind": "service", "label": "Email", "position": { "x": 760, "y": 280 }, "config": { "concurrency": 200, "queueSize": 2000, "latencyP50Ms": 300, "latencyP99Ms": 2000, "costPerHour": 0.05 } }
+    ],
+    "edges": [
+      { "source": "client", "target": "signup" },
+      { "source": "signup", "target": "db", "order": 1 },
+      { "source": "signup", "target": "email", "order": 2 }
+    ]
+  },
+  "requiredEdges": [["signup", "db"], ["signup", "email"]],
+  "scenario": {
+    "seed": 9,
+    "durationMs": 20000,
+    "timeoutMs": 5000,
+    "traffic": [{ "atMs": 0, "rps": 80 }],
+    "slo": { "p99Ms": 150, "errorRate": 0.01 },
+    "windowMs": 1000,
+    "events": []
+  }
+}

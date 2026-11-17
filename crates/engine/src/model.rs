@@ -49,11 +49,29 @@ pub enum Balance {
     Random,
 }
 
+/// What a node does with several outgoing edges.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum Routing {
+    /// Each downstream call goes to ONE edge, round-robin (load balancer,
+    /// replicas). The default, and always used by clients and LBs.
+    #[default]
+    Pick,
+    /// Call every edge one after another (`await a(); await b();`), in edge
+    /// `order`. Edges sharing an `order` run together.
+    Sequence,
+    /// Call every edge at once and wait for all (`Promise.all`): fails as
+    /// soon as one fails, latency is the slowest branch.
+    Parallel,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase", default)]
 pub struct NodeConfig {
     pub instances: u32,
     pub balance: Balance,
+    /// Several outgoing edges: pick one, call all in sequence, or in parallel.
+    pub routing: Routing,
     pub model: ExecModel,
     /// `threads`: concurrent requests per instance.
     pub concurrency: u32,
@@ -106,6 +124,7 @@ impl Default for NodeConfig {
         Self {
             instances: 1,
             balance: Balance::RoundRobin,
+            routing: Routing::Pick,
             concurrency: 100,
             queue_size: 100,
             latency_p50_ms: 1.0,
@@ -209,6 +228,27 @@ pub struct EdgeSpec {
     /// `pool_timeout`, default 10 s). Counts as a failed attempt.
     #[serde(default = "default_pool_timeout")]
     pub pool_timeout_ms: f64,
+    /// Position of this call when the source node uses `sequence` routing
+    /// (lower first; equal orders run together). Ignored by `pick`.
+    #[serde(default)]
+    pub order: u32,
+    /// `sequence`/`parallel`: send without waiting for the answer (emit an
+    /// event, send an email). Its outcome is counted as async.
+    #[serde(default)]
+    pub fire_and_forget: bool,
+    /// Request and response body sizes in KB. With `bandwidthMbps` they add
+    /// a transfer time, and big bodies queue behind each other on the link.
+    #[serde(default)]
+    pub request_kb: f64,
+    #[serde(default)]
+    pub response_kb: f64,
+    /// Link capacity per direction (full duplex), shared by all calls.
+    #[serde(default = "default_bandwidth")]
+    pub bandwidth_mbps: f64,
+}
+
+fn default_bandwidth() -> f64 {
+    1000.0
 }
 
 fn default_pool_timeout() -> f64 {
@@ -228,6 +268,11 @@ impl EdgeSpec {
             circuit_breaker: None,
             pool_size: None,
             pool_timeout_ms: default_pool_timeout(),
+            order: 0,
+            fire_and_forget: false,
+            request_kb: 0.0,
+            response_kb: 0.0,
+            bandwidth_mbps: default_bandwidth(),
         }
     }
 }

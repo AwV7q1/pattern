@@ -1,0 +1,36 @@
+{
+  "id": "learn-02-product-page",
+  "title": "Trang sản phẩm chậm",
+  "brief": "Trang sản phẩm cần 3 thứ: đánh giá, giá và tồn kho. Code hiện tại gọi lần lượt từng cái (await nối tiếp), nên người dùng chờ tổng thời gian của cả ba. Ba lời gọi này không phụ thuộc nhau. Làm trang nhanh lên để p99 dưới 130 ms, nhưng không được bỏ lời gọi nào.",
+  "hint": "Chọn node Product page, phần \"Gọi các nhánh phía sau\" chuyển từ Tuần tự sang Song song (Promise.all). Mở tab Trace để so waterfall trước và sau.",
+  "palette": [],
+  "locked": ["client", "reviews", "prices", "stock"],
+  "catalog": {
+    "service": { "instances": 1, "concurrency": 200, "queueSize": 200, "latencyP50Ms": 5, "latencyP99Ms": 15, "costPerHour": 0.1 }
+  },
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Người dùng", "position": { "x": 0, "y": 200 } },
+      { "id": "page", "kind": "service", "label": "Product page", "position": { "x": 360, "y": 200 }, "config": { "instances": 1, "routing": "sequence" } },
+      { "id": "reviews", "kind": "service", "label": "Reviews", "position": { "x": 760, "y": 40 }, "config": { "concurrency": 200, "queueSize": 200, "latencyP50Ms": 30, "latencyP99Ms": 60, "costPerHour": 0.1 } },
+      { "id": "prices", "kind": "service", "label": "Prices", "position": { "x": 760, "y": 200 }, "config": { "concurrency": 200, "queueSize": 200, "latencyP50Ms": 40, "latencyP99Ms": 80, "costPerHour": 0.1 } },
+      { "id": "stock", "kind": "database", "label": "Stock DB", "position": { "x": 760, "y": 360 }, "config": { "concurrency": 200, "queueSize": 200, "latencyP50Ms": 35, "latencyP99Ms": 70, "costPerHour": 0.2 } }
+    ],
+    "edges": [
+      { "source": "client", "target": "page" },
+      { "source": "page", "target": "reviews", "order": 1 },
+      { "source": "page", "target": "prices", "order": 2 },
+      { "source": "page", "target": "stock", "order": 3 }
+    ]
+  },
+  "requiredEdges": [["page", "reviews"], ["page", "prices"], ["page", "stock"]],
+  "scenario": {
+    "seed": 5,
+    "durationMs": 20000,
+    "timeoutMs": 2000,
+    "traffic": [{ "atMs": 0, "rps": 100 }],
+    "slo": { "p99Ms": 130, "errorRate": 0.01 },
+    "windowMs": 1000,
+    "events": []
+  }
+}

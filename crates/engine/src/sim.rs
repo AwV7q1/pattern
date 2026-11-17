@@ -34,7 +34,7 @@ use serde::Serialize;
 
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, SimInput, Slo,
+    Arrival, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput, Slo,
 };
 use crate::rng::Rng;
 
@@ -51,6 +51,17 @@ pub const PARTICLE_REQUEST: f32 = 0.0;
 pub const PARTICLE_RESPONSE_OK: f32 = 1.0;
 pub const PARTICLE_RESPONSE_ERR: f32 = 2.0;
 pub const PARTICLE_RETRY: f32 = 3.0;
+/// Added to the kind of particles that belong to a traced request.
+pub const PARTICLE_TRACED: f32 = 4.0;
+const MAX_TRACE_EVENTS: usize = 20_000;
+
+/// Time to push `kb` kilobytes through a `mbps` link, µs.
+fn transfer_us(kb: f64, mbps: f64) -> Time {
+    if kb <= 0.0 || mbps <= 0.0 {
+        return 0;
+    }
+    (kb * 8000.0 / mbps).round() as Time
+}
 
 fn ms_to_us(v: f64) -> Time {
     (v * 1000.0).max(0.0).round() as Time
@@ -119,6 +130,13 @@ enum Ev {
     },
     Chaos {
         index: u32,
+    },
+    /// A branch of a `sequence`/`parallel` fork of `call` is over.
+    BranchDone {
+        call: u32,
+        gen: u32,
+        fork: u64,
+        ok: bool,
     },
 }
 
@@ -193,6 +211,9 @@ struct NodeRt {
     down: bool,
     out: Vec<u32>,
     rr: usize,
+    routing: Routing,
+    /// `sequence`/`parallel`: edges called at each step (equal `order` together).
+    stages: Vec<Vec<u32>>,
     // window accounting
     busy_area: f64,
     last_change: Time,
@@ -219,8 +240,10 @@ impl NodeRt {
     fn effective_calls(&self) -> u32 {
         if self.out.is_empty() {
             0
-        } else {
+        } else if self.routing == Routing::Pick {
             self.calls
+        } else {
+            self.stages.len() as u32
         }
     }
 
@@ -286,6 +309,15 @@ struct EdgeRt {
     jitter: bool,
     breaker: Option<Breaker>,
     pool: Option<PoolRt>,
+    fire_and_forget: bool,
+    /// Transfer time of a request / response body on the link.
+    req_tx: Time,
+    res_tx: Time,
+    /// When the link is free again in each direction.
+    req_free: Time,
+    res_free: Time,
+    w_req_busy: f64,
+    w_res_busy: f64,
     // window accounting
     w_calls: u64,
     w_retries: u64,
@@ -297,11 +329,17 @@ struct EdgeRt {
 enum Parent {
     /// Root call of a user request, owned by the client.
     User,
-    /// Async message spawned by a queue node.
+    /// Async message spawned by a queue node, or a fire-and-forget branch.
     Async,
     Call {
         id: u32,
         gen: u32,
+    },
+    /// Branch of fork `fork` of call `id` (`sequence`/`parallel` routing).
+    Fork {
+        id: u32,
+        gen: u32,
+        fork: u64,
     },
 }
 
@@ -331,6 +369,18 @@ struct Call {
     pool_wait: u64,
     /// Instance of `node` serving the call.
     inst: u32,
+    /// Branch of a fork: lives at its parent's node, calls `fixed_edge`
+    /// with that edge's policy, and holds no slot.
+    branch: bool,
+    fixed_edge: u32,
+    /// Current fork token and branches still awaited.
+    fork: u64,
+    pending: u32,
+    /// Trace id (0 = not traced) and span id reported as parent of children.
+    trace: u32,
+    span: u64,
+    /// When the call started waiting for a pooled connection.
+    pool_since: Time,
 }
 
 #[derive(Default)]
@@ -395,6 +445,31 @@ pub struct EdgeWindow {
     pub pool_wait_ms: f64,
     /// Pooled edges: attempts that gave up waiting for a connection.
     pub pool_timeouts: u64,
+    /// Busiest direction of the link, fraction of time transferring bodies.
+    pub bandwidth_utilization: f64,
+}
+
+/// One step in the life of a traced request (see [`Simulation::trace_next`]).
+/// A span is one call over one edge; `span` ids are unique for the run.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceEvent {
+    pub trace: u32,
+    /// `begin` (root), `send`, `arrive`, `start` (got a slot), `reject`,
+    /// `reply` (callee answers), `recv` (caller got it), `timeout`, `end`.
+    pub ev: &'static str,
+    pub span: u64,
+    /// Span of the caller (0 for the root).
+    pub parent: u64,
+    pub node: u32,
+    pub edge: Option<u32>,
+    pub t_ms: f64,
+    pub ok: bool,
+    pub attempt: u32,
+    /// `send`: time spent waiting for a pooled connection.
+    pub wait_ms: f64,
+    /// `send`: the caller does not wait for the answer.
+    pub fire_and_forget: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -506,6 +581,9 @@ pub struct Simulation {
     windows_out: Vec<WindowMetrics>,
     emit_particles: bool,
     particles: Vec<f32>,
+    trace_budget: u32,
+    next_trace: u32,
+    traces: Vec<TraceEvent>,
 }
 
 impl Simulation {
@@ -605,6 +683,11 @@ impl Simulation {
                     down: false,
                     out: Vec::new(),
                     rr: 0,
+                    routing: match n.kind {
+                        NodeKind::Client | NodeKind::LoadBalancer => Routing::Pick,
+                        _ => c.routing,
+                    },
+                    stages: Vec::new(),
                     busy_area: 0.0,
                     last_change: 0,
                     cpu_area: 0.0,
@@ -669,11 +752,39 @@ impl Simulation {
                     failures: 0,
                 }),
                 pool,
+                fire_and_forget: e.fire_and_forget,
+                req_tx: transfer_us(e.request_kb, e.bandwidth_mbps),
+                res_tx: transfer_us(e.response_kb, e.bandwidth_mbps),
+                req_free: 0,
+                res_free: 0,
+                w_req_busy: 0.0,
+                w_res_busy: 0.0,
                 w_calls: 0,
                 w_retries: 0,
                 w_timeouts: 0,
                 w_short_circuits: 0,
             });
+        }
+        for n in nodes.iter_mut().filter(|n| n.routing != Routing::Pick) {
+            // (order, edge), sorted; equal orders form one stage
+            let mut out: Vec<(u32, u32)> = n
+                .out
+                .iter()
+                .map(|&e| match n.routing {
+                    Routing::Sequence => (design.edges[e as usize].order, e),
+                    _ => (0, e),
+                })
+                .collect();
+            out.sort();
+            let mut last = None;
+            for (order, e) in out {
+                if last == Some(order) {
+                    n.stages.last_mut().expect("stage").push(e);
+                } else {
+                    n.stages.push(vec![e]);
+                    last = Some(order);
+                }
+            }
         }
         if nodes[client as usize].out.is_empty() {
             return Err("the client node has no outgoing edge".into());
@@ -733,6 +844,9 @@ impl Simulation {
             windows_out: Vec::new(),
             emit_particles,
             particles: Vec::new(),
+            trace_budget: 0,
+            next_trace: 0,
+            traces: Vec::new(),
         };
         for i in 0..sim.chaos.len() {
             let at = sim.chaos[i].at;
@@ -876,15 +990,75 @@ impl Simulation {
         base * self.multiplier
     }
 
-    fn emit(&mut self, edge: u32, latency: Time, kind: f32) {
+    fn emit(&mut self, edge: u32, latency: Time, kind: f32, traced: bool) {
         if self.emit_particles && self.particles.len() < MAX_PENDING_PARTICLE_FLOATS {
             self.particles.extend_from_slice(&[
                 edge as f32,
                 (self.now as f64 / 1e6) as f32,
                 (latency as f64 / 1e6) as f32,
-                kind,
+                if traced { kind + PARTICLE_TRACED } else { kind },
             ]);
         }
+    }
+
+    /// Delay for a body crossing `edge` now: wait for the link (bodies go
+    /// one after another, FIFO), transfer, then propagation latency.
+    fn link_delay(&mut self, edge: u32, response: bool) -> Time {
+        let now = self.now;
+        let e = &mut self.edges[edge as usize];
+        let (tx, free, busy) = if response {
+            (e.res_tx, &mut e.res_free, &mut e.w_res_busy)
+        } else {
+            (e.req_tx, &mut e.req_free, &mut e.w_req_busy)
+        };
+        if tx == 0 {
+            return e.latency;
+        }
+        let begin = (*free).max(now);
+        *free = begin + tx;
+        *busy += tx as f64;
+        *free - now + e.latency
+    }
+
+    /// Trace the next `n` user requests (see [`TraceEvent`]).
+    pub fn trace_next(&mut self, n: u32) {
+        self.trace_budget = self.trace_budget.saturating_add(n);
+    }
+
+    pub fn take_traces(&mut self) -> Vec<TraceEvent> {
+        std::mem::take(&mut self.traces)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record(
+        &mut self,
+        call: u32,
+        ev: &'static str,
+        span: u64,
+        parent: u64,
+        edge: u32,
+        ok: bool,
+        wait: Time,
+    ) {
+        let c = &self.calls[call as usize];
+        if c.trace == 0 || self.traces.len() >= MAX_TRACE_EVENTS {
+            return;
+        }
+        let edge = (edge != NO_EDGE).then_some(edge);
+        let ff = edge.is_some_and(|e| self.edges[e as usize].fire_and_forget);
+        self.traces.push(TraceEvent {
+            trace: c.trace,
+            ev,
+            span,
+            parent,
+            node: c.node,
+            edge,
+            t_ms: us_to_ms(self.now as f64),
+            ok,
+            attempt: c.attempt,
+            wait_ms: us_to_ms(wait as f64),
+            fire_and_forget: ff && ev == "send",
+        });
     }
 
     fn alloc_call(&mut self, node: u32, parent: Parent, edge: u32, start: Time) -> u32 {
@@ -909,6 +1083,13 @@ impl Simulation {
                     enq: 0,
                     pool_wait: 0,
                     inst: 0,
+                    branch: false,
+                    fixed_edge: NO_EDGE,
+                    fork: 0,
+                    pending: 0,
+                    trace: 0,
+                    span: 0,
+                    pool_since: 0,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -928,6 +1109,13 @@ impl Simulation {
         c.enq = 0;
         c.pool_wait = 0;
         c.inst = 0;
+        c.branch = false;
+        c.fixed_edge = NO_EDGE;
+        c.fork = 0;
+        c.pending = 0;
+        c.trace = 0;
+        c.span = token;
+        c.pool_since = 0;
         id
     }
 
@@ -999,6 +1187,12 @@ impl Simulation {
                 }
             }
             Ev::Chaos { index } => self.on_chaos(index as usize),
+            Ev::BranchDone {
+                call,
+                gen,
+                fork,
+                ok,
+            } => self.on_branch_done(call, gen, fork, ok),
         }
     }
 
@@ -1014,6 +1208,13 @@ impl Simulation {
             } else {
                 self.user_in_flight += 1;
                 let root = self.alloc_call(self.client, Parent::User, NO_EDGE, self.now);
+                if self.trace_budget > 0 {
+                    self.trace_budget -= 1;
+                    self.next_trace += 1;
+                    self.calls[root as usize].trace = self.next_trace;
+                    let span = self.calls[root as usize].span;
+                    self.record(root, "begin", span, 0, NO_EDGE, true, 0);
+                }
                 self.send_or_give_up(root);
             }
             let gap = match self.arrival {
@@ -1070,11 +1271,14 @@ impl Simulation {
             Balance::Random => (self.rng.f64() * k as f64) as usize % k,
         };
         self.calls[call as usize].inst = inst as u32;
+        let span = self.calls[call as usize].span;
+        self.record(call, "arrive", span, 0, NO_EDGE, true, 0);
         let n = &mut self.nodes[node as usize];
         let slot = &n.insts[inst];
         let has_room = slot.busy < n.slots || slot.queue.len() < n.queue_cap;
         if n.down || !has_room {
             n.rejected += 1;
+            self.record(call, "reject", span, 0, NO_EDGE, false, 0);
             self.settle(call, false);
             return;
         }
@@ -1099,6 +1303,8 @@ impl Simulation {
 
     /// The call got its slot (`threads`) or in-flight permit (`cpu`).
     fn start(&mut self, call: u32) {
+        let span = self.calls[call as usize].span;
+        self.record(call, "start", span, 0, NO_EDGE, true, 0);
         let c = &self.calls[call as usize];
         let (node, gen, inst) = (c.node, c.gen, c.inst as usize);
         match self.nodes[node as usize].model {
@@ -1237,6 +1443,10 @@ impl Simulation {
             return;
         }
         self.calls[call as usize].attempt = 0;
+        if self.nodes[node as usize].routing != Routing::Pick {
+            self.fork(call);
+            return;
+        }
         match self.send(call) {
             Send::Sent => {}
             Send::NoEdge => self.finish(call, true),
@@ -1244,9 +1454,85 @@ impl Simulation {
         }
     }
 
+    /// `sequence`/`parallel`: call every edge of the current stage through
+    /// its own branch (each with the edge's retry/timeout/pool policy) and
+    /// continue once all awaited branches answered.
+    fn fork(&mut self, call: u32) {
+        let (node, step, gen, start, inst, trace, span) = {
+            let c = &self.calls[call as usize];
+            (
+                c.node,
+                c.step as usize,
+                c.gen,
+                c.start,
+                c.inst,
+                c.trace,
+                c.span,
+            )
+        };
+        let stage = self.nodes[node as usize].stages[step].clone();
+        self.next_token += 1;
+        let fork = self.next_token;
+        let mut awaited = 0;
+        for edge in stage {
+            let fire_and_forget = self.edges[edge as usize].fire_and_forget;
+            let parent = if fire_and_forget {
+                Parent::Async
+            } else {
+                awaited += 1;
+                Parent::Fork {
+                    id: call,
+                    gen,
+                    fork,
+                }
+            };
+            let b = self.alloc_call(
+                node,
+                parent,
+                NO_EDGE,
+                if fire_and_forget { self.now } else { start },
+            );
+            let c = &mut self.calls[b as usize];
+            c.branch = true;
+            c.fixed_edge = edge;
+            c.inst = inst;
+            c.trace = trace;
+            c.span = span;
+            self.send_or_give_up(b);
+        }
+        let c = &mut self.calls[call as usize];
+        c.fork = fork;
+        c.pending = awaited;
+        if awaited == 0 {
+            c.fork = 0;
+            self.downstream_ok(call);
+        }
+    }
+
+    fn on_branch_done(&mut self, call: u32, gen: u32, fork: u64, ok: bool) {
+        if !self.live(call, gen) || self.calls[call as usize].fork != fork {
+            return; // the fork already failed fast
+        }
+        let c = &mut self.calls[call as usize];
+        if !ok {
+            c.fork = 0;
+            self.downstream_done(call, false);
+            return;
+        }
+        c.pending -= 1;
+        if c.pending == 0 {
+            c.fork = 0;
+            self.downstream_ok(call);
+        }
+    }
+
     /// A downstream call succeeded.
     fn downstream_ok(&mut self, call: u32) {
         let node = self.calls[call as usize].node;
+        if self.calls[call as usize].branch {
+            self.settle(call, true);
+            return;
+        }
         if node == self.client {
             self.settle(call, true);
             return;
@@ -1345,16 +1631,25 @@ impl Simulation {
         if k == 0 {
             return Send::NoEdge;
         }
-        let start = self.nodes[node as usize].rr;
-        self.nodes[node as usize].rr = start.wrapping_add(1);
+        let fixed = self.calls[call as usize].fixed_edge;
         let mut chosen = None;
-        for i in 0..k {
-            let e = self.nodes[node as usize].out[(start + i) % k];
-            if self.breaker_allows(e) {
-                chosen = Some(e);
-                break;
+        if fixed != NO_EDGE {
+            if self.breaker_allows(fixed) {
+                chosen = Some(fixed);
+            } else {
+                self.edges[fixed as usize].w_short_circuits += 1;
             }
-            self.edges[e as usize].w_short_circuits += 1;
+        } else {
+            let start = self.nodes[node as usize].rr;
+            self.nodes[node as usize].rr = start.wrapping_add(1);
+            for i in 0..k {
+                let e = self.nodes[node as usize].out[(start + i) % k];
+                if self.breaker_allows(e) {
+                    chosen = Some(e);
+                    break;
+                }
+                self.edges[e as usize].w_short_circuits += 1;
+            }
         }
         let Some(edge) = chosen else {
             return Send::Blocked;
@@ -1377,6 +1672,7 @@ impl Simulation {
         }
         if let Some((token, timeout)) = wait {
             self.calls[call as usize].pool_wait = token;
+            self.calls[call as usize].pool_since = now;
             self.schedule(now + timeout, Ev::PoolTimeout { call, gen, token });
             return Send::Sent;
         }
@@ -1390,15 +1686,30 @@ impl Simulation {
             let c = &self.calls[call as usize];
             (c.gen, c.start, c.attempt)
         };
-        let (to, lat, timeout) = {
+        let (to, timeout) = {
             let e = &mut self.edges[edge as usize];
             e.w_calls += 1;
-            (e.to, e.latency, e.timeout)
+            (e.to, e.timeout)
         };
+        let lat = self.link_delay(edge, false);
         let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
         let token = self.calls[child as usize].token;
         let child_gen = self.calls[child as usize].gen;
         self.calls[call as usize].waiting = token;
+        let (trace, span, since) = {
+            let c = &mut self.calls[call as usize];
+            let since = std::mem::take(&mut c.pool_since);
+            (c.trace, c.span, since)
+        };
+        self.calls[child as usize].trace = trace;
+        if trace != 0 {
+            let wait = if since > 0 { self.now - since } else { 0 };
+            self.record(call, "send", token, span, edge, true, wait);
+            // the event is about the child span, at the target node
+            if let Some(ev) = self.traces.last_mut() {
+                ev.node = to;
+            }
+        }
         self.schedule(
             self.now + lat,
             Ev::Arrive {
@@ -1414,7 +1725,7 @@ impl Simulation {
         } else {
             PARTICLE_REQUEST
         };
-        self.emit(edge, lat, kind);
+        self.emit(edge, lat, kind, trace != 0);
     }
 
     /// A pooled connection on `edge` is free again: hand it to the next
@@ -1470,6 +1781,8 @@ impl Simulation {
         }
         let edge = self.calls[call as usize].out_edge;
         self.calls[call as usize].waiting = 0;
+        let span = self.calls[call as usize].span;
+        self.record(call, "recv", token, span, edge, ok, 0);
         self.breaker_record(edge, ok);
         if ok {
             self.downstream_ok(call);
@@ -1486,6 +1799,8 @@ impl Simulation {
         let edge = self.calls[call as usize].out_edge;
         self.calls[call as usize].waiting = 0;
         self.calls[call as usize].last_timeout = true;
+        let span = self.calls[call as usize].span;
+        self.record(call, "timeout", token, span, edge, false, 0);
         self.edges[edge as usize].w_timeouts += 1;
         self.breaker_record(edge, false);
         self.downstream_failed(call);
@@ -1517,7 +1832,7 @@ impl Simulation {
 
     /// The downstream part of `call` is over: answer its own caller.
     fn downstream_done(&mut self, call: u32, ok: bool) {
-        if self.calls[call as usize].node == self.client {
+        if self.calls[call as usize].branch || self.calls[call as usize].node == self.client {
             self.settle(call, ok);
         } else {
             self.finish(call, ok);
@@ -1546,8 +1861,9 @@ impl Simulation {
     fn notify_parent(&mut self, call: u32, ok: bool) {
         let c = &self.calls[call as usize];
         if let Parent::Call { id, gen } = c.parent {
-            let (edge, token) = (c.edge, c.token);
-            let lat = self.edges[edge as usize].latency;
+            let (edge, token, traced) = (c.edge, c.token, c.trace != 0);
+            self.record(call, "reply", token, 0, edge, ok, 0);
+            let lat = self.link_delay(edge, true);
             self.schedule(
                 self.now + lat,
                 Ev::Response {
@@ -1566,6 +1882,7 @@ impl Simulation {
                 } else {
                     PARTICLE_RESPONSE_ERR
                 },
+                traced,
             );
         }
     }
@@ -1584,12 +1901,23 @@ impl Simulation {
                 }
             }
             Parent::Call { .. } => self.notify_parent(call, ok),
+            Parent::Fork { id, gen, fork } => self.schedule(
+                self.now,
+                Ev::BranchDone {
+                    call: id,
+                    gen,
+                    fork,
+                    ok,
+                },
+            ),
         }
         self.free_call(call);
     }
 
     fn complete_user(&mut self, call: u32, ok: bool) {
         self.user_in_flight = self.user_in_flight.saturating_sub(1);
+        let span = self.calls[call as usize].span;
+        self.record(call, "end", span, 0, NO_EDGE, ok, 0);
         let c = &self.calls[call as usize];
         let latency = self.now - c.start;
         let timed_out = !ok && c.last_timeout;
@@ -1684,7 +2012,12 @@ impl Simulation {
                         pool_utilization,
                         pool_wait_ms,
                         pool_timeouts,
+                        bandwidth_utilization: (e.w_req_busy.max(e.w_res_busy)
+                            / self.window as f64)
+                            .min(1.0),
                     };
+                    e.w_req_busy = 0.0;
+                    e.w_res_busy = 0.0;
                     e.w_calls = 0;
                     e.w_retries = 0;
                     e.w_timeouts = 0;
@@ -2349,5 +2682,141 @@ mod tests {
         let (low, high) = (mk(100.0), mk(2000.0));
         assert!(low > 0.7, "idle: every request pays the wake-up, {low}");
         assert!(high < 0.5, "busy: requests run back to back, {high}");
+    }
+
+    /// api -> {auth 20ms, db 30ms, mail 50ms} with the given routing.
+    fn fan_out(routing: Routing, mail_async: bool) -> SimInput {
+        let leaf = |ms: f64| NodeConfig {
+            latency_p50_ms: ms,
+            latency_p99_ms: ms,
+            concurrency: 1000,
+            ..NodeConfig::default()
+        };
+        let mut mail = edge("api", "mail");
+        mail.fire_and_forget = mail_async;
+        mail.order = 3;
+        let mut db = edge("api", "db");
+        db.order = 2;
+        let mut auth = edge("api", "auth");
+        auth.order = 1;
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "api",
+                        NodeKind::Service,
+                        NodeConfig {
+                            routing,
+                            ..leaf(1.0)
+                        },
+                    ),
+                    node("db", NodeKind::Database, leaf(30.0)),
+                    node("mail", NodeKind::Service, leaf(50.0)),
+                    node("auth", NodeKind::Service, leaf(20.0)),
+                ],
+                // declared out of order on purpose: `order` decides
+                edges: vec![edge("c", "api"), mail, db, auth],
+            },
+            scenario: scenario(50.0, 10_000.0),
+        }
+    }
+
+    #[test]
+    fn routing_pick_sequence_parallel() {
+        // pick: one of the three per request; network 2 ms per hop
+        let pick = run(&fan_out(Routing::Pick, false));
+        assert!(pick.p99_ms < 60.0 && pick.p50_ms < 40.0, "pick {pick:?}");
+        // sequence: 20 + 30 + 50 + 3 round trips
+        let seq = run(&fan_out(Routing::Sequence, false));
+        assert!(
+            (seq.p50_ms - 109.0).abs() < 4.0,
+            "sequence p50 = {}",
+            seq.p50_ms
+        );
+        // parallel: the slowest branch
+        let par = run(&fan_out(Routing::Parallel, false));
+        assert!(
+            (par.p50_ms - 59.0).abs() < 4.0,
+            "parallel p50 = {}",
+            par.p50_ms
+        );
+        // every leaf gets every request in sequence/parallel
+        for input in [
+            fan_out(Routing::Sequence, false),
+            fan_out(Routing::Parallel, false),
+        ] {
+            let ws = windows(&input);
+            let w = &ws[5];
+            for leaf in 2..5 {
+                assert!(
+                    (w.nodes[leaf].arrivals - 50.0).abs() < 20.0,
+                    "{:?}",
+                    w.nodes[leaf]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fire_and_forget_is_not_awaited() {
+        let s = run(&fan_out(Routing::Sequence, true));
+        // auth + db only; mail is sent but not waited for
+        assert!((s.p50_ms - 57.0).abs() < 4.0, "p50 = {}", s.p50_ms);
+        assert!(s.async_ok > 400, "async ok = {}", s.async_ok);
+    }
+
+    #[test]
+    fn parallel_fails_fast() {
+        let mut input = fan_out(Routing::Parallel, false);
+        input.design.nodes[4].config.error_rate = 1.0; // auth (20 ms) always fails
+        let s = run(&input);
+        assert_eq!(s.ok, 0);
+        // failure surfaces after auth answers, without waiting for mail (50 ms)
+        assert!(s.p50_ms < 30.0, "p50 = {}", s.p50_ms);
+    }
+
+    #[test]
+    fn big_payloads_queue_on_the_link() {
+        let mk = |kb: f64, rps: f64| {
+            let mut input = single_service(rps, 1000, 1.0);
+            input.design.edges[0].response_kb = kb;
+            input.design.edges[0].bandwidth_mbps = 100.0;
+            input
+        };
+        // 100 KB at 100 Mbps = 8 ms per response
+        let one = run(&mk(100.0, 20.0));
+        assert!((one.p50_ms - 11.0).abs() < 1.5, "p50 = {}", one.p50_ms);
+        // 110 responses/s * 8 ms = 88% of the link: queueing on the wire
+        let busy = windows(&mk(100.0, 110.0));
+        let w = &busy[10];
+        assert!(w.edges[0].bandwidth_utilization > 0.75, "{:?}", w.edges[0]);
+        assert!(w.p99_ms > 40.0, "p99 = {}", w.p99_ms);
+    }
+
+    #[test]
+    fn traces_record_the_request_tree() {
+        let input = fan_out(Routing::Parallel, true);
+        let mut sim = Simulation::new(&input, true).unwrap();
+        sim.trace_next(1);
+        sim.step(2000.0);
+        let t = sim.take_traces();
+        let sends: Vec<_> = t.iter().filter(|e| e.ev == "send").collect();
+        assert_eq!(sends.len(), 4, "{t:#?}");
+        let root = t.iter().find(|e| e.ev == "begin").unwrap().span;
+        let api = sends.iter().find(|e| e.parent == root).unwrap().span;
+        assert_eq!(sends.iter().filter(|e| e.parent == api).count(), 3);
+        assert!(sends.iter().any(|e| e.fire_and_forget));
+        let end = t.iter().find(|e| e.ev == "end").unwrap();
+        assert!(end.ok && end.t_ms > 30.0);
+        // every send gets an arrive and a reply
+        for s in &sends {
+            assert!(t.iter().any(|e| e.ev == "reply" && e.span == s.span));
+        }
+        // traced particles are flagged
+        let p = sim.take_particles();
+        assert!(p.chunks(4).any(|q| q[3] >= PARTICLE_TRACED));
+        // only one request traced
+        assert!(t.iter().all(|e| e.trace == 1));
     }
 }
