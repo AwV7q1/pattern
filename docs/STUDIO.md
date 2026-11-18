@@ -64,3 +64,27 @@ Kiểm tra một giai đoạn bằng CLI: lấy `stages[i].design` và `stages[i
 - Chưa có fallback (trả dữ liệu dự phòng khi lỗi), DLQ, ordering hay idempotency trong engine. Prompt có yêu cầu những thứ này, nhưng mô phỏng chưa đo được.
 - HPA chỉ scale theo utilization, chưa scale theo độ dài queue (KEDA).
 - Dự án chỉ lưu trong trình duyệt. Chưa có đồng bộ server hay chia sẻ link.
+
+## Kiểm tra design (design lint)
+
+Tab **Kiểm tra** trong Studio chạy bộ luật ở `packages/design-lint` mỗi khi design đổi. Mỗi ghi chú có mức độ (lỗi, cảnh báo, gợi ý), giải thích cơ chế, và thường có nút sửa nhanh. Node và edge có ghi chú được đánh dấu `!` trên canvas.
+
+| Luật | Phát hiện |
+|---|---|
+| `retry-no-backoff`, `retry-no-jitter`, `retry-no-timeout` | Retry dồn dập, đồng bộ, hoặc không bao giờ được kích hoạt vì thiếu timeout |
+| `retry-storm-risk` | Retry ≥ 3 lần mà không có retry budget hay circuit breaker |
+| `retry-amplification` | Retry nhân chồng qua nhiều tầng (tích số lần thử > 8; ≥ 27 là lỗi) |
+| `timeout-order` | Tầng dưới có thể chờ (timeout × số lần thử + backoff) lâu hơn timeout của tầng trên |
+| `spof` | Node 1 instance mà mọi request đều phải đi qua |
+| `lb-single-target` | Load balancer chỉ có một instance phía sau |
+| `pool-exceeds-db` | Tổng pool × instance (lúc autoscale lên max) × process vượt số kết nối DB nhận |
+| `fan-out-no-timeout` | Gọi song song / quorum / hedge mà nhánh không có timeout |
+| `hedge-unbounded` | Hedge mà không có rate limit hay retry budget |
+| `cache-stampede`, `cache-no-ttl` | Key nóng không có singleflight / SWR; cache không hết hạn |
+| `queue-consumer-fixed` | Consumer của queue không autoscale |
+| `hpa-min-one` | HPA cho phép xuống 1 replica |
+| `cb-min-requests` | Circuit breaker mở sau quá ít mẫu |
+| `slow-payload` | Body mất > 50ms chỉ để truyền |
+| `over-budget` | Chi phí vượt ngân sách của kịch bản |
+
+Cùng package có `scoreInterview` dùng cho chế độ phỏng vấn. Server dùng bản build CommonJS (`pnpm --filter @pattern/design-lint build`), web dùng thẳng mã TypeScript qua alias của Vite.

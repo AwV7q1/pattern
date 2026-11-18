@@ -19,6 +19,8 @@ import { LEARN_LEVELS, LEVELS } from '@/presets';
 import { useProgress } from '@/learn/progress';
 import { LESSONS } from '@/learn/curriculum';
 import { useSimClient } from '@/app/sim-context';
+import { countByTarget, lint, type Finding, type LintDesign } from '@pattern/design-lint';
+import { LintPanel } from './LintPanel';
 import { useUi } from '@/app/ui-store';
 import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
 import {
@@ -110,7 +112,7 @@ export type WorkspaceProps =
       project: Project;
       onClose: () => void;
     };
-type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
+type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes' | 'lint';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
 const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
@@ -342,6 +344,13 @@ export function Workspace(props: WorkspaceProps) {
     [project, mode, nodes, edges, groups],
   );
 
+  // design review (studio only: in game levels it would give the answer away)
+  const findings = useMemo<Finding[]>(
+    () => (designJson ? lint(JSON.parse(designJson) as LintDesign, preset.scenario) : []),
+    [designJson, preset.scenario],
+  );
+  const lintCounts = useMemo(() => countByTarget(findings), [findings]);
+
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
     if (!designJson || !project || loaded.current.key !== projectKey(project.id)) return;
@@ -505,6 +514,7 @@ export function Workspace(props: WorkspaceProps) {
     () =>
       decorateEdges(nodes, edges).map((e) => ({
         ...e,
+        data: { ...e.data!, lint: lintCounts.edges.get(`${e.source}->${e.target}`) },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 14,
@@ -512,7 +522,7 @@ export function Workspace(props: WorkspaceProps) {
           color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
         },
       })),
-    [nodes, edges],
+    [nodes, edges, lintCounts],
   );
 
   // ------------------------------------------------------------------ editing
@@ -645,7 +655,16 @@ export function Workspace(props: WorkspaceProps) {
         : [],
     [mode, groups, groupSel, nodes],
   );
-  const canvasNodes = useMemo(() => [...frameNodes, ...nodes] as Node[], [frameNodes, nodes]);
+  const canvasNodes = useMemo(
+    () =>
+      [
+        ...frameNodes,
+        ...(lintCounts.nodes.size
+          ? nodes.map((n) => (lintCounts.nodes.has(n.id) ? { ...n, data: { ...n.data, lint: lintCounts.nodes.get(n.id) } } : n))
+          : nodes),
+      ] as Node[],
+    [frameNodes, nodes, lintCounts],
+  );
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -710,6 +729,31 @@ export function Workspace(props: WorkspaceProps) {
       .filter((n) => members.has(n.id) && n.data.kind !== 'client')
       .forEach((n) => client.setNodeDown(n.data.index, down));
     setNodes((ns) => ns.map((n) => (members.has(n.id) && n.data.kind !== 'client' ? { ...n, data: { ...n.data, down } } : n)));
+  };
+
+  /** Show a finding's node or edge on the canvas (opens its inspector). */
+  const selectFinding = (f: Finding) => {
+    const t = f.target;
+    if ('design' in t) return;
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: 'node' in t && n.id === t.node })));
+    setEdges((es) => es.map((e) => ({ ...e, selected: 'edge' in t && e.source === t.edge[0] && e.target === t.edge[1] })));
+  };
+  /** Apply the one-click fix of a finding and rerun. */
+  const applyFix = (f: Finding) => {
+    if (!f.fix) return;
+    let ns = nodesRef.current;
+    let es = edgesRef.current;
+    for (const p of f.fix.patches) {
+      const t = p.target;
+      if ('node' in t)
+        ns = ns.map((n) => (n.id === t.node ? { ...n, data: { ...n.data, config: { ...n.data.config, [p.field]: p.value } } } : n));
+      else
+        es = es.map((e) =>
+          e.source === t.edge[0] && e.target === t.edge[1] ? { ...e, data: { ...e.data!, policy: { ...e.data!.policy, [p.field]: p.value } } } : e,
+        );
+    }
+    commit(ns, es);
+    showFlash(`Đã áp dụng: ${f.fix.label}`);
   };
 
   const updateNode = (id: string, config: NodeConfig, label: string) =>
@@ -985,11 +1029,26 @@ export function Workspace(props: WorkspaceProps) {
         <SidePanel full={panelFull} onExitFull={exitPanelFull}>
           <Tabs value={panel} onValueChange={(v) => setPanel(v as Panel)} className="min-h-0 flex-1 gap-0">
             <div className="m-3 mb-0 flex items-center gap-2">
-              <TabsList className={cn('flex-1', panelFull && 'mx-auto max-w-xl')}>
+              <TabsList className={cn('min-w-0 flex-1 justify-start overflow-x-auto', panelFull && 'mx-auto max-w-xl')}>
                 {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
                 <TabsTrigger value="metrics">Số liệu</TabsTrigger>
                 <TabsTrigger value="trace">Trace</TabsTrigger>
                 <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
+                {mode === 'sandbox' && (
+                  <TabsTrigger value="lint" className="gap-1">
+                    Kiểm tra
+                    {findings.some((f) => f.severity !== 'info') && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 font-mono text-[10px] leading-4 text-white',
+                          findings.some((f) => f.severity === 'error') ? 'bg-destructive' : 'bg-warning text-black',
+                        )}
+                      >
+                        {findings.filter((f) => f.severity !== 'info').length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                )}
                 {mode === 'sandbox' && project && <TabsTrigger value="notes">Ghi chú</TabsTrigger>}
               </TabsList>
               <Button
@@ -1128,6 +1187,11 @@ export function Workspace(props: WorkspaceProps) {
                         {fmt.pct(project.lastRun.errorRate)}
                       </p>
                     )}
+                  </TabsContent>
+                )}
+                {mode === 'sandbox' && (
+                  <TabsContent value="lint" className="max-w-2xl">
+                    <LintPanel findings={findings} onSelect={selectFinding} onFix={applyFix} />
                   </TabsContent>
                 )}
                 <TabsContent value="inspect" className="max-w-2xl">

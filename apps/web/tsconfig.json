@@ -26,11 +26,19 @@
     "paths": {
       "@/*": [
         "./src/*"
+      ],
+      "@pattern/design-lint": [
+        "../../packages/design-lint/src/index.ts"
       ]
-    }
+    },
+    "allowImportingTsExtensions": true
   },
   "include": [
     "src",
-    "vite.config.ts"
+    "vite.config.ts",
+    "../../packages/design-lint/src"
+  ],
+  "exclude": [
+    "../../packages/design-lint/src/**/*.test.ts"
   ]
 }

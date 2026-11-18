@@ -43,11 +43,12 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
   // thicker with traffic: 1.5px idle, ~4px at 10k calls/s
   const width = (selected || breaker !== 'closed' ? 2 : 1.5) + Math.min(2.5, Math.log10(1 + (m?.calls ?? 0)) * 0.6);
 
-  const badges: { text: string; bad?: boolean }[] = [];
+  const badges: { text: string; bad?: boolean; warn?: boolean }[] = [];
   if (p?.timeoutMs) badges.push({ text: `⏱ ${p.timeoutMs}ms` });
   if (p?.retries) badges.push({ text: `↻ ${p.retries}` });
   if (p?.circuitBreaker) badges.push({ text: breaker === 'closed' ? 'CB' : `CB ${breaker === 'open' ? 'OPEN' : 'half'}`, bad: breaker === 'open' });
   const pool = m?.poolUtilization ?? 0;
+  if (data?.lint && data.lint.worst !== 'info') badges.push({ text: `! ${data.lint.count}`, bad: data.lint.worst === 'error', warn: true });
   if (partitioned) badges.push({ text: '✂ partition', bad: true });
   if (p?.rateLimit) badges.push({ text: `⛁ ${p.rateLimit.rps}/s`, bad: (m?.rateLimited ?? 0) > 0 });
   if (p?.retryBudget) badges.push({ text: `↻≤${Math.round(p.retryBudget.ratio * 100)}%`, bad: (m?.budgetExhausted ?? 0) > 0 });
@@ -114,6 +115,7 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
                 className={cn(
                   'rounded border bg-background/90 px-1 font-mono text-[10px] leading-4 whitespace-nowrap text-muted-foreground',
                   t.bad && 'border-destructive text-destructive',
+                  t.warn && !t.bad && 'border-warning text-warning',
                 )}
               >
                 {t.text}

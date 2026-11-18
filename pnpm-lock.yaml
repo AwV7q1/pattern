@@ -118,6 +118,15 @@ importers:
         specifier: ^7.0.0
         version: 7.3.8(@types/node@22.20.5)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.51.2)
 
+  packages/design-lint:
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.5
+      typescript:
+        specifier: ~5.9.0
+        version: 5.9.3
+
 packages:
 
   '@angular-devkit/core@19.2.24':

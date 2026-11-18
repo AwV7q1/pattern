@@ -107,6 +107,17 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
           </div>
         </>
       )}
+      {data.lint && (
+        <span
+          className={cn(
+            'absolute -top-2.5 left-2 rounded px-1.5 py-0.5 font-mono text-[10px] leading-none font-semibold',
+            data.lint.worst === 'error' ? 'bg-destructive text-white' : data.lint.worst === 'warn' ? 'bg-warning text-black' : 'bg-muted text-muted-foreground',
+          )}
+          title={`${data.lint.count} ghi chú ở tab Kiểm tra`}
+        >
+          {data.lint.worst === 'info' ? 'i' : '!'} {data.lint.count}
+        </span>
+      )}
       {data.down && (
         <span className="absolute -top-2.5 right-2 flex items-center gap-1 rounded bg-destructive px-1.5 py-0.5 text-[11px] font-semibold text-white">
           <PowerOff className="size-2.5" /> DOWN

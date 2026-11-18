@@ -5,7 +5,13 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // shared with the server; the web app bundles the TypeScript sources
+      '@pattern/design-lint': fileURLToPath(new URL('../../packages/design-lint/src/index.ts', import.meta.url)),
+    },
+  },
   worker: { format: 'es' },
   server: {
     // the wasm package, examples and levels live outside apps/web
