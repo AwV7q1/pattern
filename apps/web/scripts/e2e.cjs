@@ -17,7 +17,8 @@ const check = (name, ok, detail = '') => {
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1440, height: 860 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 860 } });
+  const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
@@ -367,6 +368,50 @@ const check = (name, ok, detail = '') => {
   const restoredX = await flowX();
   check('restoring the first version puts the node back', Math.abs(restoredX - movedX) > 50 && Math.abs((await storedX()) - restoredX) < 1, `${movedX} -> ${restoredX}`);
   await shot('11-studio');
+
+  // 12b. two tabs on the same project: the other tab's save is detected, nothing is lost silently
+  const tab2 = await page.context().newPage();
+  tab2.on('pageerror', (e) => errors.push(`tab2: ${e.message}`));
+  await tab2.goto(URL);
+  await tab2.getByRole('tab', { name: 'Sandbox' }).click();
+  await tab2.getByText('Không cache: DB là nút thắt').first().click();
+  await tab2.waitForSelector('.react-flow__node');
+  await tab2.getByTitle('Bấm để đổi tên').click();
+  await tab2.keyboard.press('Control+A');
+  await tab2.keyboard.type('Đổi tên ở tab 2');
+  await tab2.keyboard.press('Enter');
+  const banner = page.getByRole('alert').filter({ hasText: 'vừa được sửa ở một tab khác' });
+  await banner.waitFor({ timeout: 5000 });
+  check('the first tab warns as soon as the other tab saves', true);
+  await banner.getByRole('button', { name: 'Tải bản mới nhất' }).click();
+  await page.getByTitle('Bấm để đổi tên').filter({ hasText: 'Đổi tên ở tab 2' }).waitFor();
+  check('loading the newest copy picks up the other tab', (await banner.count()) === 0);
+
+  // now both tabs edit: tab 2 moves a node, tab 1 keeps its own edit
+  const dragNode = async (p, dx) => {
+    const box = await p.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first().boundingBox();
+    await p.mouse.move(box.x + box.width / 2, box.y + 10);
+    await p.mouse.down();
+    await p.mouse.move(box.x + box.width / 2 + dx, box.y + 10, { steps: 8 });
+    await p.mouse.up();
+  };
+  await dragNode(tab2, -120);
+  await tab2.getByText('Đã lưu', { exact: true }).waitFor();
+  await banner.waitFor({ timeout: 5000 });
+  await dragNode(page, 150);
+  await page.waitForTimeout(1200);
+  check(
+    'this tab does not overwrite while the conflict is open',
+    (await page.getByText('Chưa lưu: xung đột').count()) === 1 && Math.abs((await storedX()) - (await flowX())) > 100,
+  );
+  await banner.getByRole('button', { name: 'Giữ bản của tab này' }).click();
+  await page.getByText(/Đã ghi đè/).waitFor();
+  const keptX = await flowX();
+  check('keeping this tab writes its canvas', Math.abs((await storedX()) - keptX) < 1, `${keptX} vs ${await storedX()}`);
+  await page.getByLabel('Lịch sử phiên bản').click();
+  check('the overwritten copy stays in the history', (await page.getByRole('dialog').getByText('Bản từ tab khác (trước khi ghi đè)').count()) === 1);
+  await page.keyboard.press('Escape');
+  await tab2.close();
 
   // 13. share link: snapshot on the server, opened as a separate local project
   await page.getByLabel('Chia sẻ').click();

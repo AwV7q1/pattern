@@ -75,6 +75,7 @@ import {
   download,
   exportJson,
   fetchShare,
+  onProjectsChanged,
   projectFromPreset,
   slug,
   snapshotOf,
@@ -272,6 +273,10 @@ export function App() {
   const [promptOpen, setPromptOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  /** Another tab saved (or deleted) the open project since this tab loaded it. */
+  const [conflict, setConflict] = useState<{ theirs: Project | undefined } | null>(null);
+  const conflictRef = useRef(conflict);
+  conflictRef.current = conflict;
   const saved = useRef({ design: '', notes: '' });
   const lastVersionAt = useRef(0);
   const flushSave = useRef<(() => void) | null>(null);
@@ -286,6 +291,7 @@ export function App() {
     const opened = { ...p, design: { ...autoLayout(p.design), groups: p.design.groups } };
     projectRef.current = opened;
     setProject(opened);
+    setConflict(null);
     setNotes(opened.notes);
     saved.current = { design: '', notes: opened.notes };
     setSaveState({ status: 'saved', at: opened.updatedAt });
@@ -344,7 +350,16 @@ export function App() {
     projectRef.current = p;
     setSaveState({ status: 'saving' });
     try {
-      await store.put(p);
+      const res = await store.putIfUnchanged(p, current.updatedAt);
+      if (!res.ok) {
+        // keep the edits on the canvas, unsaved, until the user picks a side
+        if (projectRef.current?.id === p.id) projectRef.current = current;
+        if (projectRef.current?.id === current.id) {
+          setConflict({ theirs: res.current });
+          setSaveState({ status: 'conflict' });
+        }
+        return null;
+      }
       // closed or switched to another project while writing: keep the UI as it is
       if (projectRef.current?.id !== p.id) return p;
       saved.current = { design, notes: nextNotes };
@@ -373,6 +388,10 @@ export function App() {
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
     if (!designJson || !projectId || loaded.current.key !== projectKey(projectId)) return;
+    if (conflict) {
+      flushSave.current = null;
+      return;
+    }
     if (!saved.current.design) saved.current.design = loaded.current.design;
     const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
     if (!dirty) {
@@ -388,7 +407,7 @@ export function App() {
     flushSave.current = run;
     const t = setTimeout(run, 800);
     return () => clearTimeout(t);
-  }, [designJson, notes, projectId, persist]);
+  }, [designJson, notes, projectId, persist, conflict]);
 
   // do not lose the last 800 ms when the tab closes
   useEffect(() => {
@@ -431,7 +450,13 @@ export function App() {
     if (!current) return;
     await store.addVersion(snapshotOf(current, 'Trước khi khôi phục'));
     const p: Project = { ...current, design: v.design, scenario: v.scenario, notes: v.notes, updatedAt: Date.now() };
-    await store.put(p);
+    projectRef.current = p; // so this tab does not see its own write as a conflict
+    const res = await store.putIfUnchanged(p, current.updatedAt);
+    if (!res.ok) {
+      projectRef.current = current;
+      setConflict({ theirs: res.current });
+      return;
+    }
     setVersionRev((r) => r + 1);
     openProject(p);
     showFlash('Đã khôi phục phiên bản');
@@ -444,7 +469,47 @@ export function App() {
     const p = { ...current, name: name.trim(), updatedAt: Date.now() };
     projectRef.current = p;
     setProject(p);
+    const res = await store.putIfUnchanged(p, current.updatedAt);
+    if (!res.ok) {
+      if (projectRef.current === p) projectRef.current = current;
+      setProject(current);
+      setConflict({ theirs: res.current });
+    }
+  };
+
+  // another tab wrote this project: warn now, not only at the next save
+  useEffect(() => {
+    if (!projectId) return;
+    return onProjectsChanged(async () => {
+      const mine = projectRef.current;
+      if (!mine || mine.id !== projectId || conflictRef.current) return;
+      const theirs = await store.get(projectId);
+      if (projectRef.current !== mine) return;
+      if (!theirs || theirs.updatedAt > mine.updatedAt) setConflict({ theirs });
+    });
+  }, [projectId]);
+
+  /** Conflict: drop this tab's unsaved edits and load what the other tab saved. */
+  const takeTheirs = () => {
+    const theirs = conflictRef.current?.theirs;
+    flushSave.current = null;
+    if (theirs) openProject(theirs);
+  };
+  /** Conflict: overwrite with this tab, keeping the other tab's copy in the history. */
+  const keepMine = async () => {
+    const current = projectRef.current;
+    const theirs = conflictRef.current?.theirs;
+    if (!current) return;
+    if (theirs) await store.addVersion(snapshotOf(theirs, 'Bản từ tab khác (trước khi ghi đè)'));
+    const p: Project = { ...current, design: withGroups(toDesign(nodesRef.current, edgesRef.current), groups), notes, updatedAt: Date.now() };
     await store.put(p);
+    projectRef.current = p;
+    saved.current = { design: JSON.stringify(p.design), notes };
+    setProject(p);
+    setConflict(null);
+    setSaveState({ status: 'saved', at: p.updatedAt });
+    setVersionRev((r) => r + 1);
+    showFlash(theirs ? 'Đã ghi đè; bản của tab kia nằm trong lịch sử' : 'Đã lưu lại dự án');
   };
 
   /** Load a generated design (sizing, calibration) into the sandbox as a new project. */
@@ -554,10 +619,12 @@ export function App() {
       }, 0),
       hot,
     };
+    if (conflictRef.current) return;
     const p = { ...current, lastRun };
     projectRef.current = p;
     setProject(p);
-    store.put(p).catch(() => {});
+    // same updatedAt: it is metadata, but must not clobber another tab's newer design
+    store.putIfUnchanged(p, current.updatedAt).catch(() => {});
   }, [windows, mode]);
 
   // follow one request every 2 s of wall time
@@ -927,7 +994,7 @@ export function App() {
               </button>
             )}
             <span className="ml-2">
-              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} />}
+              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={conflict ? { status: 'conflict' } : saveState} />}
             </span>
           </div>
         ) : null}
@@ -1026,6 +1093,29 @@ export function App() {
           )}
         </div>
       </header>
+      {mode === 'sandbox' && project && conflict && (
+        <div role="alert" className="flex shrink-0 items-center gap-3 border-b bg-warning/15 px-4 py-2 text-sm">
+          <span>
+            {conflict.theirs
+              ? 'Dự án này vừa được sửa ở một tab khác. Thay đổi ở tab này chưa được lưu.'
+              : 'Dự án này đã bị xoá ở một tab khác.'}
+          </span>
+          <span className="ml-auto flex gap-2">
+            {conflict.theirs ? (
+              <Button size="sm" variant="secondary" className="h-7" onClick={takeTheirs}>
+                Tải bản mới nhất
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" className="h-7" onClick={closeProject}>
+                Đóng dự án
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="h-7" onClick={keepMine}>
+              {conflict.theirs ? 'Giữ bản của tab này' : 'Lưu lại dự án'}
+            </Button>
+          </span>
+        </div>
+      )}
 
       {mode === 'learn' ? (
         <LearnPage onBuild={openPractice} />

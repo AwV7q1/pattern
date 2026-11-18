@@ -3,7 +3,8 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { timeAgo } from './store';
 
-export type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'saved'; at: number } | { status: 'error'; message: string };
+export type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'saved'; at: number } | { status: 'error'; message: string }
+  | { status: 'conflict' };
 
 /** Figma-style quiet indicator: a dot and one grey word. */
 export function SaveStatus({ state }: { state: SaveState }) {
@@ -13,12 +14,14 @@ export function SaveStatus({ state }: { state: SaveState }) {
     return () => clearInterval(id);
   }, []);
   const text =
-    state.status === 'saving' ? 'Đang lưu…' : state.status === 'error' ? 'Lỗi lưu' : state.status === 'saved' ? 'Đã lưu' : 'Chưa sửa';
+    state.status === 'saving' ? 'Đang lưu…' : state.status === 'error' ? 'Lỗi lưu' : state.status === 'conflict' ? 'Chưa lưu: xung đột' : state.status === 'saved' ? 'Đã lưu' : 'Chưa sửa';
   const tip =
     state.status === 'saved'
       ? `Tự động lưu vào trình duyệt (IndexedDB) · ${timeAgo(state.at)}`
       : state.status === 'error'
         ? state.message
+        : state.status === 'conflict'
+          ? 'Dự án vừa được sửa ở tab khác. Chọn giữ bản nào ở thanh cảnh báo.'
         : 'Mọi thay đổi được lưu tự động · ⌘/Ctrl+S để tạo phiên bản có tên';
   return (
     <Tooltip>
@@ -29,7 +32,7 @@ export function SaveStatus({ state }: { state: SaveState }) {
               'size-1.5 rounded-full transition-colors',
               state.status === 'saving' && 'animate-pulse bg-warning',
               state.status === 'saved' && 'bg-success/70',
-              state.status === 'error' && 'bg-destructive',
+              (state.status === 'error' || state.status === 'conflict') && 'bg-destructive',
               state.status === 'idle' && 'bg-muted-foreground/40',
             )}
           />

@@ -68,11 +68,19 @@ export interface ProjectStore {
   list(): Promise<Project[]>;
   get(id: string): Promise<Project | undefined>;
   put(p: Project): Promise<void>;
+  /**
+   * Write only if the stored copy is still the one this tab started from
+   * (`updatedAt === expected`): another tab may have saved in between.
+   * An HTTP adapter maps this to `If-Match` / 412.
+   */
+  putIfUnchanged(p: Project, expected: number): Promise<PutResult>;
   remove(id: string): Promise<void>;
   versions(projectId: string): Promise<Version[]>;
   addVersion(v: Version): Promise<void>;
   updateVersion(v: Version): Promise<void>;
 }
+
+export type PutResult = { ok: true } | { ok: false; current: Project | undefined };
 
 const MAX_AUTO_VERSIONS = 50;
 const CHANGED = 'pattern:projects-changed';
@@ -93,6 +101,12 @@ const notify = () => {
 };
 channel?.addEventListener('message', () => window.dispatchEvent(new Event(CHANGED)));
 
+/** Called after any write to the projects store, from this tab or another one. */
+export function onProjectsChanged(cb: () => void) {
+  window.addEventListener(CHANGED, cb);
+  return () => window.removeEventListener(CHANGED, cb);
+}
+
 export const idbStore: ProjectStore = {
   async list() {
     const all = await (await db()).getAllFromIndex('projects', 'updatedAt');
@@ -104,6 +118,19 @@ export const idbStore: ProjectStore = {
   async put(p) {
     await (await db()).put('projects', p);
     notify();
+  },
+  async putIfUnchanged(p, expected) {
+    // one readwrite transaction: no other tab can write between the check and the put
+    const tx = (await db()).transaction('projects', 'readwrite');
+    const current = await tx.store.get(p.id);
+    if (current?.updatedAt !== expected) {
+      await tx.done;
+      return { ok: false, current };
+    }
+    await tx.store.put(p);
+    await tx.done;
+    notify();
+    return { ok: true };
   },
   async remove(id) {
     const d = await db();
