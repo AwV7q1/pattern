@@ -492,8 +492,9 @@ export function CardBattle() {
       <div ref={arenaRef} className="relative min-h-0 flex-1">
         {/* the two sides face each other across the arena; equal side columns
             keep the middle on the exact center. Each side is its panel with its
-            health bar under it, and both sides are centered vertically. */}
-        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
+            health bar under it. Padding: 200px below for the hand, 152px above
+            (200 minus the 48px top bar) puts the row on the screen's vertical center. */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-[152px] [align-content:safe_center]">
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
             <div className="flex w-full max-w-[460px] flex-col items-center gap-3">
               <div className="w-full">
