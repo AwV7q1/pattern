@@ -14,7 +14,7 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Share2, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Redo2, Share2, Undo2, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { CaseLibrary } from './cases/CaseLibrary';
 import { LearnPage } from './learn/LearnPage';
@@ -68,6 +68,7 @@ import { ProjectsHome } from './projects/ProjectsHome';
 import { SaveStatus, type SaveState } from './projects/SaveStatus';
 import { VersionHistory } from './projects/VersionHistory';
 import { ShareDialog } from './projects/ShareDialog';
+import { useUndo } from './projects/useUndo';
 import { Textarea } from './components/ui/textarea';
 import { PromptDialog } from './prompt/PromptDialog';
 import { Input } from './components/ui/input';
@@ -201,6 +202,7 @@ export function App() {
     [client],
   );
 
+  const undoReset = useRef<(() => void) | null>(null);
   const load = useCallback(() => {
     const s = settings.current;
     const source = s.mode === 'game' ? s.level : s.preset;
@@ -214,6 +216,7 @@ export function App() {
       design: JSON.stringify(withGroups(toDesign(flow.nodes, flow.edges), frames)),
     };
     clearEdgeGeometry();
+    undoReset.current?.();
     setNodes(flow.nodes);
     setEdges(flow.edges);
     setMultiplier(1);
@@ -663,6 +666,42 @@ export function App() {
     [client, restart, setEdges, setNodes],
   );
 
+  // undo / redo: whole-design snapshots of the open project
+  const applyDesign = useCallback(
+    (json: string) => {
+      const d = JSON.parse(json) as Design & { groups?: DesignGroup[] };
+      const flow = toFlow(d, ['client'], client.catalog);
+      const frames = d.groups ?? [];
+      setGroups(frames);
+      groupsRef.current = frames;
+      setGroupSel(null);
+      commit(flow.nodes, flow.edges);
+    },
+    [client, commit],
+  );
+  // only once the canvas shows this project (load() resets the history)
+  const undoable = useUndo(
+    projectId ?? null,
+    projectId && loaded.current.key === projectKey(projectId) ? designJson : null,
+    applyDesign,
+  );
+  undoReset.current = undoable.reset;
+  useEffect(() => {
+    if (mode !== 'sandbox' || !projectId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) undoable.undo();
+      else if ((k === 'z' && e.shiftKey) || k === 'y') undoable.redo();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, projectId, undoable.undo, undoable.redo]);
+
   const isValidConnection = useCallback((c: Connection | FlowEdgeType) => {
     if (!c.source || !c.target || c.source === c.target) return false;
     const target = nodesRef.current.find((n) => n.id === c.target);
@@ -1054,6 +1093,22 @@ export function App() {
           </Select>
           {mode === 'sandbox' && (
             <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.undo} disabled={!undoable.canUndo} aria-label="Hoàn tác">
+                    <Undo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Hoàn tác (⌘/Ctrl+Z)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.redo} disabled={!undoable.canRedo} aria-label="Làm lại">
+                    <Redo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Làm lại (⌘/Ctrl+Shift+Z)</TooltipContent>
+              </Tooltip>
               <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
                 <Sparkles /> Prompt
               </Button>
