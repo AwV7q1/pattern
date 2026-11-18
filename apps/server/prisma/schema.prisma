@@ -76,13 +76,16 @@ model Project {
   source      String?
   lastRun     Json?
   rev         Int              @default(1)
+  /// Client clock (what the user sees as "edited 5 minutes ago").
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @default(now())
+  /// Server clock of the last write: the cursor of `GET /projects?since=`.
+  syncedAt    DateTime         @default(now()) @updatedAt
   deletedAt   DateTime?
   versions    ProjectVersion[]
   shares      Share[]
 
-  @@index([ownerId, updatedAt])
+  @@index([ownerId, syncedAt])
 }
 
 model ProjectVersion {

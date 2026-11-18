@@ -13,6 +13,8 @@ export function configure(app: INestApplication) {
   const express = app as NestExpressApplication;
   const trust = config.get('TRUST_PROXY');
   if (trust !== undefined) express.set('trust proxy', trust);
+  // designs and project snapshots exceed the 100 KB default
+  express.useBodyParser('json', { limit: '2mb' });
   app.use(helmet());
   app.use(cookieParser());
   app.setGlobalPrefix('api');

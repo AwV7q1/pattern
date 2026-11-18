@@ -21,6 +21,10 @@ import { LESSONS } from '@/learn/curriculum';
 import { useSimClient } from '@/app/sim-context';
 import { countByTarget, lint, type Finding, type LintDesign } from '@pattern/design-lint';
 import { LintPanel } from './LintPanel';
+import { CONFLICT_EVENT, setOpenProject, useSync } from '@/projects/sync';
+import { idbStore } from '@/projects/store';
+import { ShareDialog } from './ShareDialog';
+import { Copy, Eye, Share2 } from 'lucide-react';
 import { useUi } from '@/app/ui-store';
 import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
 import {
@@ -111,6 +115,8 @@ export type WorkspaceProps =
       mode: 'sandbox';
       project: Project;
       onClose: () => void;
+      /** Shared link (`/s/:slug`): nothing is saved; the visitor can copy it to their projects. */
+      readOnly?: { author: string; onDuplicate: (p: Project) => void };
     };
 type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes' | 'lint';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
@@ -131,6 +137,8 @@ export function Workspace(props: WorkspaceProps) {
   const client = useSimClient();
   const { screenToFlowPosition } = useReactFlow();
   const mode: Mode = props.mode;
+  const readOnly = props.mode === 'sandbox' ? props.readOnly : undefined;
+  const [shareOpen, setShareOpen] = useState(false);
   const levelKey = props.mode === 'game' ? props.levelKey : Object.keys(LEVELS)[0];
   /** Practice level opened from a lesson of the learning path. */
   const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(
@@ -267,6 +275,7 @@ export function Workspace(props: WorkspaceProps) {
     setTimeout(() => setFlash((f) => (f === text ? null : f)), 2500);
   };
 
+  const firstVersionFor = useRef<string | null>(null);
   const openProject = useCallback((p: Project) => {
     const opened = { ...p, design: { ...autoLayout(p.design), groups: p.design.groups } };
     projectRef.current = opened;
@@ -279,11 +288,16 @@ export function Workspace(props: WorkspaceProps) {
     setScripted(false);
     settings.current.scripted = false;
     lastVersionAt.current = Date.now();
+    if (readOnly) return;
     store.versions(opened.id).then((vs) => {
       if (vs.length) lastVersionAt.current = vs[0].at;
-      else store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      // a project from the server already has its history elsewhere
+      else if (!opened.rev && firstVersionFor.current !== opened.id) {
+        firstVersionFor.current = opened.id; // StrictMode runs the open effect twice
+        store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      }
     });
-  }, []);
+  }, [readOnly]);
 
   const closeProject = () => {
     flushSave.current?.();
@@ -295,8 +309,24 @@ export function Workspace(props: WorkspaceProps) {
   // open the project given by the route
   const initialProject = props.mode === 'sandbox' ? props.project : null;
   useEffect(() => {
-    if (initialProject) openProject(initialProject);
+    if (!initialProject) return;
+    openProject(initialProject);
+    // sync must not replace it while it is on the canvas
+    setOpenProject(initialProject.id);
+    return () => setOpenProject(null);
   }, [initialProject, openProject]);
+  // is the open project in the account yet? (the sync engine sets `owner`)
+  const lastSync = useSync((s) => s.lastSync);
+  const [owned, setOwned] = useState(false);
+  useEffect(() => {
+    if (initialProject && !readOnly) void idbStore.get(initialProject.id).then((p) => setOwned(!!p?.owner));
+  }, [initialProject, readOnly, lastSync]);
+  useEffect(() => {
+    const onConflict = (e: Event) =>
+      showFlash(`“${(e as CustomEvent<{ name: string }>).detail.name}” cũng được sửa ở máy khác: bản đó được giữ trong lịch sử phiên bản`);
+    window.addEventListener(CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(CONFLICT_EVENT, onConflict);
+  }, []);
 
   // leaving the page: stop the engine, save, remember the design for the capacity tools
   const setLastDesign = useUi((s) => s.setLastDesign);
@@ -353,7 +383,7 @@ export function Workspace(props: WorkspaceProps) {
 
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
-    if (!designJson || !project || loaded.current.key !== projectKey(project.id)) return;
+    if (readOnly || !designJson || !project || loaded.current.key !== projectKey(project.id)) return;
     if (!saved.current.design) saved.current.design = loaded.current.design;
     const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
     if (!dirty) {
@@ -369,7 +399,7 @@ export function Workspace(props: WorkspaceProps) {
     flushSave.current = run;
     const t = setTimeout(run, 800);
     return () => clearTimeout(t);
-  }, [designJson, notes, project, persist]);
+  }, [designJson, notes, project, persist, readOnly]);
 
   // do not lose the last 800 ms when the tab closes
   useEffect(() => {
@@ -396,7 +426,7 @@ export function Workspace(props: WorkspaceProps) {
 
   // ⌘S / Ctrl+S: named version
   useEffect(() => {
-    if (mode !== 'sandbox' || !project) return;
+    if (mode !== 'sandbox' || !project || readOnly) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -405,7 +435,7 @@ export function Workspace(props: WorkspaceProps) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, project, saveNamedVersion]);
+  }, [mode, project, saveNamedVersion, readOnly]);
 
   const restoreVersion = async (v: Version) => {
     const current = projectRef.current;
@@ -498,8 +528,8 @@ export function Workspace(props: WorkspaceProps) {
     const p = { ...current, lastRun };
     projectRef.current = p;
     setProject(p);
-    store.put(p).catch(() => {});
-  }, [windows, mode]);
+    if (!readOnly) store.put(p).catch(() => {});
+  }, [windows, mode, readOnly]);
 
   // follow one request every 2 s of wall time
   useEffect(() => {
@@ -854,6 +884,14 @@ export function Workspace(props: WorkspaceProps) {
               ))}
             </SelectContent>
           </Select>
+        ) : project && readOnly ? (
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Eye className="size-4 text-muted-foreground" />
+            <span className="max-w-72 truncate font-medium">{project.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              chỉ xem · của {readOnly.author} · sửa thử thoải mái, không lưu
+            </span>
+          </div>
         ) : project ? (
           <div className="flex min-w-0 items-center gap-1 text-sm">
             <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" onClick={closeProject}>
@@ -881,7 +919,7 @@ export function Workspace(props: WorkspaceProps) {
               </button>
             )}
             <span className="ml-2">
-              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} />}
+              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} owned={owned} />}
             </span>
           </div>
         ) : null}
@@ -935,8 +973,21 @@ export function Workspace(props: WorkspaceProps) {
               ))}
             </SelectContent>
           </Select>
-          {mode === 'sandbox' && (
+          {readOnly && (
+            <Button
+              size="sm"
+              onClick={() =>
+                project && readOnly.onDuplicate({ ...project, design: withGroups(toDesign(nodes, edges), groups), notes })
+              }
+            >
+              <Copy /> Nhân bản vào dự án của tôi
+            </Button>
+          )}
+          {mode === 'sandbox' && !readOnly && (
             <>
+              <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
+                <Share2 /> Chia sẻ
+              </Button>
               <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
                 <Sparkles /> Prompt
               </Button>
@@ -1310,7 +1361,8 @@ export function Workspace(props: WorkspaceProps) {
             : null
         }
       />
-      {project && (
+      {project && !readOnly && <ShareDialog project={project} open={shareOpen} onOpenChange={setShareOpen} />}
+      {project && !readOnly && (
         <VersionHistory
           projectId={project.id}
           open={historyOpen}

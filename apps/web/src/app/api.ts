@@ -43,6 +43,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     // the dev proxy answers 500 with an HTML/text page when the server is down
     if (res.status >= 500) throw new ApiError(0, 'Không kết nối được server');
   }
+  // the Vite dev proxy answers an empty 500 when the server is not running
+  if (res.status >= 500 && !text) throw new ApiError(0, 'Không kết nối được server');
   if (!res.ok) {
     const msg = (body as { message?: string | string[] } | undefined)?.message;
     throw new ApiError(res.status, Array.isArray(msg) ? msg.join(', ') : (msg ?? res.statusText), body);

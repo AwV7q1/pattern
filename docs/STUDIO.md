@@ -88,3 +88,14 @@ Tab **Kiểm tra** trong Studio chạy bộ luật ở `packages/design-lint` m�
 | `over-budget` | Chi phí vượt ngân sách của kịch bản |
 
 Cùng package có `scoreInterview` dùng cho chế độ phỏng vấn. Server dùng bản build CommonJS (`pnpm --filter @pattern/design-lint build`), web dùng thẳng mã TypeScript qua alias của Vite.
+
+## Đồng bộ và chia sẻ
+
+Dự án luôn lưu vào IndexedDB trước (tức thì, chạy được offline). Khi đăng nhập, mỗi thay đổi còn được xếp vào một **outbox** và gửi lên server (`projects/sync.ts`):
+
+- **Đẩy**: outbox gửi theo thứ tự, mỗi khoá (dự án, phiên bản, lệnh xoá) chỉ giữ thay đổi mới nhất. Mất mạng thì giữ lại, có mạng hoặc 30 giây sau thì gửi tiếp. Chỉ báo cạnh tên dự án: *Đã đồng bộ*, *Đang đồng bộ…*, *Đã lưu · offline*.
+- **Kéo**: hỏi server các dự án đổi sau một mốc thời gian của server (`?since=`), kể cả dự án đã xoá ở máy khác. Dự án đang mở trên canvas, hoặc còn thay đổi chưa gửi, thì không bị ghi đè.
+- **Xung đột**: mỗi lần ghi, server tăng `rev`. Máy gửi một thay đổi dựa trên `rev` cũ thì nhận 409. Bản của máy đang dùng được giữ làm bản chính, bản trên server được lưu thành phiên bản “Bản từ máy khác (rev N)” trong lịch sử, kèm thông báo. Không mất dữ liệu.
+- Dự án tạo **trước** lần đăng nhập đầu tiên trên máy này chỉ được đẩy lên khi bấm “Đẩy lên tài khoản” ở trang Dự án. Dự án tạo sau đó tự đồng bộ.
+
+**Chia sẻ**: nút *Chia sẻ* tạo link `/s/:slug` chỉ đọc, không cần tài khoản để xem. *Link trực tiếp* luôn hiện bản mới nhất, *Ảnh chụp* đóng băng bản hiện tại. Người xem chạy mô phỏng và sửa thử được nhưng không lưu, có nút *Nhân bản vào dự án của tôi*. Link đếm lượt xem, thu hồi được, và tự thu hồi khi xoá dự án.

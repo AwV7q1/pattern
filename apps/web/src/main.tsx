@@ -6,6 +6,7 @@ import '@xyflow/react/dist/style.css';
 import './styles.css';
 import { router } from './app/router';
 import { SimProvider } from './app/sim-context';
+import './projects/sync';
 import { TooltipProvider } from './components/ui/tooltip';
 
 createRoot(document.getElementById('root')!).render(

@@ -13,6 +13,8 @@ import { HealthController } from './health/health.controller';
 import { LeaderboardService } from './levels/leaderboard.service';
 import { LevelsController } from './levels/levels.controller';
 import { LevelsService } from './levels/levels.service';
+import { ProjectsController } from './projects/projects.controller';
+import { ProjectsService } from './projects/projects.service';
 
 @Module({
   imports: [
@@ -23,11 +25,12 @@ import { LevelsService } from './levels/levels.service';
     PrismaModule,
     AuthModule,
   ],
-  controllers: [HealthController, LevelsController],
+  controllers: [HealthController, LevelsController, ProjectsController],
   providers: [
     EngineService,
     LevelsService,
     LeaderboardService,
+    ProjectsService,
     // order matters: CSRF, then who is calling, then rate limits per user
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

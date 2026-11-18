@@ -5,6 +5,35 @@ import { ProjectsHome } from '@/projects/ProjectsHome';
 import { projectFromPreset, store, type Project } from '@/projects/store';
 import { Workspace } from '@/features/workspace/Workspace';
 import { Button } from '@/components/ui/button';
+import { CloudUpload } from 'lucide-react';
+import { useAuth } from '@/app/auth-store';
+import { uploadLocalProjects, useSync } from '@/projects/sync';
+
+/** Signed in with projects that only live on this device: offer to upload them. */
+function UploadBanner() {
+  const signedIn = useAuth((s) => s.status === 'signed-in');
+  const { localOnly, state } = useSync();
+  const [busy, setBusy] = useState(false);
+  if (!signedIn || !localOnly) return null;
+  return (
+    <div className="flex items-center gap-3 rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+      <CloudUpload className="size-5 shrink-0 text-primary" />
+      <span className="flex-1">
+        Có <b>{localOnly}</b> dự án chỉ lưu trên máy này. Đẩy lên tài khoản để mở ở máy khác và chia sẻ link?
+      </span>
+      <Button
+        size="sm"
+        disabled={busy || state === 'syncing'}
+        onClick={() => {
+          setBusy(true);
+          void uploadLocalProjects().finally(() => setBusy(false));
+        }}
+      >
+        Đẩy lên tài khoản
+      </Button>
+    </div>
+  );
+}
 
 /** `/studio`: saved projects and templates. `?template=<key>` creates a project from a template. */
 export function StudioHome() {
@@ -22,6 +51,7 @@ export function StudioHome() {
   }, [template, navigate]);
   return (
     <ProjectsHome
+      banner={<UploadBanner />}
       presets={PRESETS}
       onOpen={(p) => navigate(`/studio/${p.id}`)}
       tab={tab}

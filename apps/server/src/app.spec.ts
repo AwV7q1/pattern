@@ -174,3 +174,96 @@ test('the worker pool runs simulations in parallel with identical results', asyn
   assert.equal(totals[0].total, totals[1].total);
   assert.ok(totals.every((s) => s.stars === 3));
 });
+
+// ------------------------------------------------------------ projects and share links
+
+const project = (over: Record<string, unknown> = {}) => ({
+  name: 'Shop',
+  description: 'demo',
+  notes: '',
+  design: solution('01-first-sale'),
+  scenario: { seed: 1, timeoutMs: 1000, traffic: [{ atMs: 0, rps: 100 }], slo: { p99Ms: 200, errorRate: 0.01 }, windowMs: 1000 },
+  createdAt: 1_700_000_000_000,
+  updatedAt: 1_700_000_000_000,
+  ...over,
+});
+const PID = '7b0f5c0e-0d7a-4a59-9a63-0c7f7f2a1a01';
+const put = (b: ReturnType<typeof browser>, body: unknown, id = PID) =>
+  fetch(`${base}/projects/${id}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'pattern', cookie: b.cookie },
+    body: JSON.stringify(body),
+  });
+
+test('projects: create, list changes since a cursor, conflicts on a stale revision', async () => {
+  const created = await put(alice, project());
+  assert.equal(created.status, 200);
+  assert.equal(((await created.json()) as { rev: number }).rev, 1);
+
+  const first = await alice.json<{ now: string; projects: { id: string; rev: number }[] }>(await alice.get('/projects'));
+  assert.deepEqual(first.projects.map((p) => p.id), [PID]);
+  const empty = await alice.json<{ projects: unknown[] }>(await alice.get(`/projects?since=${encodeURIComponent(first.now)}`));
+  assert.equal(empty.projects.length, 0, 'nothing changed since the cursor');
+
+  const edit = await put(alice, project({ name: 'Shop v2', baseRev: 1, updatedAt: 1_700_000_100_000 }));
+  assert.equal(((await edit.json()) as { rev: number }).rev, 2);
+  const stale = await put(alice, project({ name: 'from laptop', baseRev: 1 }));
+  assert.equal(stale.status, 409);
+  const conflict = (await stale.json()) as { project: { name: string; rev: number } };
+  assert.equal(conflict.project.name, 'Shop v2');
+  const forced = await put(alice, project({ name: 'from laptop', baseRev: 1, force: true }));
+  assert.equal(((await forced.json()) as { rev: number; name: string }).rev, 3);
+
+  const changed = await alice.json<{ projects: { name: string }[] }>(await alice.get(`/projects?since=${encodeURIComponent(first.now)}`));
+  assert.deepEqual(changed.projects.map((p) => p.name), ['from laptop']);
+});
+
+test('projects: other users cannot read or overwrite them', async () => {
+  assert.equal((await bob.get(`/projects/${PID}`)).status, 404);
+  assert.equal((await put(bob, project({ name: 'stolen' }))).status, 404);
+  assert.equal((await put(browser(), project())).status, 401, 'signed out');
+  assert.equal((await alice.post('/projects/not-a-uuid/shares', { mode: 'live' })).status, 400);
+});
+
+test('versions are idempotent by id', async () => {
+  const v = { id: '2b9a4f1e-5c3d-4e2f-8a1b-9c0d1e2f3a4b', at: Date.now(), label: 'v1', auto: false, name: 'Shop', notes: '', design: solution('01-first-sale'), scenario: project().scenario };
+  const send = () =>
+    fetch(`${base}/projects/${PID}/versions`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-requested-with': 'pattern', cookie: alice.cookie },
+      body: JSON.stringify(v),
+    });
+  assert.equal((await send()).status, 204);
+  assert.equal((await send()).status, 204);
+  const list = await alice.json<{ id: string; label: string }[]>(await alice.get(`/projects/${PID}/versions`));
+  assert.deepEqual(list.map((x) => x.label), ['v1']);
+});
+
+test('share links: live follows edits, snapshot is frozen, revoke works', async () => {
+  const live = await alice.json<{ slug: string }>(await alice.post(`/projects/${PID}/shares`, { mode: 'live' }));
+  const snap = await alice.json<{ slug: string }>(await alice.post(`/projects/${PID}/shares`, { mode: 'snapshot' }));
+  await put(alice, project({ name: 'after share', force: true }));
+  const anon = browser();
+  const a = await anon.json<{ name: string; author: string; design: { nodes: unknown[] } }>(await anon.get(`/share/${live.slug}`));
+  assert.equal(a.name, 'after share');
+  assert.equal(a.author, 'alice');
+  assert.ok(a.design.nodes.length > 0);
+  const b = await anon.json<{ name: string }>(await anon.get(`/share/${snap.slug}`));
+  assert.equal(b.name, 'from laptop');
+  const listed = await alice.json<{ slug: string; views: number }[]>(await alice.get(`/projects/${PID}/shares`));
+  assert.equal(listed.find((s) => s.slug === live.slug)?.views, 1);
+  assert.equal((await bob.del(`/shares/${live.slug}`)).status, 404);
+  assert.equal((await alice.del(`/shares/${live.slug}`)).status, 204);
+  assert.equal((await anon.get(`/share/${live.slug}`)).status, 404);
+});
+
+test('deleting a project leaves a tombstone for other devices and revokes its links', async () => {
+  const before = await alice.json<{ now: string }>(await alice.get('/projects'));
+  const snapLink = (await alice.json<{ slug: string }[]>(await alice.get(`/projects/${PID}/shares`)))[0].slug;
+  assert.equal((await alice.del(`/projects/${PID}`)).status, 204);
+  const after = await alice.json<{ projects: { id: string; deleted: boolean }[] }>(await alice.get(`/projects?since=${encodeURIComponent(before.now)}`));
+  assert.deepEqual(after.projects.map((p) => [p.id, p.deleted]), [[PID, true]]);
+  assert.equal((await browser().get(`/share/${snapLink}`)).status, 404);
+  // saving it again (offline edit on another device) brings it back
+  assert.equal((await put(alice, project({ force: true }))).status, 200);
+});
