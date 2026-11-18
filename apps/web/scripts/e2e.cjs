@@ -39,7 +39,7 @@ const check = (name, ok, detail = '') => {
     window.__projectPuts = [];
     const put = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (value, key) {
-      if (this.name === 'projects') window.__projectPuts.push({ t: performance.now(), updatedAt: value?.updatedAt });
+      if (this.name === 'projects') window.__projectPuts.push({ t: performance.now(), updatedAt: value?.updatedAt, run: value?.lastRun?.simSeconds });
       return put.call(this, value, key);
     };
   });
@@ -337,11 +337,15 @@ const check = (name, ok, detail = '') => {
   for (let i = 0; i < 120 && (await simSeconds()) < 125; i++) await page.waitForTimeout(500);
   const putsSince = (t) => page.evaluate((t) => window.__projectPuts.filter((p) => p.t > t), t);
   let t0 = await page.evaluate(() => performance.now());
-  const s0 = await simSeconds();
   await page.waitForTimeout(3000);
-  const snapshots = (await putsSince(t0)).length;
-  const simulated = (await simSeconds()) - s0;
-  check('run snapshot is saved every 5 simulated seconds, not every tick', snapshots <= simulated / 5 + 1, `${snapshots} writes in ${simulated} s`);
+  // judge by the simulated time inside each snapshot: the `t =` label lags when the main thread is busy
+  const runs = (await putsSince(t0)).map((p) => p.run).filter((r) => r !== undefined);
+  const gaps = runs.slice(1).map((r, i) => r - runs[i]);
+  check(
+    'run snapshot is saved every 5 simulated seconds, not every tick',
+    runs.length >= 2 && gaps.every((g) => g >= 5 || g < 0),
+    `snapshots at ${runs.join(', ')} s`,
+  );
   const moved = page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first();
   const nb = await moved.boundingBox();
   t0 = await page.evaluate(() => performance.now());
@@ -349,9 +353,11 @@ const check = (name, ok, detail = '') => {
   await page.mouse.down();
   await page.mouse.move(nb.x + 130, nb.y + 100, { steps: 6 });
   await page.mouse.up();
-  await page.waitForTimeout(2500);
+  // at 8× the main thread is busy: the 800 ms debounce can take a few seconds of wall time
+  await page.getByText('Đang lưu…').waitFor({ timeout: 5000 }).catch(() => {});
+  await page.getByText('Đã lưu', { exact: true }).waitFor({ timeout: 30000 }).catch(() => {});
   const stamps = new Set((await putsSince(t0)).map((p) => p.updatedAt));
-  check('autosave goes through while the simulation runs', stamps.size >= 1 && (await page.getByText('Đã lưu').count()) > 0, `${stamps.size} new versions`);
+  check('autosave goes through while the simulation runs', stamps.size >= 1 && (await page.getByText('Đã lưu').count()) > 0, `${stamps.size} new versions | ${(await page.locator('header').innerText()).replace(/\s+/g, ' ')}`);
   await page.getByRole('button', { name: 'Dừng' }).click();
 
   // 12. studio: the edit survives a reload, version history restores the original
@@ -432,6 +438,37 @@ const check = (name, ok, detail = '') => {
   check('the overwritten copy stays in the history', (await page.getByRole('dialog').getByText('Bản từ tab khác (trước khi ghi đè)').count()) === 1);
   await page.keyboard.press('Escape');
   await tab2.close();
+
+  // 12c. undo / redo: one step per settled drag, deletes come back
+  await page.waitForTimeout(500);
+  const x0 = await flowX();
+  // leftwards: near the right edge React Flow auto-pans and the node jumps
+  await dragNode(page, -80);
+  await page.waitForTimeout(700);
+  const x1 = await flowX();
+  await dragNode(page, -80);
+  await page.waitForTimeout(700);
+  const x2 = await flowX();
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  const u1 = await flowX();
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(300);
+  const u2 = await flowX();
+  await page.keyboard.press('Control+Shift+z');
+  await page.waitForTimeout(300);
+  const r1 = await flowX();
+  check('undo walks back one drag at a time, redo forward', x2 < x1 - 40 && x1 < x0 - 40 && [u1 - x1, u2 - x0, r1 - x1].every((d) => Math.abs(d) < 1), `${x0} ${x1} ${x2} -> ${u1} ${u2} -> ${r1}`);
+  const pgNodes = () => page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).count();
+  await page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first().click();
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(300);
+  const afterDelete = await pgNodes();
+  await page.getByLabel('Hoàn tác').click();
+  await page.waitForTimeout(300);
+  check('undo brings a deleted node (and its edges) back', afterDelete === 0 && (await pgNodes()) === 1 && (await page.locator('.react-flow__edge').count()) >= 3);
+  await page.waitForTimeout(1200);
+  check('the undone design is autosaved', Math.abs((await storedX()) - r1) < 1, `${await storedX()} vs ${r1}`);
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await browser.close();

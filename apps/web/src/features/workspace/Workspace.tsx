@@ -14,7 +14,7 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Redo2, Undo2, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw } from 'lucide-react';
 import { LEARN_LEVELS, LEVELS } from '@/presets';
 import { useProgress } from '@/learn/progress';
 import { LESSONS } from '@/learn/curriculum';
@@ -73,6 +73,7 @@ import { VersionHistory } from '@/projects/VersionHistory';
 import { Textarea } from '@/components/ui/textarea';
 import { PromptDialog } from '@/prompt/PromptDialog';
 import { Input } from '@/components/ui/input';
+import { useUndo } from '@/projects/useUndo';
 import {
   download,
   exportJson,
@@ -233,6 +234,7 @@ export function Workspace(props: WorkspaceProps) {
     [client],
   );
 
+  const undoReset = useRef<(() => void) | null>(null);
   const load = useCallback(() => {
     const s = settings.current;
     const source = s.mode === 'game' ? s.level : s.preset;
@@ -246,6 +248,7 @@ export function Workspace(props: WorkspaceProps) {
       design: JSON.stringify(withGroups(toDesign(flow.nodes, flow.edges), frames)),
     };
     clearEdgeGeometry();
+    undoReset.current?.();
     setNodes(flow.nodes);
     setEdges(flow.edges);
     setMultiplier(1);
@@ -662,6 +665,42 @@ export function Workspace(props: WorkspaceProps) {
     },
     [client, restart, setEdges, setNodes],
   );
+
+  // undo / redo: whole-design snapshots of the open project
+  const applyDesign = useCallback(
+    (json: string) => {
+      const d = JSON.parse(json) as Design & { groups?: DesignGroup[] };
+      const flow = toFlow(d, ['client'], client.catalog);
+      const frames = d.groups ?? [];
+      setGroups(frames);
+      groupsRef.current = frames;
+      setGroupSel(null);
+      commit(flow.nodes, flow.edges);
+    },
+    [client, commit],
+  );
+  // only once the canvas shows this project (load() resets the history)
+  const undoable = useUndo(
+    projectId ?? null,
+    projectId && loaded.current.key === projectKey(projectId) ? designJson : null,
+    applyDesign,
+  );
+  undoReset.current = undoable.reset;
+  useEffect(() => {
+    if (mode !== 'sandbox' || !projectId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) undoable.undo();
+      else if ((k === 'z' && e.shiftKey) || k === 'y') undoable.redo();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, projectId, undoable.undo, undoable.redo]);
 
   const isValidConnection = useCallback((c: Connection | FlowEdgeType) => {
     if (!c.source || !c.target || c.source === c.target) return false;
@@ -1082,6 +1121,22 @@ export function Workspace(props: WorkspaceProps) {
           )}
           {mode === 'sandbox' && !readOnly && (
             <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.undo} disabled={!undoable.canUndo} aria-label="Hoàn tác">
+                    <Undo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Hoàn tác (⌘/Ctrl+Z)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.redo} disabled={!undoable.canRedo} aria-label="Làm lại">
+                    <Redo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Làm lại (⌘/Ctrl+Shift+Z)</TooltipContent>
+              </Tooltip>
               <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
                 <Share2 /> Chia sẻ
               </Button>
