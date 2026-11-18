@@ -160,6 +160,7 @@ impl Level {
                     backoff_ms: e.backoff_ms.clamp(0.0, 10_000.0),
                     pool_size: None,
                     fire_and_forget: e.fire_and_forget && self.allow_fire_and_forget,
+                    hedge_after_ms: None,
                     request_kb: 0.0,
                     response_kb: 0.0,
                     bandwidth_mbps: 1000.0,

@@ -60,6 +60,7 @@ function policyText(e: DesignEdge, target: Node) {
   const parts: string[] = [];
   if (p.fireAndForget) parts.push('không chờ kết quả (fire-and-forget)');
   if (p.timeoutMs) parts.push(`timeout ${ms(p.timeoutMs)}`);
+  if (p.hedgeAfterMs) parts.push(`hedged request: sau ${ms(p.hedgeAfterMs)} chưa có trả lời thì gửi thêm 1 bản tới replica khác, lấy bản về trước, huỷ bản còn lại (chỉ cho thao tác idempotent)`);
   if (p.retries) parts.push(`retry ${p.retries} lần (backoff ${ms(p.backoffMs)}${p.jitter ? ', có jitter' : ''})`);
   if (p.circuitBreaker) {
     const b = p.circuitBreaker;

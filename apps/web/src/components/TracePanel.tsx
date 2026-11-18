@@ -17,6 +17,8 @@ export interface Span {
   node: number;
   attempt: number;
   fireAndForget: boolean;
+  /** Second copy of a slow attempt. */
+  hedge?: boolean;
   waitMs: number;
   send: number;
   arrive?: number;
@@ -48,7 +50,7 @@ export function buildTraces(events: TraceEvent[]): Trace[] {
     const end = evs.find((e) => e.ev === 'end');
     const spans = new Map<number, Span>();
     for (const e of evs) {
-      if (e.ev === 'send') {
+      if (e.ev === 'send' || e.ev === 'hedge') {
         spans.set(e.span, {
           id: e.span,
           parent: e.parent,
@@ -56,6 +58,7 @@ export function buildTraces(events: TraceEvent[]): Trace[] {
           node: e.node,
           attempt: e.attempt,
           fireAndForget: e.fireAndForget,
+          hedge: e.ev === 'hedge',
           waitMs: e.waitMs,
           send: e.tMs,
           depth: 0,
@@ -139,7 +142,11 @@ export function narrate(t: Trace, label: (s: Span) => { from: string; to: string
       const wait = s.waitMs > 0.05 ? `, sau khi chờ kết nối ${fmt.ms(s.waitMs)}` : '';
       lines.push({
         t: s.send,
-        text: s.fireAndForget ? `${from} bắn ${to} rồi đi tiếp, không chờ` : `${from} → ${to}: gửi request${retry}${wait}`,
+        text: s.fireAndForget
+          ? `${from} bắn ${to} rồi đi tiếp, không chờ`
+          : s.hedge
+            ? `${from} → ${to}: chưa có trả lời, gửi thêm bản hedge (lấy bản về trước)`
+            : `${from} → ${to}: gửi request${retry}${wait}`,
       });
     }
     if (s.rejected) lines.push({ t: s.arrive ?? s.send, text: `${to} đầy hàng đợi, từ chối ngay` });
@@ -502,6 +509,7 @@ function Waterfall({
               {to}
               {s.attempt > 0 && <span className="text-warning"> ↻{s.attempt}</span>}
               {s.fireAndForget && <span className="text-violet-300"> ⇢</span>}
+              {s.hedge && <span className="text-sky-300" title="hedged request"> ⧉</span>}
             </div>
             <div className={cn('relative h-5 rounded-sm bg-muted/30', s.ok === false && 'ring-1 ring-destructive/70')}>
               {bar(s.send - s.waitMs, s.send, SEG.pool, 'chờ connection')}

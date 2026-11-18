@@ -35,6 +35,8 @@ export interface NodeConfig {
   costPerHour: number;
   /** Kubernetes HPA-like autoscaling; `instances` is the start count. */
   autoscale?: Autoscale | null;
+  /** Parallel stages: succeed once this many awaited branches did (0 = all). */
+  quorum?: number;
   /** Cache nodes: simulate the keyspace (hit rate emerges) instead of `hitRate`. */
   cache?: CacheModel | null;
 }
@@ -104,6 +106,8 @@ export interface EdgePolicy {
   order?: number;
   /** Do not wait for the answer (emit event, send email). */
   fireAndForget?: boolean;
+  /** Hedged request: send a second copy if no answer after this many ms. */
+  hedgeAfterMs?: number | null;
   requestKb?: number;
   responseKb?: number;
   bandwidthMbps?: number;
@@ -119,6 +123,7 @@ export const DEFAULT_POLICY: EdgePolicy = {
   poolTimeoutMs: 10000,
   order: 0,
   fireAndForget: false,
+  hedgeAfterMs: null,
   requestKb: 0,
   responseKb: 0,
   bandwidthMbps: 1000,
@@ -206,6 +211,8 @@ export interface EdgeWindow {
   retries: number;
   timeouts: number;
   shortCircuits: number;
+  /** Extra copies sent by hedging. */
+  hedges?: number;
   breaker: 'closed' | 'open' | 'halfOpen';
   poolUtilization: number;
   poolWaitMs: number;
@@ -216,7 +223,8 @@ export interface EdgeWindow {
 /** One step of a traced request (crates/engine/src/sim.rs `TraceEvent`). */
 export interface TraceEvent {
   trace: number;
-  ev: 'begin' | 'send' | 'arrive' | 'start' | 'reject' | 'reply' | 'recv' | 'timeout' | 'end';
+  /** `hedge`: a second copy of a slow attempt (edge `hedgeAfterMs`). */
+  ev: 'begin' | 'send' | 'hedge' | 'arrive' | 'start' | 'reject' | 'reply' | 'recv' | 'timeout' | 'end';
   span: number;
   parent: number;
   node: number;

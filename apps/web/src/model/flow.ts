@@ -61,6 +61,7 @@ export function policyOf(e: DesignEdge): EdgePolicy {
     poolTimeoutMs: e.poolTimeoutMs ?? DEFAULT_POLICY.poolTimeoutMs,
     order: e.order ?? 0,
     fireAndForget: e.fireAndForget ?? false,
+    hedgeAfterMs: e.hedgeAfterMs ?? null,
     requestKb: e.requestKb ?? 0,
     responseKb: e.responseKb ?? 0,
     bandwidthMbps: e.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps,
@@ -219,6 +220,7 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       }
       if (p.order) out.order = p.order;
       if (p.fireAndForget) out.fireAndForget = true;
+      if (p.hedgeAfterMs) out.hedgeAfterMs = p.hedgeAfterMs;
       if (p.requestKb) out.requestKb = p.requestKb;
       if (p.responseKb) out.responseKb = p.responseKb;
       if (p.requestKb || p.responseKb) out.bandwidthMbps = p.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps;

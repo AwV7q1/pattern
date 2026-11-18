@@ -30,7 +30,7 @@ WebGPU và Canvas2D vẽ cùng một kiểu. Shader nhận thêm `style` của m
 - **Ký hiệu cách gọi** ở gần đầu nguồn:
   - `⇄`: chọn 1 trong các nhánh (round-robin, như LB)
   - `①②③`: tuần tự, số là bước
-  - `∥`: song song, chờ tất cả
+  - `∥`: song song, chờ tất cả (hoặc chờ `k/n` khi node đặt quorum)
   - `⇢` kèm nét đứt: fire-and-forget
 - **Badge**: timeout, retry, circuit breaker, pool, payload (`↑2KB ↓60KB`), mức bận của đường truyền (`link 87%`).
 

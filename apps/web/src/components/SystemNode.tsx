@@ -71,7 +71,7 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
             {data.kind === 'cache' && !c.cache && ` · hit ${Math.round(c.hitRate * 100)}%`}
             {data.kind === 'cache' && c.cache && m?.cache && ` · hit ${Math.round((m.cache.hits / Math.max(1, m.cache.hits + m.cache.misses)) * 100)}%`}
             {c.routing === 'sequence' && data.kind !== 'loadBalancer' && ' · ①② tuần tự'}
-            {c.routing === 'parallel' && data.kind !== 'loadBalancer' && ' · ∥ song song'}
+            {c.routing === 'parallel' && data.kind !== 'loadBalancer' && (c.quorum ? ` · ∥ quorum ${c.quorum}` : ' · ∥ song song')}
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
             <div

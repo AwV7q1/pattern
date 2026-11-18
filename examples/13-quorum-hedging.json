@@ -1,0 +1,171 @@
+{
+  "title": "Quorum và hedged request: cắt đuôi độ trễ",
+  "description": "API lưu đơn rồi lấy gợi ý sản phẩm (tuần tự). Bước ① ghi song song vào 3 replica: zone A và zone B nhanh, zone C ở region khác nên chậm (40ms) và thỉnh thoảng giật. Đang chờ cả 3 nên mọi request chịu độ trễ của replica chậm nhất. Bước ② gọi Recommendation (4 pod) có đuôi dài: p50 8ms nhưng p99 250ms (GC, cache nguội). Thử: chọn Write coordinator và đặt Quorum = 2 (giống W=2 trong Cassandra/Dynamo); chọn edge API → Recommendation và đặt Hedge sau 25ms. Hedge làm số lời gọi tăng vài %, nên chỉ dùng cho thao tác idempotent.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 220
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Order API",
+        "tech": "nestjs",
+        "position": {
+          "x": 280,
+          "y": 220
+        },
+        "config": {
+          "instances": 3,
+          "concurrency": 400,
+          "queueSize": 200,
+          "latencyP50Ms": 2,
+          "latencyP99Ms": 6,
+          "routing": "sequence",
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "writer",
+        "kind": "service",
+        "label": "Write coordinator",
+        "position": {
+          "x": 580,
+          "y": 80
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 500,
+          "queueSize": 200,
+          "latencyP50Ms": 0.5,
+          "latencyP99Ms": 2,
+          "routing": "parallel",
+          "costPerHour": 0.05
+        }
+      },
+      {
+        "id": "za",
+        "kind": "database",
+        "label": "Replica zone A",
+        "position": {
+          "x": 900,
+          "y": -40
+        },
+        "config": {
+          "concurrency": 200,
+          "queueSize": 300,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 10,
+          "costPerHour": 0.4
+        }
+      },
+      {
+        "id": "zb",
+        "kind": "database",
+        "label": "Replica zone B",
+        "position": {
+          "x": 900,
+          "y": 80
+        },
+        "config": {
+          "concurrency": 200,
+          "queueSize": 300,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 12,
+          "costPerHour": 0.4
+        }
+      },
+      {
+        "id": "zc",
+        "kind": "database",
+        "label": "Replica zone C (region khác)",
+        "position": {
+          "x": 900,
+          "y": 200
+        },
+        "config": {
+          "concurrency": 200,
+          "queueSize": 300,
+          "latencyP50Ms": 40,
+          "latencyP99Ms": 150,
+          "costPerHour": 0.4
+        }
+      },
+      {
+        "id": "reco",
+        "kind": "service",
+        "label": "Recommendation",
+        "position": {
+          "x": 580,
+          "y": 380
+        },
+        "config": {
+          "instances": 4,
+          "concurrency": 200,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 250,
+          "costPerHour": 0.1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api",
+        "latencyMs": 10
+      },
+      {
+        "source": "api",
+        "target": "writer",
+        "latencyMs": 0.5,
+        "timeoutMs": 1000,
+        "order": 1
+      },
+      {
+        "source": "api",
+        "target": "reco",
+        "latencyMs": 0.5,
+        "timeoutMs": 800,
+        "order": 2
+      },
+      {
+        "source": "writer",
+        "target": "za",
+        "latencyMs": 1
+      },
+      {
+        "source": "writer",
+        "target": "zb",
+        "latencyMs": 1.5
+      },
+      {
+        "source": "writer",
+        "target": "zc",
+        "latencyMs": 20
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 13,
+    "durationMs": 60000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1500
+      }
+    ],
+    "slo": {
+      "p99Ms": 150,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000
+  }
+}

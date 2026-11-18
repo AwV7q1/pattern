@@ -125,6 +125,12 @@ enum Ev {
         gen: u32,
         token: u64,
     },
+    /// Hedge timer of the attempt `token` of `call`.
+    Hedge {
+        call: u32,
+        gen: u32,
+        token: u64,
+    },
     Retry {
         call: u32,
         gen: u32,
@@ -315,6 +321,7 @@ struct NodeRt {
     out: Vec<u32>,
     rr: usize,
     routing: Routing,
+    quorum: u32,
     /// `sequence`/`parallel`: edges called at each step (equal `order` together).
     stages: Vec<Vec<u32>>,
     // window accounting
@@ -432,6 +439,7 @@ struct EdgeRt {
     breaker: Option<Breaker>,
     pool: Option<PoolRt>,
     fire_and_forget: bool,
+    hedge: Option<Time>,
     /// Transfer time of a request / response body on the link.
     req_tx: Time,
     res_tx: Time,
@@ -445,6 +453,7 @@ struct EdgeRt {
     w_retries: u64,
     w_timeouts: u64,
     w_short_circuits: u64,
+    w_hedges: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -505,6 +514,13 @@ struct Call {
     pool_since: Time,
     /// Cache miss being fetched for this key (`NO_KEY` otherwise).
     key: u32,
+    /// Token of the hedged copy of the current attempt, 0 if none.
+    hedge: u64,
+    /// The first copy of a hedged attempt failed; the hedge is still out.
+    primary_failed: bool,
+    /// Fork: successes still needed, failures still tolerated (quorum).
+    need: u32,
+    spare: u32,
 }
 
 #[derive(Default)]
@@ -578,6 +594,8 @@ pub struct EdgeWindow {
     pub timeouts: u64,
     /// Calls rejected locally by an open breaker.
     pub short_circuits: u64,
+    /// Extra copies sent by hedging.
+    pub hedges: u64,
     /// `closed`, `open` or `halfOpen` at the end of the window.
     pub breaker: &'static str,
     /// Pooled edges: fraction of connections busy (0..1).
@@ -597,7 +615,8 @@ pub struct EdgeWindow {
 pub struct TraceEvent {
     pub trace: u32,
     /// `begin` (root), `send`, `arrive`, `start` (got a slot), `reject`,
-    /// `reply` (callee answers), `recv` (caller got it), `timeout`, `end`.
+    /// `reply` (callee answers), `recv` (caller got it), `timeout`, `end`,
+    /// `hedge` (second copy of a slow attempt, shaped like `send`).
     pub ev: &'static str,
     pub span: u64,
     /// Span of the caller (0 for the root).
@@ -874,6 +893,7 @@ impl Simulation {
                     down: false,
                     out: Vec::new(),
                     rr: 0,
+                    quorum: c.quorum,
                     routing: match n.kind {
                         NodeKind::Client | NodeKind::LoadBalancer => Routing::Pick,
                         _ => c.routing,
@@ -944,6 +964,7 @@ impl Simulation {
                 }),
                 pool,
                 fire_and_forget: e.fire_and_forget,
+                hedge: e.hedge_after_ms.filter(|h| *h > 0.0).map(ms_to_us),
                 req_tx: transfer_us(e.request_kb, e.bandwidth_mbps),
                 res_tx: transfer_us(e.response_kb, e.bandwidth_mbps),
                 req_free: 0,
@@ -954,6 +975,7 @@ impl Simulation {
                 w_retries: 0,
                 w_timeouts: 0,
                 w_short_circuits: 0,
+                w_hedges: 0,
             });
         }
         for n in nodes.iter_mut().filter(|n| n.routing != Routing::Pick) {
@@ -1422,6 +1444,10 @@ impl Simulation {
                     span: 0,
                     pool_since: 0,
                     key: NO_KEY,
+                    hedge: 0,
+                    primary_failed: false,
+                    need: 0,
+                    spare: 0,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -1449,6 +1475,10 @@ impl Simulation {
         c.span = token;
         c.pool_since = 0;
         c.key = NO_KEY;
+        c.hedge = 0;
+        c.primary_failed = false;
+        c.need = 0;
+        c.spare = 0;
         id
     }
 
@@ -1514,6 +1544,7 @@ impl Simulation {
             Ev::PoolTimeout { call, gen, token } => self.on_pool_timeout(call, gen, token),
             Ev::GcDone { node, inst } => self.release_lane(node, inst as usize),
             Ev::Timeout { call, gen, token } => self.on_timeout(call, gen, token),
+            Ev::Hedge { call, gen, token } => self.on_hedge(call, gen, token),
             Ev::Retry { call, gen } => {
                 if self.live(call, gen) {
                     self.send_or_give_up(call);
@@ -1844,9 +1875,13 @@ impl Simulation {
             c.span = span;
             self.send_or_give_up(b);
         }
+        let quorum = self.nodes[node as usize].quorum;
+        let need = if quorum > 0 { quorum.min(awaited) } else { awaited };
         let c = &mut self.calls[call as usize];
         c.fork = fork;
         c.pending = awaited;
+        c.need = need;
+        c.spare = awaited - need;
         if awaited == 0 {
             c.fork = 0;
             self.downstream_ok(call);
@@ -1858,13 +1893,19 @@ impl Simulation {
             return; // the fork already failed fast
         }
         let c = &mut self.calls[call as usize];
+        c.pending -= 1;
         if !ok {
+            if c.spare > 0 {
+                c.spare -= 1; // the quorum can still be reached
+                return;
+            }
             c.fork = 0;
             self.downstream_done(call, false);
             return;
         }
-        c.pending -= 1;
-        if c.pending == 0 {
+        c.need -= 1;
+        if c.need == 0 {
+            // quorum reached: late branches are ignored (they keep running)
             c.fork = 0;
             self.downstream_ok(call);
         }
@@ -2087,6 +2128,13 @@ impl Simulation {
         let token = self.calls[child as usize].token;
         let child_gen = self.calls[child as usize].gen;
         self.calls[call as usize].waiting = token;
+        self.calls[call as usize].hedge = 0;
+        self.calls[call as usize].primary_failed = false;
+        if let Some(h) = self.edges[edge as usize].hedge {
+            if timeout.is_none_or(|t| h < t) {
+                self.schedule(self.now + h, Ev::Hedge { call, gen, token });
+            }
+        }
         let (trace, span, since) = {
             let c = &mut self.calls[call as usize];
             let since = std::mem::take(&mut c.pool_since);
@@ -2167,11 +2215,32 @@ impl Simulation {
     }
 
     fn on_response(&mut self, call: u32, gen: u32, token: u64, ok: bool) {
-        if !self.live(call, gen) || self.calls[call as usize].waiting != token {
+        if !self.live(call, gen) || token == 0 {
+            return;
+        }
+        let c = &self.calls[call as usize];
+        let primary = token == c.waiting && !c.primary_failed;
+        let hedged = token == c.hedge;
+        if !primary && !hedged {
             return; // caller already gave up on this attempt
         }
-        let edge = self.calls[call as usize].out_edge;
-        self.calls[call as usize].waiting = 0;
+        let edge = c.out_edge;
+        let other_out = if primary { c.hedge != 0 } else { c.waiting != 0 && !c.primary_failed };
+        if !ok && other_out {
+            // one copy failed, the other is still out: wait for it
+            self.breaker_record(edge, false);
+            let c = &mut self.calls[call as usize];
+            if primary {
+                c.primary_failed = true; // `waiting` stays: the attempt timeout still applies
+            } else {
+                c.hedge = 0;
+            }
+            return;
+        }
+        let c = &mut self.calls[call as usize];
+        c.waiting = 0;
+        c.hedge = 0;
+        c.primary_failed = false;
         let span = self.calls[call as usize].span;
         self.record(call, "recv", token, span, edge, ok, 0);
         self.breaker_record(edge, ok);
@@ -2183,12 +2252,56 @@ impl Simulation {
         }
     }
 
+    /// Still no answer: send a second copy of the attempt over the same edge
+    /// (the next replica takes it), if a pooled connection is free.
+    fn on_hedge(&mut self, call: u32, gen: u32, token: u64) {
+        if !self.live(call, gen) {
+            return;
+        }
+        let c = &self.calls[call as usize];
+        if c.waiting != token || c.hedge != 0 || c.primary_failed {
+            return; // answered, timed out or already hedged
+        }
+        let edge = c.out_edge;
+        let start_t = c.start;
+        if let Some(pool) = self.edges[edge as usize].pool.as_mut() {
+            if pool.busy >= pool.cap {
+                return; // no spare connection: hedging would only queue
+            }
+            pool.account(self.now);
+            pool.busy += 1;
+        }
+        let to = {
+            let e = &mut self.edges[edge as usize];
+            e.w_calls += 1;
+            e.w_hedges += 1;
+            e.to
+        };
+        let lat = self.link_delay(edge, false);
+        let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
+        let (child_token, child_gen) = (self.calls[child as usize].token, self.calls[child as usize].gen);
+        self.calls[call as usize].hedge = child_token;
+        let trace = self.calls[call as usize].trace;
+        self.calls[child as usize].trace = trace;
+        if trace != 0 {
+            let span = self.calls[call as usize].span;
+            self.record(call, "hedge", child_token, span, edge, true, 0);
+            if let Some(ev) = self.traces.last_mut() {
+                ev.node = to;
+            }
+        }
+        self.schedule(self.now + lat, Ev::Arrive { call: child, gen: child_gen });
+        self.emit(edge, lat, PARTICLE_RETRY, trace != 0);
+    }
+
     fn on_timeout(&mut self, call: u32, gen: u32, token: u64) {
         if !self.live(call, gen) || self.calls[call as usize].waiting != token {
             return;
         }
         let edge = self.calls[call as usize].out_edge;
         self.calls[call as usize].waiting = 0;
+        self.calls[call as usize].hedge = 0;
+        self.calls[call as usize].primary_failed = false;
         self.calls[call as usize].last_timeout = true;
         let span = self.calls[call as usize].span;
         self.record(call, "timeout", token, span, edge, false, 0);
@@ -2420,6 +2533,7 @@ impl Simulation {
                         retries: e.w_retries,
                         timeouts: e.w_timeouts,
                         short_circuits: e.w_short_circuits,
+                        hedges: e.w_hedges,
                         breaker,
                         pool_utilization,
                         pool_wait_ms,
@@ -2431,6 +2545,7 @@ impl Simulation {
                     e.w_req_busy = 0.0;
                     e.w_res_busy = 0.0;
                     e.w_calls = 0;
+                    e.w_hedges = 0;
                     e.w_retries = 0;
                     e.w_timeouts = 0;
                     e.w_short_circuits = 0;
@@ -2876,6 +2991,131 @@ mod tests {
         plain.design.nodes[1].config.hit_rate = 0.9;
         let (ws, _) = instance_series(&plain);
         assert!(ws[5].nodes[1].cache.is_none());
+    }
+
+    /// API writes to 3 replicas in parallel; `slow` is 20× slower.
+    fn replicated(quorum: u32) -> SimInput {
+        let replica = |ms: f64| NodeConfig {
+            concurrency: 500,
+            queue_size: 500,
+            latency_p50_ms: ms,
+            latency_p99_ms: ms,
+            ..NodeConfig::default()
+        };
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "api",
+                        NodeKind::Service,
+                        NodeConfig {
+                            concurrency: 2000,
+                            latency_p50_ms: 1.0,
+                            latency_p99_ms: 1.0,
+                            routing: Routing::Parallel,
+                            quorum,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                    node("r1", NodeKind::Database, replica(5.0)),
+                    node("r2", NodeKind::Database, replica(6.0)),
+                    node("slow", NodeKind::Database, replica(100.0)),
+                ],
+                edges: vec![edge("c", "api"), edge("api", "r1"), edge("api", "r2"), edge("api", "slow")],
+            },
+            scenario: scenario(500.0, 20_000.0),
+        }
+    }
+
+    #[test]
+    fn quorum_answers_with_the_fastest_majority_and_tolerates_a_dead_replica() {
+        let all = run(&replicated(0));
+        let two = run(&replicated(2));
+        // waiting for all 3 replicas means waiting for the slowest one
+        assert!(all.p50_ms > 100.0, "all: {}", all.p50_ms);
+        // W=2 of 3: the two fast replicas answer
+        assert!(two.p99_ms < 20.0, "quorum: {}", two.p99_ms);
+        assert_eq!(two.errors, 0);
+
+        // the slow replica goes down at 5 s: all-of-3 fails, 2-of-3 does not notice
+        let down = |q: u32| {
+            let mut input = replicated(q);
+            input.scenario.events = vec![ChaosEvent { at_ms: 5_000.0, node: "slow".into(), action: ChaosAction::Down, value: 0.0 }];
+            run(&input)
+        };
+        assert!(down(0).error_rate > 0.7, "every write fails without quorum");
+        assert_eq!(down(2).errors, 0);
+        // 2 of 3 with two dead replicas fails
+        let mut two_dead = replicated(2);
+        two_dead.scenario.events = vec![
+            ChaosEvent { at_ms: 0.0, node: "slow".into(), action: ChaosAction::Down, value: 0.0 },
+            ChaosEvent { at_ms: 0.0, node: "r2".into(), action: ChaosAction::Down, value: 0.0 },
+        ];
+        assert!(run(&two_dead).error_rate > 0.99);
+    }
+
+    /// API → 4 replicas behind one edge, long-tail latency (p50 10 ms, p99 200 ms).
+    fn tail(hedge_after_ms: Option<f64>) -> SimInput {
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "api",
+                        NodeKind::Service,
+                        NodeConfig { concurrency: 2000, latency_p50_ms: 1.0, latency_p99_ms: 1.0, ..NodeConfig::default() },
+                    ),
+                    node(
+                        "svc",
+                        NodeKind::Service,
+                        NodeConfig {
+                            instances: 4,
+                            concurrency: 500,
+                            queue_size: 500,
+                            latency_p50_ms: 10.0,
+                            latency_p99_ms: 200.0,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                ],
+                edges: vec![edge("c", "api"), EdgeSpec { hedge_after_ms, timeout_ms: Some(1000.0), ..edge("api", "svc") }],
+            },
+            scenario: scenario(400.0, 30_000.0),
+        }
+    }
+
+    #[test]
+    fn hedging_cuts_the_tail_for_a_few_percent_more_calls() {
+        let (plain_ws, plain) = instance_series(&tail(None));
+        let (hedged_ws, hedged) = instance_series(&tail(Some(40.0)));
+        assert!(plain.p99_ms > 150.0, "long tail: {}", plain.p99_ms);
+        // a second copy after 40 ms (≈ p90) usually beats a slow first one
+        assert!(hedged.p99_ms < plain.p99_ms * 0.6, "{} vs {}", hedged.p99_ms, plain.p99_ms);
+        assert!((hedged.p50_ms - plain.p50_ms).abs() < 2.0, "the median is untouched");
+        let sent = |ws: &[WindowMetrics]| ws.iter().map(|w| w.edges[1].calls).sum::<f64>();
+        let hedges: u64 = hedged_ws.iter().map(|w| w.edges[1].hedges).sum();
+        let extra = sent(&hedged_ws) / sent(&plain_ws) - 1.0;
+        assert!(hedges > 0 && extra > 0.03 && extra < 0.2, "extra load {:.1}%", extra * 100.0);
+        assert_eq!(hedged.errors, 0);
+    }
+
+    #[test]
+    fn a_hedge_rescues_an_attempt_whose_first_copy_failed() {
+        // half the replicas' answers are errors; the hedge covers a failed first copy
+        let flaky = |hedge: Option<f64>| {
+            let mut input = tail(hedge);
+            let svc = &mut input.design.nodes[2].config;
+            svc.latency_p50_ms = 50.0;
+            svc.latency_p99_ms = 50.0;
+            svc.error_rate = 0.3;
+            run(&input)
+        };
+        let plain = flaky(None);
+        let hedged = flaky(Some(10.0));
+        assert!(plain.error_rate > 0.25);
+        // both copies must fail now: ~0.3² ≈ 9 %
+        assert!(hedged.error_rate < 0.15 && hedged.error_rate > 0.04, "{}", hedged.error_rate);
     }
 
     #[test]

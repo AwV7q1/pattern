@@ -516,6 +516,30 @@ const check = (name, ok, detail = '') => {
   }
   await page.getByRole('button', { name: 'Dừng' }).click();
   check('keyspace cache: hit rate measured, Flush makes it cold', keyspaceOn && warmHit >= 90 && coldHit >= 0 && coldHit < warmHit - 10, `${warmHit}% -> ${coldHit}%`);
+  // 12g. quorum: set 2-of-3 on the write coordinator, the card and the saved design follow
+  await openTemplate('Quorum và hedged request: cắt đuôi độ trễ');
+  await page.locator('.react-flow__node', { hasText: 'Write coordinator' }).first().click();
+  await page.getByRole('tab', { name: 'Thuộc tính' }).click();
+  const quorumInput = page.getByText(/^Quorum \(cần k \/ 3 nhánh\)$/).locator('xpath=..').locator('input');
+  await quorumInput.fill('2');
+  const applyQ = page.getByRole('button', { name: 'Áp dụng và chạy lại' }).first();
+  if (await applyQ.isVisible().catch(() => false)) await applyQ.click();
+  await page.locator('.react-flow__node', { hasText: 'quorum 2' }).first().waitFor({ timeout: 5000 });
+  await page.getByText('Đã lưu', { exact: true }).waitFor({ timeout: 15000 });
+  const storedQuorum = await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const req = indexedDB.open('pattern-studio');
+        req.onsuccess = () => {
+          const all = req.result.transaction('projects').objectStore('projects').getAll();
+          all.onsuccess = () => {
+            const p = all.result.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+            resolve(p.design.nodes.find((n) => n.id === 'writer')?.config?.quorum);
+          };
+        };
+      }),
+  );
+  check('quorum is set from the inspector, shown on the card and saved', storedQuorum === 2, String(storedQuorum));
   await openTemplate('Không cache: DB là nút thắt');
 
   // 13. share link: snapshot on the server, opened as a separate local project

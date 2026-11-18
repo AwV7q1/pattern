@@ -17,6 +17,8 @@ import {
   Info,
   Layers,
   ListOrdered,
+  CopyPlus,
+  Users,
   Eraser,
   KeyRound,
   Shuffle,
@@ -263,14 +265,27 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
   const editable = !node.locked;
   const canRoute = outDegree > 1 && node.kind !== 'client' && node.kind !== 'loadBalancer';
   const routing = canRoute && (
-    <RoutingField
-      value={draft.routing ?? 'pick'}
-      onChange={(r) => {
-        const next = { ...draft, routing: r };
-        setDraft(next);
-        if (game) onChange(next, label);
-      }}
-    />
+    <>
+      <RoutingField
+        value={draft.routing ?? 'pick'}
+        onChange={(r) => {
+          const next = { ...draft, routing: r };
+          setDraft(next);
+          if (game) onChange(next, label);
+        }}
+      />
+      {!game && draft.routing === 'parallel' && (
+        <div className="grid grid-cols-2 gap-x-3">
+          <NumberField
+            label={`Quorum (cần k / ${outDegree} nhánh)`}
+            icon={Users}
+            value={draft.quorum ?? 0}
+            onChange={(v) => setDraft({ ...draft, quorum: Math.max(0, Math.min(outDegree, Math.round(v))) || undefined })}
+            hint={draft.quorum ? `trả lời khi ${draft.quorum} nhánh thành công, chịu được ${outDegree - draft.quorum} nhánh lỗi/chậm` : '0 = chờ tất cả'}
+          />
+        </div>
+      )}
+    </>
   );
 
   return (
@@ -573,6 +588,16 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
           value={p.timeoutMs ?? 0}
           onChange={(v) => setP({ ...p, timeoutMs: v > 0 ? v : null })}
         />
+        {!game && (
+          <NumberField
+            label="Hedge sau (ms, 0 = tắt)"
+            icon={CopyPlus}
+            step={10}
+            value={p.hedgeAfterMs ?? 0}
+            onChange={(v) => setP({ ...p, hedgeAfterMs: v > 0 ? v : null })}
+            hint={p.hedgeAfterMs ? 'quá hạn này thì gửi thêm 1 bản, lấy bản về trước' : undefined}
+          />
+        )}
         <NumberField
           label="Số lần retry"
           icon={Repeat2}

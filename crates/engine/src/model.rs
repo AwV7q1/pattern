@@ -115,6 +115,11 @@ pub struct NodeConfig {
     pub error_rate: f64,
     /// Cache hit ratio (0..1), only used by `cache` nodes without `cache`.
     pub hit_rate: f64,
+    /// `parallel` / same-order `sequence` stages: answer once this many awaited
+    /// branches succeeded (replicated write W=2 of 3, quorum read); the rest
+    /// may fail or lag. 0 = all of them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub quorum: u32,
     /// `cache` nodes: simulate the keyspace instead of a fixed `hit_rate`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache: Option<CacheModel>,
@@ -198,6 +203,10 @@ pub struct Autoscale {
     pub target_queue_length: f64,
 }
 
+fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
 fn is_default_metric(m: &ScaleMetric) -> bool {
     *m == ScaleMetric::Utilization
 }
@@ -245,6 +254,7 @@ impl Default for NodeConfig {
             hit_rate: 0.0,
             cost_per_hour: 0.0,
             autoscale: None,
+            quorum: 0,
             cache: None,
         }
     }
@@ -339,6 +349,11 @@ pub struct EdgeSpec {
     pub fire_and_forget: bool,
     /// Request and response body sizes in KB. With `bandwidthMbps` they add
     /// a transfer time, and big bodies queue behind each other on the link.
+    /// Hedged request: no answer after this many ms → send one more copy
+    /// (to the next replica) and take whichever answers first. Both copies
+    /// share the attempt's timeout and keep the callee busy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hedge_after_ms: Option<f64>,
     #[serde(default)]
     pub request_kb: f64,
     #[serde(default)]
@@ -371,6 +386,7 @@ impl EdgeSpec {
             pool_timeout_ms: default_pool_timeout(),
             order: 0,
             fire_and_forget: false,
+            hedge_after_ms: None,
             request_kb: 0.0,
             response_kb: 0.0,
             bandwidth_mbps: default_bandwidth(),

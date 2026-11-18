@@ -43,12 +43,14 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
      - `pick` (mặc định, luôn dùng cho client và LB): mỗi lời gọi chọn một edge, round-robin.
      - `sequence`: gọi mọi edge theo `order` tăng dần. Các edge cùng `order` chạy cùng lúc.
      - `parallel`: gọi tất cả cùng lúc và chờ đủ. Một nhánh lỗi thì cả bước lỗi ngay (fail fast như `Promise.all`), các nhánh còn lại vẫn chạy tiếp ở phía dưới.
+     - `quorum: k` trên node (áp dụng cho mỗi nhóm song song, kể cả các edge cùng `order` trong `sequence`): bước thành công khi đủ k nhánh thành công, và chỉ lỗi khi số nhánh lỗi vượt quá n − k. Nhánh về muộn bị bỏ qua nhưng vẫn chạy tiếp ở phía dưới. Ví dụ W=2/3 như Cassandra, Dynamo hay Raft.
 
      Mỗi nhánh là một "branch call" riêng, áp đúng timeout, retry, pool và circuit breaker của edge đó. Edge `fireAndForget` không được chờ, kết quả của nó tính vào `async`.
    - Payload: `requestKb`/`responseKb` cộng thêm thời gian truyền `KB × 8 / Mbps`. Mỗi chiều của edge là một đường truyền FIFO, body sau phải chờ body trước truyền xong.
 4. Phía caller của edge:
    - **Timeout**: caller bỏ cuộc, nhưng callee *vẫn tiếp tục làm* (lãng phí tài nguyên y như thật).
    - **Retry** sau `backoff × 2ⁿ⁻¹` (có jitter). Round-robin nên lần retry có thể rơi vào backend khác.
+   - **Hedged request** (`hedgeAfterMs` trên edge): quá thời gian này mà lần gọi chưa có trả lời thì gửi thêm *một* bản qua cùng edge (round-robin nên rơi vào replica khác), rồi lấy bản về trước. Bản thua vẫn chiếm callee (và kết nối pool nếu có) cho tới khi xong. Một bản lỗi trong khi bản kia còn đang chạy thì chờ bản kia. Cả hai dùng chung timeout của lần thử, và pool hết kết nối thì không hedge. `EdgeWindow.hedges` đếm số bản gửi thêm, trace có sự kiện `hedge`. Đặt quanh p90–p95 thì đuôi giảm mạnh mà chỉ tốn thêm vài % lời gọi (test `hedging_cuts_the_tail_for_a_few_percent_more_calls`, mẫu `examples/13-quorum-hedging.json`).
    - **Circuit breaker**: đếm lỗi trong cửa sổ trượt. Vượt ngưỡng thì mở và trả lỗi ngay. Hết `openMs` thì cho một probe qua (half-open).
 5. **Response** đi ngược lại từng edge. Về tới client thì ghi nhận.
 6. **Queue** trả ack cho bên gửi ngay, sau đó message chạy tiếp như một luồng bất đồng bộ riêng.
@@ -118,7 +120,7 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 ## 5. Những gì CHƯA mô phỏng
 
 - Cold start của từng request (JIT). Cache nguội đã có (mục 2.8). Autoscaling đã có (mục 2.7), theo utilization hoặc độ dài queue (KEDA), chưa có custom metric khác (RPS, latency) hay scale về 0. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
-- Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
+- Gọi song song có điều kiện (gọi B chỉ khi A trả về X) chưa có. Hedged request chỉ gửi tối đa một bản thêm cho mỗi lần thử, và không huỷ bản thua ở phía callee.
 - Cache keyspace không có giới hạn bộ nhớ hay eviction LRU/LFU: key chỉ mất khi hết TTL, flush hoặc restart. Ghi (write-through, invalidation khi update) chưa được mô phỏng.
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
 
