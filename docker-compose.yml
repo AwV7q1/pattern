@@ -1,0 +1,25 @@
+# PostgreSQL for the Pattern server (local development and a single VPS).
+#   pnpm db:up        start it
+#   pnpm db:migrate   apply the schema
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pattern
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pattern}
+      POSTGRES_DB: pattern
+    ports:
+      # only on this machine; the server connects through localhost
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./apps/server/prisma/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pattern"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

@@ -1,0 +1,162 @@
+// PostgreSQL schema of the Pattern server. One VPS, a handful of users: the
+// design favours clarity and standard building blocks (server-side sessions,
+// provider identities ready for OIDC/SSO) over scale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  user
+}
+
+model User {
+  id          String             @id @default(uuid()) @db.Uuid
+  email       String             @unique
+  displayName String
+  role        Role               @default(user)
+  createdAt   DateTime           @default(now())
+  identities  Identity[]
+  sessions    Session[]
+  projects    Project[]
+  levels      Level[]
+  scores      LeaderboardEntry[]
+  attempts    InterviewAttempt[]
+}
+
+/// How a user signs in. `local` = email + password; SSO adds `oidc:<name>`
+/// rows (subject = the provider's `sub`) without touching `User`.
+model Identity {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String
+  subject      String
+  passwordHash String?
+  createdAt    DateTime  @default(now())
+  lastUsedAt   DateTime?
+
+  @@unique([provider, subject])
+  @@index([userId])
+}
+
+/// Server-side session; the cookie holds a random token, only its SHA-256
+/// is stored here so a database leak does not leak live sessions.
+model Session {
+  id         String   @id
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  userAgent  String?
+  ip         String?
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Studio project. `id` is created by the browser (it works offline first);
+/// `rev` is bumped by the server on every write for conflict detection.
+model Project {
+  id          String           @id @db.Uuid
+  ownerId     String           @db.Uuid
+  owner       User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name        String
+  description String           @default("")
+  notes       String           @default("")
+  design      Json
+  scenario    Json
+  source      String?
+  lastRun     Json?
+  rev         Int              @default(1)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @default(now())
+  deletedAt   DateTime?
+  versions    ProjectVersion[]
+  shares      Share[]
+
+  @@index([ownerId, updatedAt])
+}
+
+model ProjectVersion {
+  id        String   @id @db.Uuid
+  projectId String   @db.Uuid
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  at        DateTime
+  label     String?
+  auto      Boolean  @default(true)
+  name      String
+  notes     String   @default("")
+  design    Json
+  scenario  Json
+
+  @@index([projectId, at])
+}
+
+/// Read-only link `/s/:slug`. `snapshot` set = frozen copy; null = follows
+/// the latest saved project.
+model Share {
+  slug      String    @id
+  projectId String    @db.Uuid
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshot  Json?
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+  views     Int       @default(0)
+
+  @@index([projectId])
+}
+
+/// Community level (`u/<slug>`). Official levels stay JSON files in the repo.
+model Level {
+  id        String   @id
+  authorId  String   @db.Uuid
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title     String
+  json      Json
+  /// Reference solution, never sent to players.
+  solution  Json
+  published Boolean  @default(false)
+  hidden    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([published, hidden])
+}
+
+/// Best score of each user on each level (official or community).
+model LeaderboardEntry {
+  levelId     String
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stars       Int
+  costPerHour Float
+  p99Ms       Float
+  errorRate   Float
+  design      Json
+  submittedAt DateTime @default(now())
+
+  @@id([levelId, userId])
+  @@index([levelId, stars])
+}
+
+model InterviewAttempt {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promptId   String
+  design     Json
+  score      Json
+  total      Int
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([userId, promptId])
+}

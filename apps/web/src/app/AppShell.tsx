@@ -9,6 +9,7 @@ import { NAV, type NavItem } from './nav';
 import { useUi } from './ui-store';
 import { CommandPalette } from './CommandPalette';
 import { AccountBadge } from './AccountBadge';
+import { useAuth } from './auth-store';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -122,6 +123,14 @@ function Sidebar() {
 /** Layout of every page: sidebar, page content, command palette and global dialogs. */
 export function AppShell() {
   const setCommandOpen = useUi((s) => s.setCommandOpen);
+  const refreshAuth = useAuth((s) => s.refresh);
+  useEffect(() => {
+    void refreshAuth();
+    // signed in or out in another tab
+    const onFocus = () => void refreshAuth();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshAuth]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {

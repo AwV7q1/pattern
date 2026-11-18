@@ -10,6 +10,9 @@
     "sim": "cargo run -q --release -p pattern-sim --",
     "test:gpu": "node apps/web/scripts/gpu-smoke.cjs",
     "dev:server": "pnpm --filter server dev",
-    "check:learn": "node --experimental-strip-types apps/web/scripts/check-curriculum.mjs"
+    "check:learn": "node --experimental-strip-types apps/web/scripts/check-curriculum.mjs",
+    "db:up": "docker compose up -d db",
+    "db:migrate": "pnpm --filter server db:migrate",
+    "user:create": "pnpm --filter server cli create-user"
   }
 }

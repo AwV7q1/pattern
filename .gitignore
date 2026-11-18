@@ -7,3 +7,4 @@ pkg/
 *.tsbuildinfo
 pkg-node
 apps/server/data
+apps/server/.env

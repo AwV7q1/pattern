@@ -4,6 +4,8 @@ import { LearnRoute } from '@/pages/LearnRoute';
 import { GameRoute, PlayHome } from '@/pages/GameRoute';
 import { StudioHome, StudioProjectRoute } from '@/pages/StudioRoutes';
 import { CapacityRoute, CasesRoute, LibraryRoute, NotFound } from '@/pages/MiscRoutes';
+import { LoginPage } from '@/pages/LoginPage';
+import { AccountPage } from '@/pages/AccountPage';
 
 export const router = createBrowserRouter([
   {
@@ -20,6 +22,8 @@ export const router = createBrowserRouter([
       { path: 'library', element: <LibraryRoute /> },
       { path: 'capacity', element: <Navigate to="/capacity/sizing" replace /> },
       { path: 'capacity/:tab', element: <CapacityRoute /> },
+      { path: 'login', element: <LoginPage /> },
+      { path: 'account', element: <AccountPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

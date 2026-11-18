@@ -20,6 +20,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 > Các con số được tạo ra thế nào, giả định gì, chưa mô phỏng gì: xem **[docs/SIMULATION.md](docs/SIMULATION.md)**.
 > Đo hệ thống thật, hiệu chỉnh mô hình, chọn server: **[docs/CAPACITY.md](docs/CAPACITY.md)**.
+> Server, PostgreSQL, tài khoản, deploy lên một VPS: **[docs/SERVER.md](docs/SERVER.md)**.
 
 ## Tính năng
 
@@ -42,7 +43,8 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
   - Kubernetes: khung Cluster/Namespace/Node pool/Zone, autoscale kiểu HPA trong engine (pod khởi động trễ, ổn định khi giảm).
   - Case study đơn giản hoá từ bài viết công khai của Discord, Slack, Netflix, Twitter, Stack Overflow, Figma.
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
-- **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
+- **Leaderboard**: NestJS chạy lại đúng engine WASM (trong worker pool) để chấm. Client chỉ gửi design, scenario do server giữ. Cần đăng nhập, tên trên bảng là tên tài khoản.
+- **Tài khoản**: PostgreSQL + Prisma, email/mật khẩu (argon2id), session lưu ở server, chống CSRF, giới hạn tốc độ, sẵn sàng thêm SSO/OIDC. Xem [docs/SERVER.md](docs/SERVER.md).
 - **Công suất**:
   - Sizing wizard: tải mục tiêu cộng chi phí mỗi request đo được, cho ra số vCPU, RAM, pool, gói VPS. Kết quả được kiểm chứng bằng mô phỏng ở các kịch bản cao điểm, đột biến, mất 1 server và DB chậm.
   - Hiệu chỉnh từ kết quả k6: fit tham số để mô phỏng khớp số đo, rồi dự đoán giới hạn chịu tải.
@@ -70,7 +72,8 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `case-studies/*.json` | Case study: bối cảnh, quyết định, các giai đoạn design + scenario |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
 | `apps/web` | React 19 + shadcn/ui (Tailwind v4, Radix) + React Flow + WebGPU |
-| `apps/server` | NestJS 11: `GET /api/levels`, `POST /api/levels/:id/submit`, `GET /api/levels/:id/leaderboard` |
+| `apps/server` | NestJS 11 + Prisma/PostgreSQL: auth, levels, leaderboard, health; engine trong worker pool |
+| `packages/design-lint` | Bộ luật kiểm tra design và chấm phỏng vấn, dùng chung web và server |
 
 ## Chạy
 
@@ -82,7 +85,8 @@ cargo install wasm-pack
 
 pnpm build:wasm          # engine → WASM cho web (pkg) và Node (pkg-node)
 pnpm install
-pnpm dev:server          # NestJS http://localhost:3000/api (leaderboard)
+pnpm db:up && pnpm db:migrate   # PostgreSQL (Docker) + schema, xem docs/SERVER.md
+pnpm dev:server          # NestJS http://localhost:3000/api (tài khoản, đồng bộ, leaderboard)
 pnpm dev                 # http://localhost:5173 (proxy /api → 3000)
 
 pnpm sim examples/*.json                                   # so sánh pattern

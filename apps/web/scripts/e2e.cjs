@@ -141,9 +141,34 @@ const check = (name, ok, detail = '') => {
   await shot('4-result-win');
   await dialog.getByRole('button', { name: 'Đóng' }).first().click();
 
-  // 6. leaderboard (server re-scores the design)
-  await page.getByPlaceholder('Tên của bạn').fill('e2e-bot');
-  await page.getByRole('button', { name: 'Gửi' }).click();
+  // 6. leaderboard (server re-scores the design): sign in through the API
+  //    (E2E_EMAIL / E2E_PASSWORD, an account made with `pnpm --filter server cli create-user`)
+  const login = await page.evaluate(
+    async ([email, password]) =>
+      (await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-requested-with': 'pattern' },
+        body: JSON.stringify({ email, password }),
+      })).status,
+    [process.env.E2E_EMAIL ?? 'admin@example.com', process.env.E2E_PASSWORD ?? 'admin-pass-123'],
+  );
+  check('signs in for the leaderboard', login === 200, `HTTP ${login}`);
+  await page.goto(`${URL}/play/01-first-sale`); // fresh load picks up the session
+  await page.waitForSelector('.react-flow__node', { hasText: 'PostgreSQL' });
+  await page.getByText('Cache', { exact: true }).dragTo(pane, { targetPosition: { x: box.width * 0.55, y: box.height * 0.75 } });
+  await page.waitForTimeout(300);
+  const mid2 = await page.evaluate(() => {
+    const path = document.querySelectorAll('.react-flow__edge-interaction')[1];
+    const p = path.getPointAtLength(path.getTotalLength() / 2);
+    const m = path.getScreenCTM();
+    return { x: p.x * m.a + m.e, y: p.y * m.d + m.f };
+  });
+  await page.mouse.click(mid2.x, mid2.y);
+  await page.keyboard.press('Delete');
+  await connect('API', 'Cache');
+  await connect('Cache', 'PostgreSQL');
+  await page.getByRole('tab', { name: 'Level' }).click();
+  await page.getByRole('button', { name: 'Gửi điểm' }).click();
   const status = page.getByText(/Server chấm|Không kết nối|Lỗi/);
   await status.waitFor({ timeout: 10000 });
   const text = await status.textContent();
