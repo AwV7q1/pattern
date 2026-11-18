@@ -300,7 +300,10 @@ export function Workspace(props: WorkspaceProps) {
   const saved = useRef({ design: '', notes: '' });
   const lastVersionAt = useRef(0);
   const flushSave = useRef<(() => void) | null>(null);
-  projectRef.current = project;
+  // `projectRef` is NOT synced from `project` on render: saves set it to the
+  // new copy before writing, and a render in between (e.g. "Đang lưu…") would
+  // put the stale copy back and make this tab's own write look like a conflict.
+  // Every `setProject` call updates the ref itself.
 
   const showFlash = (text: string) => {
     setFlash(text);

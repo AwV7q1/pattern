@@ -17,16 +17,26 @@ export function useUndo(key: string | null, json: string | null, apply: (json: s
   const applying = useRef(false);
   const [, rerender] = useState(0);
   const bump = () => rerender((x) => x + 1);
+  const [epoch, setEpoch] = useState(0);
 
-  /** Forget everything: the next `json` is the new starting point. */
+  /** Forget everything: the canvas after the next render is the new starting point. */
   const reset = useCallback(() => {
     past.current = [];
     future.current = [];
     stable.current = null;
     applying.current = false;
-    bump();
+    setEpoch((e) => e + 1);
   }, []);
   useEffect(reset, [key, reset]);
+
+  const latest = useRef(json);
+  latest.current = json;
+
+  // a reload with an identical design does not change `json`, so the effect
+  // below would not run and the first edit would become the starting point
+  useEffect(() => {
+    if (stable.current === null && latest.current !== null) stable.current = latest.current;
+  }, [epoch]);
 
   const record = useCallback((next: string) => {
     if (stable.current !== null && next !== stable.current) {
@@ -48,9 +58,6 @@ export function useUndo(key: string | null, json: string | null, apply: (json: s
     const t = setTimeout(() => record(json), SETTLE_MS);
     return () => clearTimeout(t);
   }, [json, record]);
-
-  const latest = useRef(json);
-  latest.current = json;
 
   const go = useCallback(
     (from: React.MutableRefObject<string[]>, to: React.MutableRefObject<string[]>) => {
