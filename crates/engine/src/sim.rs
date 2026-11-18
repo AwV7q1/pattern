@@ -32,6 +32,7 @@ use std::collections::{BinaryHeap, HashMap, VecDeque};
 
 use serde::Serialize;
 
+use crate::cache::{CacheRt, Lookup};
 use crate::histogram::Histogram;
 use crate::model::{
     Arrival, Autoscale, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
@@ -45,6 +46,8 @@ const Z99: f64 = 2.326_347_874; // z-score of the 99th percentile
 const MAX_LATENCY_US: f64 = 60_000_000.0;
 const MAX_PENDING_PARTICLE_FLOATS: usize = 4 * 500_000;
 const NO_EDGE: u32 = u32::MAX;
+/// `Call::key` of calls that do not fill a cache entry.
+const NO_KEY: u32 = u32::MAX;
 /// Placeholder in a CPU queue for a pending GC pause.
 const GC_JOB: u32 = u32::MAX;
 /// Particle kinds, written into the particle stream.
@@ -139,6 +142,12 @@ enum Ev {
     /// A started instance of `node` passed its readiness delay.
     PodReady {
         node: u32,
+    },
+    /// `hedge` routing: time to call the next edge of fork `fork`.
+    Hedge {
+        call: u32,
+        gen: u32,
+        token: u64,
     },
     /// A branch of a `sequence`/`parallel` fork of `call` is over.
     BranchDone {
@@ -238,6 +247,13 @@ struct NodeRt {
     error_rate: f64,
     latency_factor: f64,
     hit_rate: f64,
+    /// Key-level cache model (`cache` nodes), replaces `hit_rate`.
+    cache: Option<CacheRt>,
+    /// Constant-hit-rate caches: lookups and hits in the window.
+    w_lookups: u64,
+    w_hits: u64,
+    hedge_after: Time,
+    quorum: u32,
     down: bool,
     out: Vec<u32>,
     rr: usize,
@@ -380,6 +396,8 @@ enum Parent {
     User,
     /// Async message spawned by a queue node, or a fire-and-forget branch.
     Async,
+    /// Background work of the engine itself (cache refresh): not counted.
+    Internal,
     Call {
         id: u32,
         gen: u32,
@@ -430,6 +448,16 @@ struct Call {
     span: u64,
     /// When the call started waiting for a pooled connection.
     pool_since: Time,
+    /// Cache miss being filled by this call (`NO_KEY` otherwise), and
+    /// whether it is the singleflight leader others wait for.
+    key: u32,
+    leader: bool,
+    /// Fork bookkeeping: successes still needed, failures still tolerated,
+    /// next edge to hedge to and the token of the pending hedge timer.
+    need: u32,
+    fails_left: u32,
+    hedge_next: u32,
+    hedge_tok: u64,
 }
 
 #[derive(Default)]
@@ -479,6 +507,9 @@ pub struct NodeWindow {
     pub instances: u32,
     /// Autoscaled instances still starting (not ready yet).
     pub starting: u32,
+    /// `cache` nodes: fraction of lookups answered from the cache.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hit_ratio: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -757,6 +788,14 @@ impl Simulation {
                     error_rate,
                     latency_factor: 1.0,
                     hit_rate: c.hit_rate.clamp(0.0, 1.0),
+                    cache: c
+                        .cache
+                        .filter(|_| n.kind == NodeKind::Cache)
+                        .map(CacheRt::new),
+                    w_lookups: 0,
+                    w_hits: 0,
+                    hedge_after: ms_to_us(c.hedge_after_ms.max(0.0)),
+                    quorum: c.quorum,
                     down: false,
                     out: Vec::new(),
                     rr: 0,
@@ -843,19 +882,22 @@ impl Simulation {
             });
         }
         for n in nodes.iter_mut().filter(|n| n.routing != Routing::Pick) {
-            // (order, edge), sorted; equal orders form one stage
+            // (order, edge), sorted; for `sequence` equal orders form one
+            // stage, the other routings call everything in one stage (hedge
+            // tries edges in `order`)
             let mut out: Vec<(u32, u32)> = n
                 .out
                 .iter()
                 .map(|&e| match n.routing {
-                    Routing::Sequence => (design.edges[e as usize].order, e),
+                    Routing::Sequence | Routing::Hedge => (design.edges[e as usize].order, e),
                     _ => (0, e),
                 })
                 .collect();
             out.sort();
+            let single = n.routing != Routing::Sequence;
             let mut last = None;
             for (order, e) in out {
-                if last == Some(order) {
+                if last == Some(order) || (single && last.is_some()) {
                     n.stages.last_mut().expect("stage").push(e);
                 } else {
                     n.stages.push(vec![e]);
@@ -1280,6 +1322,12 @@ impl Simulation {
                     trace: 0,
                     span: 0,
                     pool_since: 0,
+                    key: NO_KEY,
+                    leader: false,
+                    need: 0,
+                    fails_left: 0,
+                    hedge_next: 0,
+                    hedge_tok: 0,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -1306,6 +1354,12 @@ impl Simulation {
         c.trace = 0;
         c.span = token;
         c.pool_since = 0;
+        c.key = NO_KEY;
+        c.leader = false;
+        c.need = 0;
+        c.fails_left = 0;
+        c.hedge_next = 0;
+        c.hedge_tok = 0;
         id
     }
 
@@ -1385,6 +1439,11 @@ impl Simulation {
                 fork,
                 ok,
             } => self.on_branch_done(call, gen, fork, ok),
+            Ev::Hedge { call, gen, token } => {
+                if self.live(call, gen) && self.calls[call as usize].hedge_tok == token {
+                    self.hedge_launch(call);
+                }
+            }
         }
     }
 
@@ -1438,6 +1497,11 @@ impl Simulation {
             }
             ChaosAction::Latency => self.nodes[node as usize].latency_factor = value.max(0.01),
             ChaosAction::Errors => self.nodes[node as usize].error_rate = value.clamp(0.0, 1.0),
+            ChaosAction::Flush => {
+                if let Some(c) = self.nodes[node as usize].cache.as_mut() {
+                    c.flush();
+                }
+            }
         }
     }
 
@@ -1616,6 +1680,9 @@ impl Simulation {
             self.finish(call, false);
             return;
         }
+        if self.nodes[node as usize].cache.is_some() && self.cache_answered(call, 0.0) {
+            return;
+        }
         match io {
             Some((mu, sigma)) => {
                 let d = (self.sample(mu, sigma) * factor).clamp(1.0, MAX_LATENCY_US) as Time;
@@ -1646,75 +1713,140 @@ impl Simulation {
         }
     }
 
-    /// `sequence`/`parallel`: call every edge of the current stage through
-    /// its own branch (each with the edge's retry/timeout/pool policy) and
-    /// continue once all awaited branches answered.
+    /// `sequence`/`parallel`/`quorum`/`hedge`: call the edges of the current
+    /// stage through their own branches (each with the edge's
+    /// retry/timeout/pool policy) and continue once enough branches answered.
     fn fork(&mut self, call: u32) {
-        let (node, step, gen, start, inst, trace, span) = {
+        let (node, step, gen) = {
             let c = &self.calls[call as usize];
-            (
-                c.node,
-                c.step as usize,
-                c.gen,
-                c.start,
-                c.inst,
-                c.trace,
-                c.span,
-            )
+            (c.node, c.step as usize, c.gen)
         };
+        let routing = self.nodes[node as usize].routing;
         let stage = self.nodes[node as usize].stages[step].clone();
         self.next_token += 1;
         let fork = self.next_token;
+        if routing == Routing::Hedge {
+            let c = &mut self.calls[call as usize];
+            c.fork = fork;
+            c.pending = 0;
+            c.need = 1;
+            c.fails_left = 0;
+            c.hedge_next = 0;
+            self.hedge_launch(call);
+            return;
+        }
         let mut awaited = 0;
         for edge in stage {
-            let fire_and_forget = self.edges[edge as usize].fire_and_forget;
-            let parent = if fire_and_forget {
-                Parent::Async
-            } else {
+            let fire_and_forget =
+                self.edges[edge as usize].fire_and_forget && routing != Routing::Quorum;
+            if !fire_and_forget {
                 awaited += 1;
-                Parent::Fork {
-                    id: call,
-                    gen,
-                    fork,
-                }
-            };
-            let b = self.alloc_call(
-                node,
-                parent,
-                NO_EDGE,
-                if fire_and_forget { self.now } else { start },
-            );
-            let c = &mut self.calls[b as usize];
-            c.branch = true;
-            c.fixed_edge = edge;
-            c.inst = inst;
-            c.trace = trace;
-            c.span = span;
-            self.send_or_give_up(b);
+            }
+            self.launch_branch(call, edge, (!fire_and_forget).then_some((gen, fork)));
         }
+        let quorum = self.nodes[node as usize].quorum;
         let c = &mut self.calls[call as usize];
         c.fork = fork;
         c.pending = awaited;
+        c.need = match routing {
+            Routing::Quorum if quorum > 0 => quorum.min(awaited),
+            Routing::Quorum => awaited / 2 + 1,
+            _ => awaited,
+        };
+        c.fails_left = awaited.saturating_sub(c.need);
         if awaited == 0 {
             c.fork = 0;
             self.downstream_ok(call);
         }
     }
 
+    /// Start one branch of `call` over `edge`; `awaited` = `(gen, fork)` of
+    /// the parent when it waits for the branch, `None` for fire-and-forget.
+    fn launch_branch(&mut self, call: u32, edge: u32, awaited: Option<(u32, u64)>) {
+        let (node, start, inst, trace, span) = {
+            let c = &self.calls[call as usize];
+            (c.node, c.start, c.inst, c.trace, c.span)
+        };
+        let parent = match awaited {
+            Some((gen, fork)) => Parent::Fork {
+                id: call,
+                gen,
+                fork,
+            },
+            None => Parent::Async,
+        };
+        let b = self.alloc_call(
+            node,
+            parent,
+            NO_EDGE,
+            if awaited.is_some() { start } else { self.now },
+        );
+        let c = &mut self.calls[b as usize];
+        c.branch = true;
+        c.fixed_edge = edge;
+        c.inst = inst;
+        c.trace = trace;
+        c.span = span;
+        self.send_or_give_up(b);
+    }
+
+    /// `hedge`: call the next edge of the stage and arm the timer for the
+    /// one after.
+    fn hedge_launch(&mut self, call: u32) {
+        let (node, step, gen, fork, next) = {
+            let c = &self.calls[call as usize];
+            (c.node, c.step as usize, c.gen, c.fork, c.hedge_next as usize)
+        };
+        let n = &self.nodes[node as usize];
+        let Some(&edge) = n.stages[step].get(next) else {
+            return;
+        };
+        let more = next + 1 < n.stages[step].len();
+        let after = n.hedge_after;
+        self.next_token += 1;
+        let token = self.next_token;
+        let c = &mut self.calls[call as usize];
+        c.hedge_next += 1;
+        c.pending += 1;
+        c.hedge_tok = if more { token } else { 0 };
+        if more {
+            self.schedule(self.now + after.max(1), Ev::Hedge { call, gen, token });
+        }
+        self.launch_branch(call, edge, Some((gen, fork)));
+    }
+
     fn on_branch_done(&mut self, call: u32, gen: u32, fork: u64, ok: bool) {
         if !self.live(call, gen) || self.calls[call as usize].fork != fork {
-            return; // the fork already failed fast
+            return; // the fork is already decided
         }
+        let node = self.calls[call as usize].node;
+        let hedge = self.nodes[node as usize].routing == Routing::Hedge;
         let c = &mut self.calls[call as usize];
-        if !ok {
-            c.fork = 0;
-            self.downstream_done(call, false);
+        c.pending = c.pending.saturating_sub(1);
+        if ok {
+            c.need = c.need.saturating_sub(1);
+            if c.need == 0 {
+                c.fork = 0;
+                c.hedge_tok = 0;
+                self.downstream_ok(call);
+            }
             return;
         }
-        c.pending -= 1;
-        if c.pending == 0 {
+        if hedge {
+            let len = self.nodes[node as usize].stages[c.step as usize].len();
+            if (c.hedge_next as usize) < len {
+                self.hedge_launch(call); // fail over at once
+            } else if c.pending == 0 {
+                c.fork = 0;
+                self.downstream_done(call, false);
+            }
+            return;
+        }
+        if c.fails_left == 0 {
             c.fork = 0;
-            self.downstream_ok(call);
+            self.downstream_done(call, false);
+        } else {
+            c.fails_left -= 1;
         }
     }
 
@@ -1746,11 +1878,73 @@ impl Simulation {
             self.finish(call, false);
             return;
         }
-        if kind == NodeKind::Cache && self.rng.f64() < hit_rate {
-            self.finish(call, true);
+        if kind == NodeKind::Cache && self.cache_answered(call, hit_rate) {
             return;
         }
         self.proceed(call);
+    }
+
+    /// Cache decision after local processing. Returns `true` when the call
+    /// is answered (hit, stale hit) or parked behind a singleflight leader;
+    /// `false` when it must fetch from downstream.
+    fn cache_answered(&mut self, call: u32, hit_rate: f64) -> bool {
+        let node = self.calls[call as usize].node as usize;
+        if self.nodes[node].cache.is_none() {
+            let n = &mut self.nodes[node];
+            n.w_lookups += 1;
+            if self.rng.f64() < hit_rate {
+                self.nodes[node].w_hits += 1;
+                self.finish(call, true);
+                return true;
+            }
+            return false;
+        }
+        let u = self.rng.f64();
+        let now = self.now;
+        let c = self.nodes[node].cache.as_mut().expect("cache");
+        let key = c.key_for(u);
+        let found = c.lookup(key, now);
+        let in_flight = c.inflight.contains_key(&key);
+        let coalesce = c.cfg.coalesce;
+        match found {
+            Lookup::Hit => {
+                self.finish(call, true);
+                true
+            }
+            Lookup::Stale => {
+                if !in_flight {
+                    self.refresh(node as u32, key);
+                }
+                self.finish(call, true);
+                true
+            }
+            Lookup::Miss if coalesce && in_flight => {
+                let gen = self.calls[call as usize].gen;
+                c.inflight.get_mut(&key).expect("leader").push((call, gen));
+                true
+            }
+            Lookup::Miss => {
+                if coalesce {
+                    c.inflight.insert(key, Vec::new());
+                    self.calls[call as usize].leader = true;
+                }
+                self.calls[call as usize].key = key;
+                false
+            }
+        }
+    }
+
+    /// Stale-while-revalidate: fetch `key` in the background (holds no slot).
+    fn refresh(&mut self, node: u32, key: u32) {
+        if let Some(c) = self.nodes[node as usize].cache.as_mut() {
+            c.inflight.insert(key, Vec::new());
+        }
+        let b = self.alloc_call(node, Parent::Internal, NO_EDGE, self.now);
+        let c = &mut self.calls[b as usize];
+        c.branch = true;
+        c.key = key;
+        c.leader = true;
+        self.send_or_give_up(b);
     }
 
     /// Ask the circuit breaker of `edge` whether a call may go through.
@@ -2081,6 +2275,32 @@ impl Simulation {
 
     /// Final outcome of `call`: report it and recycle the call.
     fn settle(&mut self, call: u32, ok: bool) {
+        let mut followers = Vec::new();
+        let (key, leader, node) = {
+            let c = &self.calls[call as usize];
+            (c.key, c.leader, c.node)
+        };
+        if key != NO_KEY {
+            let now = self.now;
+            if let Some(cache) = self.nodes[node as usize].cache.as_mut() {
+                if ok {
+                    cache.fill(key, now);
+                }
+                if leader {
+                    followers = cache.inflight.remove(&key).unwrap_or_default();
+                }
+            }
+        }
+        self.settle_parent(call, ok);
+        self.free_call(call);
+        for (f, gen) in followers {
+            if self.live(f, gen) {
+                self.finish(f, ok);
+            }
+        }
+    }
+
+    fn settle_parent(&mut self, call: u32, ok: bool) {
         match self.calls[call as usize].parent {
             Parent::User => self.complete_user(call, ok),
             Parent::Async => {
@@ -2102,8 +2322,8 @@ impl Simulation {
                     ok,
                 },
             ),
+            Parent::Internal => {}
         }
-        self.free_call(call);
     }
 
     fn complete_user(&mut self, call: u32, ok: bool) {
@@ -2159,7 +2379,23 @@ impl Simulation {
                         down: n.down,
                         instances: n.ready as u32,
                         starting: n.active.saturating_sub(n.ready) as u32,
+                        hit_ratio: match (n.kind, n.cache.as_mut()) {
+                            (NodeKind::Cache, Some(c)) => {
+                                let r = (c.w_lookups > 0).then(|| c.w_hits as f64 / c.w_lookups as f64);
+                                c.w_lookups = 0;
+                                c.w_hits = 0;
+                                Some(r.unwrap_or(0.0))
+                            }
+                            (NodeKind::Cache, None) => Some(if n.w_lookups > 0 {
+                                n.w_hits as f64 / n.w_lookups as f64
+                            } else {
+                                0.0
+                            }),
+                            _ => None,
+                        },
                     };
+                    n.w_lookups = 0;
+                    n.w_hits = 0;
                     n.busy_area = 0.0;
                     n.cpu_area = 0.0;
                     n.cap_area = 0.0;
@@ -3093,5 +3329,206 @@ mod tests {
         assert!(p.chunks(4).any(|q| q[3] >= PARTICLE_TRACED));
         // only one request traced
         assert!(t.iter().all(|e| e.trace == 1));
+    }
+
+    // ------------------------------------------------------------ cache model
+
+    /// client → cache (key-level) → db (20 slots × 8 ms ≈ 2500 rps max).
+    fn cached(model: CacheModel, rps: f64) -> SimInput {
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "cache",
+                        NodeKind::Cache,
+                        NodeConfig {
+                            concurrency: 5000,
+                            queue_size: 1000,
+                            latency_p50_ms: 0.5,
+                            latency_p99_ms: 1.0,
+                            cache: Some(model),
+                            ..NodeConfig::default()
+                        },
+                    ),
+                    node(
+                        "db",
+                        NodeKind::Database,
+                        NodeConfig {
+                            concurrency: 20,
+                            queue_size: 200,
+                            latency_p50_ms: 8.0,
+                            latency_p99_ms: 20.0,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                ],
+                edges: vec![edge("c", "cache"), edge("cache", "db")],
+            },
+            scenario: scenario(rps, 20_000.0),
+        }
+    }
+
+    #[test]
+    fn cold_cache_warms_up_and_reports_hit_ratio() {
+        let model = CacheModel {
+            keys: 1000,
+            capacity: 1000,
+            ttl_ms: 0.0,
+            ..CacheModel::default()
+        };
+        let ws = windows(&cached(model, 1000.0));
+        let first = ws[0].nodes[1].hit_ratio.unwrap();
+        let last = ws.last().unwrap().nodes[1].hit_ratio.unwrap();
+        assert!(first < last, "warm-up: {first} -> {last}");
+        assert!(last > 0.99, "{last}");
+        assert!(ws[0].nodes[2].hit_ratio.is_none(), "only caches report it");
+    }
+
+    #[test]
+    fn flush_causes_a_stampede_that_singleflight_absorbs() {
+        let flush = |coalesce: bool| {
+            let mut input = cached(
+                CacheModel {
+                    keys: 300,
+                    zipf: 1.0,
+                    capacity: 300,
+                    ttl_ms: 0.0,
+                    warm: true,
+                    coalesce,
+                    ..CacheModel::default()
+                },
+                3000.0,
+            );
+            // an expensive query (100 ms), the classic stampede setting
+            let db = &mut input.design.nodes[2].config;
+            db.concurrency = 100;
+            db.latency_p50_ms = 100.0;
+            db.latency_p99_ms = 150.0;
+            input.scenario.events = vec![ChaosEvent {
+                at_ms: 10_000.0,
+                node: "cache".into(),
+                action: ChaosAction::Flush,
+                value: 0.0,
+            }];
+            let ws = windows(&input);
+            (ws[10].nodes[2].arrivals, ws[5].nodes[2].arrivals, ws[10].error_count)
+        };
+        let (herd, before, _) = flush(false);
+        let (single, _, single_err) = flush(true);
+        assert!(before < 50.0, "warm cache barely hits the db: {before}");
+        assert!(herd > single * 2.0, "stampede {herd} vs singleflight {single}");
+        assert!(single <= 300.0, "one fill per key: {single}");
+        assert_eq!(single_err, 0);
+    }
+
+    #[test]
+    fn stale_while_revalidate_keeps_hits_through_expiry() {
+        let run_with = |swr: bool| {
+            let ws = windows(&cached(
+                CacheModel {
+                    keys: 200,
+                    capacity: 200,
+                    ttl_ms: 500.0,
+                    stale_while_revalidate: swr,
+                    ..CacheModel::default()
+                },
+                1000.0,
+            ));
+            let tail = &ws[5..];
+            tail.iter().map(|w| w.nodes[1].hit_ratio.unwrap()).sum::<f64>() / tail.len() as f64
+        };
+        let (plain, swr) = (run_with(false), run_with(true));
+        assert!(swr > plain + 0.02, "swr {swr} vs plain {plain}");
+        assert!(swr > 0.99, "{swr}");
+    }
+
+    // ------------------------------------------------------ hedge and quorum
+
+    /// api → N replicas with a long latency tail.
+    fn replicas(routing: Routing, n: usize, tail_ms: f64) -> SimInput {
+        let replica = NodeConfig {
+            concurrency: 1000,
+            latency_p50_ms: 5.0,
+            latency_p99_ms: tail_ms,
+            ..NodeConfig::default()
+        };
+        let mut nodes = vec![
+            node("c", NodeKind::Client, NodeConfig::default()),
+            node(
+                "api",
+                NodeKind::Service,
+                NodeConfig {
+                    routing,
+                    concurrency: 1000,
+                    latency_p50_ms: 1.0,
+                    latency_p99_ms: 1.0,
+                    hedge_after_ms: 15.0,
+                    ..NodeConfig::default()
+                },
+            ),
+        ];
+        let mut edges = vec![edge("c", "api")];
+        for i in 0..n {
+            let id = format!("r{i}");
+            nodes.push(node(&id, NodeKind::Database, replica.clone()));
+            edges.push(edge("api", &id));
+        }
+        SimInput {
+            design: Design { nodes, edges },
+            scenario: scenario(200.0, 20_000.0),
+        }
+    }
+
+    fn replica_arrivals(input: &SimInput) -> f64 {
+        let ws = windows(input);
+        ws.iter()
+            .map(|w| w.nodes[2..].iter().map(|n| n.arrivals).sum::<f64>())
+            .sum::<f64>()
+            / ws.len() as f64
+    }
+
+    #[test]
+    fn hedging_cuts_the_tail_at_the_price_of_extra_load() {
+        let pick = replicas(Routing::Pick, 2, 300.0);
+        let hedge = replicas(Routing::Hedge, 2, 300.0);
+        let (sp, sh) = (run(&pick), run(&hedge));
+        assert!(sh.p99_ms < sp.p99_ms * 0.5, "hedge p99 {} vs {}", sh.p99_ms, sp.p99_ms);
+        let (lp, lh) = (replica_arrivals(&pick), replica_arrivals(&hedge));
+        assert!(lh > lp * 1.03, "hedges add load: {lh} vs {lp}");
+        assert!(lh < lp * 1.6, "but only for slow requests: {lh} vs {lp}");
+    }
+
+    #[test]
+    fn hedge_fails_over_to_the_next_edge() {
+        let mut input = replicas(Routing::Hedge, 2, 5.0);
+        input.design.nodes[2].config.error_rate = 1.0;
+        let s = run(&input);
+        assert_eq!(s.errors, 0);
+        assert!(s.p99_ms < 30.0, "fail-over is immediate: {}", s.p99_ms);
+    }
+
+    #[test]
+    fn quorum_survives_one_replica_down_where_parallel_fails() {
+        let down = |routing: Routing| {
+            let mut input = replicas(routing, 3, 10.0);
+            input.scenario.events = vec![ChaosEvent {
+                at_ms: 0.0,
+                node: "r1".into(),
+                action: ChaosAction::Down,
+                value: 0.0,
+            }];
+            run(&input)
+        };
+        assert_eq!(down(Routing::Quorum).errors, 0);
+        assert!(down(Routing::Parallel).error_rate > 0.99);
+        // two of three down: no majority
+        let mut input = replicas(Routing::Quorum, 3, 10.0);
+        input.design.nodes[2].config.error_rate = 1.0;
+        input.design.nodes[3].config.error_rate = 1.0;
+        assert!(run(&input).error_rate > 0.99);
+        // quorum 1 = any replica
+        input.design.nodes[1].config.quorum = 1;
+        assert_eq!(run(&input).errors, 0);
     }
 }

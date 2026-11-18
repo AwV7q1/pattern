@@ -132,6 +132,8 @@ impl Level {
             let mut config = self.catalog_for(n.kind);
             config.instances = n.config.instances.clamp(1, self.max_instances.max(1));
             config.routing = n.config.routing;
+            config.hedge_after_ms = n.config.hedge_after_ms.clamp(1.0, 10_000.0);
+            config.quorum = n.config.quorum;
             nodes.push(NodeSpec {
                 id: n.id.clone(),
                 kind: n.kind,

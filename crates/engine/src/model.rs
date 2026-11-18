@@ -63,6 +63,51 @@ pub enum Routing {
     /// Call every edge at once and wait for all (`Promise.all`): fails as
     /// soon as one fails, latency is the slowest branch.
     Parallel,
+    /// Hedged request: call the first edge; if no answer after
+    /// `hedgeAfterMs`, also call the next one. The first success wins, the
+    /// losers keep loading their callee. A failure moves on to the next edge
+    /// at once.
+    Hedge,
+    /// Call every edge at once, succeed once `quorum` answered OK (default:
+    /// majority), fail once that is no longer possible.
+    Quorum,
+}
+
+/// Key-level cache model: requests pick keys from a Zipf distribution, keys
+/// are filled on a successful miss and expire after `ttlMs`. Replaces the
+/// constant `hitRate` when present.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CacheModel {
+    /// Distinct keys requested.
+    pub keys: u32,
+    /// Zipf exponent of key popularity (0 = uniform, ~1 = typical web).
+    pub zipf: f64,
+    /// Entries the cache holds (LRU eviction beyond).
+    pub capacity: u32,
+    /// Entry lifetime; 0 = never expires.
+    pub ttl_ms: f64,
+    /// Singleflight: concurrent misses on one key wait for a single fill.
+    pub coalesce: bool,
+    /// Serve an expired entry at once and refresh it in the background.
+    pub stale_while_revalidate: bool,
+    /// Start full (most popular keys, expiries spread over the TTL) instead
+    /// of empty.
+    pub warm: bool,
+}
+
+impl Default for CacheModel {
+    fn default() -> Self {
+        Self {
+            keys: 10_000,
+            zipf: 1.0,
+            capacity: 1_000,
+            ttl_ms: 60_000.0,
+            coalesce: false,
+            stale_while_revalidate: false,
+            warm: false,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -113,8 +158,15 @@ pub struct NodeConfig {
     pub gc_every_requests: u32,
     /// Probability that a processed request fails (0..1).
     pub error_rate: f64,
-    /// Cache hit ratio (0..1), only used by `cache` nodes.
+    /// Cache hit ratio (0..1), only used by `cache` nodes without `cache`.
     pub hit_rate: f64,
+    /// `cache` nodes: key-level model (TTL, LRU, stampede, singleflight).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheModel>,
+    /// `hedge` routing: delay before calling the next edge.
+    pub hedge_after_ms: f64,
+    /// `quorum` routing: successes needed (0 = majority of the edges).
+    pub quorum: u32,
     /// Cost per instance per hour (any currency unit).
     pub cost_per_hour: f64,
     /// Horizontal autoscaling (Kubernetes HPA); `instances` is the start count.
@@ -177,6 +229,9 @@ impl Default for NodeConfig {
             gc_every_requests: 0,
             error_rate: 0.0,
             hit_rate: 0.0,
+            cache: None,
+            hedge_after_ms: 50.0,
+            quorum: 0,
             cost_per_hour: 0.0,
             autoscale: None,
         }
@@ -365,6 +420,9 @@ pub enum ChaosAction {
     Latency,
     /// Error rate becomes `value`.
     Errors,
+    /// `cache` nodes with a key-level model: drop every entry (restart,
+    /// deploy, `FLUSHALL`).
+    Flush,
 }
 
 fn default_timeout() -> f64 {
