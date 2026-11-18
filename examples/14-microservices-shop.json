@@ -1,0 +1,179 @@
+{
+  "title": "Shop microservices: endpoint, traffic mix, saga qua queue",
+  "description": "Một hệ ~12 service như ngoài đời. Gateway có 4 endpoint, traffic chia 70% xem danh sách, 20% xem chi tiết, 5% checkout, 5% tra đơn; mỗi loại đi một đường riêng và có p99 riêng ở tab Số liệu. Order gọi Payment, Payment gọi ngược Order /status: vòng giữa 2 service nhưng không phải vòng giữa 2 endpoint nên hợp lệ. Saga: Order /create bắn event, Inventory /reserve giữ hàng rồi bắn event về Order /onStockReserved. Mọi luồng dùng chung một Postgres 4 connection, ghi nặng gấp 5 lần đọc. Lúc 30s traffic tăng gấp 3: checkout chỉ 5% nhưng các lệnh ghi chiếm Postgres, kéo p99 của lượt xem sản phẩm (cache miss) vượt SLO. Thử: tăng connection, tách read replica cho endpoint read, hoặc cache hit cao hơn. Thử phá: đổi edge Inventory → stock-events sang endpoint 'create' để thấy vòng lặp sự kiện.",
+  "design": {
+    "nodes": [
+      { "id": "client", "kind": "client", "label": "Users", "position": { "x": 0, "y": 320 } },
+      {
+        "id": "ingress",
+        "kind": "loadBalancer",
+        "label": "Ingress",
+        "position": { "x": 240, "y": 320 },
+        "config": { "instances": 1, "concurrency": 2000, "queueSize": 1000, "latencyP50Ms": 0.3, "latencyP99Ms": 1, "costPerHour": 0.03 }
+      },
+      {
+        "id": "gateway",
+        "kind": "service",
+        "label": "API Gateway",
+        "position": { "x": 500, "y": 320 },
+        "config": {
+          "instances": 2,
+          "concurrency": 400,
+          "queueSize": 500,
+          "latencyP50Ms": 1,
+          "latencyP99Ms": 4,
+          "routing": "sequence",
+          "costPerHour": 0.1,
+          "endpoints": [
+            { "name": "browse", "work": 1 },
+            { "name": "product", "work": 1 },
+            { "name": "checkout", "work": 1 },
+            { "name": "orderStatus", "work": 1 }
+          ]
+        }
+      },
+      {
+        "id": "auth",
+        "kind": "service",
+        "label": "Auth",
+        "position": { "x": 820, "y": 20 },
+        "config": { "instances": 2, "concurrency": 300, "queueSize": 300, "latencyP50Ms": 2, "latencyP99Ms": 8, "costPerHour": 0.08 }
+      },
+      {
+        "id": "catalog",
+        "kind": "service",
+        "label": "Catalog",
+        "position": { "x": 820, "y": 200 },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 300,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 10,
+          "costPerHour": 0.1,
+          "endpoints": [
+            { "name": "list", "work": 2 },
+            { "name": "detail", "work": 1 }
+          ]
+        }
+      },
+      {
+        "id": "order",
+        "kind": "service",
+        "label": "Order",
+        "position": { "x": 820, "y": 480 },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 300,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 12,
+          "routing": "sequence",
+          "costPerHour": 0.1,
+          "endpoints": [
+            { "name": "create", "work": 2 },
+            { "name": "status", "work": 1 },
+            { "name": "onStockReserved", "work": 1 }
+          ]
+        }
+      },
+      {
+        "id": "redis",
+        "kind": "cache",
+        "label": "Redis",
+        "position": { "x": 1140, "y": 140 },
+        "config": { "instances": 1, "concurrency": 1000, "queueSize": 1000, "latencyP50Ms": 0.5, "latencyP99Ms": 2, "hitRate": 0.8, "costPerHour": 0.05 }
+      },
+      {
+        "id": "payment",
+        "kind": "service",
+        "label": "Payment",
+        "position": { "x": 1140, "y": 380 },
+        "config": { "instances": 1, "concurrency": 100, "queueSize": 200, "latencyP50Ms": 60, "latencyP99Ms": 250, "costPerHour": 0.1 }
+      },
+      {
+        "id": "orderEvents",
+        "kind": "queue",
+        "label": "order-events (Kafka)",
+        "position": { "x": 1140, "y": 600 },
+        "config": { "instances": 1, "concurrency": 50, "queueSize": 100000, "latencyP50Ms": 1, "latencyP99Ms": 3, "costPerHour": 0.1 }
+      },
+      {
+        "id": "postgres",
+        "kind": "database",
+        "label": "Postgres (dùng chung)",
+        "position": { "x": 1460, "y": 300 },
+        "config": {
+          "instances": 1,
+          "concurrency": 4,
+          "queueSize": 2000,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 12,
+          "costPerHour": 0.4,
+          "endpoints": [
+            { "name": "read", "work": 1 },
+            { "name": "write", "work": 5 }
+          ]
+        }
+      },
+      {
+        "id": "inventory",
+        "kind": "service",
+        "label": "Inventory",
+        "position": { "x": 1460, "y": 600 },
+        "config": {
+          "instances": 1,
+          "concurrency": 100,
+          "queueSize": 300,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 10,
+          "routing": "sequence",
+          "costPerHour": 0.08,
+          "endpoints": [{ "name": "reserve", "work": 1 }]
+        }
+      },
+      {
+        "id": "stockEvents",
+        "kind": "queue",
+        "label": "stock-events (Kafka)",
+        "position": { "x": 1140, "y": 800 },
+        "config": { "instances": 1, "concurrency": 50, "queueSize": 100000, "latencyP50Ms": 1, "latencyP99Ms": 3, "costPerHour": 0.1 }
+      }
+    ],
+    "edges": [
+      { "source": "client", "target": "ingress", "latencyMs": 15 },
+      { "source": "ingress", "target": "gateway", "latencyMs": 0.5 },
+      { "source": "gateway", "target": "auth", "latencyMs": 0.5, "order": 1, "timeoutMs": 300 },
+      { "source": "gateway", "target": "catalog", "latencyMs": 0.5, "order": 2, "fromEndpoint": "browse", "toEndpoint": "list" },
+      { "source": "gateway", "target": "catalog", "latencyMs": 0.5, "order": 2, "fromEndpoint": "product", "toEndpoint": "detail" },
+      { "source": "gateway", "target": "order", "latencyMs": 0.5, "order": 2, "fromEndpoint": "checkout", "toEndpoint": "create" },
+      { "source": "gateway", "target": "order", "latencyMs": 0.5, "order": 2, "fromEndpoint": "orderStatus", "toEndpoint": "status" },
+      { "source": "catalog", "target": "redis", "latencyMs": 0.3, "toEndpoint": "read" },
+      { "source": "redis", "target": "postgres", "latencyMs": 0.5 },
+      { "source": "order", "target": "payment", "latencyMs": 1, "order": 1, "fromEndpoint": "create", "timeoutMs": 1500 },
+      { "source": "order", "target": "postgres", "latencyMs": 0.5, "order": 2, "fromEndpoint": "create", "toEndpoint": "write" },
+      { "source": "order", "target": "orderEvents", "latencyMs": 0.5, "order": 3, "fromEndpoint": "create", "toEndpoint": "reserve" },
+      { "source": "order", "target": "postgres", "latencyMs": 0.5, "fromEndpoint": "status", "toEndpoint": "read" },
+      { "source": "order", "target": "postgres", "latencyMs": 0.5, "fromEndpoint": "onStockReserved", "toEndpoint": "write" },
+      { "source": "payment", "target": "order", "latencyMs": 1, "toEndpoint": "status" },
+      { "source": "orderEvents", "target": "inventory", "latencyMs": 1 },
+      { "source": "inventory", "target": "postgres", "latencyMs": 0.5, "order": 1, "toEndpoint": "write" },
+      { "source": "inventory", "target": "stockEvents", "latencyMs": 0.5, "order": 2, "toEndpoint": "onStockReserved" },
+      { "source": "stockEvents", "target": "order", "latencyMs": 1 }
+    ]
+  },
+  "scenario": {
+    "seed": 14,
+    "durationMs": 60000,
+    "timeoutMs": 2000,
+    "traffic": [{ "atMs": 0, "rps": 300 }, { "atMs": 30000, "rps": 900 }],
+    "slo": { "p99Ms": 300, "errorRate": 0.01 },
+    "windowMs": 1000,
+    "requests": [
+      { "name": "browse", "weight": 70, "endpoint": "browse" },
+      { "name": "product", "weight": 20, "endpoint": "product" },
+      { "name": "checkout", "weight": 5, "endpoint": "checkout" },
+      { "name": "orderStatus", "weight": 5, "endpoint": "orderStatus" }
+    ]
+  }
+}

@@ -43,7 +43,7 @@ import {
 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, DEFAULT_CACHE_MODEL, DEFAULT_TARGET_QUEUE_LENGTH, type CacheModel, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
+import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, DEFAULT_CACHE_MODEL, DEFAULT_TARGET_QUEUE_LENGTH, type CacheModel, type Autoscale, type Endpoint, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -396,6 +396,12 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
           {node.kind === 'cache' && (
             <CacheFields value={draft.cache ?? null} onChange={(cache) => setDraft({ ...draft, cache })} />
           )}
+          {node.kind !== 'loadBalancer' && (
+            <EndpointsField
+              value={draft.endpoints ?? []}
+              onChange={(endpoints) => setDraft({ ...draft, endpoints: endpoints.length ? endpoints : undefined })}
+            />
+          )}
           <div className="grid gap-2 rounded-md border p-2.5">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Autoscale (Kubernetes HPA / KEDA)</Label>
@@ -479,10 +485,157 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
   );
 }
 
+const INHERIT = '__inherit';
+const ROUTING_SHORT: Record<Routing, string> = { pick: '⇄ Chọn 1', sequence: '①② Tuần tự', parallel: '∥ Song song' };
+
+/** Handlers of one service: shared instances/slots/CPU, their own downstream calls. */
+function EndpointsField({ value, onChange }: { value: Endpoint[]; onChange: (v: Endpoint[]) => void }) {
+  const set = (i: number, patch: Partial<Endpoint>) => onChange(value.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  const add = () => {
+    let k = value.length + 1;
+    while (value.some((e) => e.name === `endpoint-${k}`)) k++;
+    onChange([...value, { name: `endpoint-${k}`, work: 1 }]);
+  };
+  return (
+    <div className="grid gap-2 rounded-md border p-2.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Endpoint (handler)</Label>
+        <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={add}>
+          + Thêm
+        </Button>
+      </div>
+      {value.length === 0 ? (
+        <p className="text-[12px] leading-relaxed text-muted-foreground">
+          Một handler duy nhất. Thêm endpoint (vd. <code>create</code>, <code>details</code>) khi service có nhiều API gọi
+          xuống những chỗ khác nhau: chúng dùng chung instance, slot, CPU, pool, nhưng mỗi cái có các edge riêng (chọn ở
+          edge). Nhờ vậy A → B → A là hợp lệ nếu quay về endpoint khác.
+        </p>
+      ) : (
+        <>
+          <div className="grid grid-cols-[1fr_4.5rem_7.5rem_auto] items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>tên</span>
+            <span title="thời gian xử lý so với node">× xử lý</span>
+            <span>gọi nhánh</span>
+            <span />
+          </div>
+          {value.map((e, i) => (
+            <div key={i} className="grid grid-cols-[1fr_4.5rem_7.5rem_auto] items-center gap-1.5">
+              <Input
+                className="h-7 font-mono text-xs"
+                value={e.name}
+                aria-invalid={!e.name.trim() || value.some((o, j) => j !== i && o.name === e.name)}
+                onChange={(ev) => set(i, { name: ev.target.value.replace(/\s+/g, '-') })}
+              />
+              <Input
+                type="number"
+                className="h-7 font-mono text-xs"
+                step={0.5}
+                min={0.1}
+                value={e.work ?? 1}
+                onChange={(ev) => set(i, { work: Number(ev.target.value) || 1 })}
+              />
+              <Select value={e.routing ?? INHERIT} onValueChange={(v) => set(i, { routing: v === INHERIT ? undefined : (v as Routing) })}>
+                <SelectTrigger size="sm" className="h-7 w-full text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={INHERIT}>như node</SelectItem>
+                  {(Object.keys(ROUTING_SHORT) as Routing[]).map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {ROUTING_SHORT[r]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="icon-sm" variant="ghost" className="size-7" onClick={() => onChange(value.filter((_, j) => j !== i))}>
+                <Trash2 />
+              </Button>
+            </div>
+          ))}
+          <p className="text-[12px] text-muted-foreground">Endpoint đầu tiên phục vụ request không ghi rõ endpoint.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+const ANY = '__any';
+
+/** Which handler of the source makes this call, and which endpoint of the target it hits. */
+function EdgeEndpointFields({
+  p,
+  setP,
+  source,
+  target,
+  sourceEndpoints,
+  targetEndpoints,
+  allEndpoints,
+}: {
+  p: EdgePolicy;
+  setP: (p: EdgePolicy) => void;
+  source: string;
+  target: string;
+  sourceEndpoints: string[];
+  targetEndpoints: string[];
+  allEndpoints: string[];
+}) {
+  // a target without endpoints may still forward a path (LB, gateway)
+  const targets = targetEndpoints.length ? targetEndpoints : allEndpoints;
+  if (!sourceEndpoints.length && !targets.length) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-md border p-2.5">
+      <div className="grid gap-1.5">
+        <Label className="text-xs text-muted-foreground">Handler gọi ({source})</Label>
+        <Select
+          disabled={!sourceEndpoints.length}
+          value={p.fromEndpoint ?? ANY}
+          onValueChange={(v) => setP({ ...p, fromEndpoint: v === ANY ? null : v })}
+        >
+          <SelectTrigger size="sm" className="w-full font-mono text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ANY}>mọi endpoint</SelectItem>
+            {sourceEndpoints.map((n) => (
+              <SelectItem key={n} value={n} className="font-mono">
+                {n}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="grid gap-1.5">
+        <Label className="text-xs text-muted-foreground">Gọi endpoint ({target})</Label>
+        <Select value={p.toEndpoint ?? ANY} onValueChange={(v) => setP({ ...p, toEndpoint: v === ANY ? null : v })}>
+          <SelectTrigger size="sm" className="w-full font-mono text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ANY}>giữ path của caller</SelectItem>
+            {targets.map((n) => (
+              <SelectItem key={n} value={n} className="font-mono">
+                {n}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="col-span-2 text-[12px] leading-relaxed text-muted-foreground">
+        &ldquo;Giữ path&rdquo;: request đi tiếp với endpoint nó đang mang (như reverse proxy chuyển nguyên URL), nên
+        LB/gateway không cần khai báo endpoint.
+      </p>
+    </div>
+  );
+}
+
 interface EdgeProps {
   edge: FlowEdgeData;
   source: string;
   target: string;
+  /** Endpoints of the source / target node, and every endpoint name of the design. */
+  sourceEndpoints?: string[];
+  targetEndpoints?: string[];
+  allEndpoints?: string[];
   game: boolean;
   /** Game levels decide whether calls may skip waiting. */
   allowFireAndForget?: boolean;
@@ -490,7 +643,18 @@ interface EdgeProps {
   onDelete: () => void;
 }
 
-export function EdgeInspector({ edge, source, target, game, allowFireAndForget = true, onChange, onDelete }: EdgeProps) {
+export function EdgeInspector({
+  edge,
+  source,
+  target,
+  sourceEndpoints = [],
+  targetEndpoints = [],
+  allEndpoints = [],
+  game,
+  allowFireAndForget = true,
+  onChange,
+  onDelete,
+}: EdgeProps) {
   const [p, setP] = useState(edge.policy);
   useEffect(() => setP(edge.policy), [edge.policy, edge.index]);
   const dirty = JSON.stringify(p) !== JSON.stringify(edge.policy);
@@ -525,6 +689,18 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
             <div className="text-muted-foreground">CB</div>
           </div>
         </div>
+      )}
+
+      {!game && (
+        <EdgeEndpointFields
+          p={p}
+          setP={setP}
+          source={source}
+          target={target}
+          sourceEndpoints={sourceEndpoints}
+          targetEndpoints={targetEndpoints}
+          allEndpoints={allEndpoints}
+        />
       )}
 
       {routing !== 'pick' && (

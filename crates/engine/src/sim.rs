@@ -34,8 +34,8 @@ use serde::Serialize;
 
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Autoscale, Balance, CacheModel, ChaosAction, ScaleMetric, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
-    Slo,
+    Arrival, Autoscale, Balance, CacheModel, ChaosAction, ScaleMetric, CircuitBreaker, Endpoint, ExecModel, NodeKind, Routing,
+    SimInput, Slo,
 };
 use crate::rng::Rng;
 
@@ -203,6 +203,23 @@ struct HpaRt {
 }
 
 const NO_KEY: u32 = u32::MAX;
+/// No path / no request type.
+const NO_PATH: u16 = u16::MAX;
+const NO_TYPE: u16 = u16::MAX;
+
+/// One handler of a node: its own downstream calls, sharing the node's
+/// instances. Nodes without `endpoints` get one implicit handler.
+struct EpRt {
+    /// Interned path name (`NO_PATH` for the implicit handler).
+    name: u16,
+    routing: Routing,
+    out: Vec<u32>,
+    /// `sequence`/`parallel`: edges called at each step (equal `order` together).
+    stages: Vec<Vec<u32>>,
+    rr: usize,
+    calls: u32,
+    work: f64,
+}
 
 /// Keyspace of a cache node (`config.cache`).
 struct CacheRt {
@@ -307,7 +324,6 @@ struct NodeRt {
     cpu_mu: f64,
     cpu_sigma: f64,
     io: Option<(f64, f64)>,
-    calls: u32,
     contention: f64,
     coherency: f64,
     gc_pause: Time,
@@ -318,12 +334,14 @@ struct NodeRt {
     latency_factor: f64,
     hit_rate: f64,
     down: bool,
+    /// Every outgoing edge.
     out: Vec<u32>,
-    rr: usize,
-    routing: Routing,
     quorum: u32,
-    /// `sequence`/`parallel`: edges called at each step (equal `order` together).
-    stages: Vec<Vec<u32>>,
+    eps: Vec<EpRt>,
+    /// Endpoint serving each interned path (0 when the node lacks it).
+    ep_by_path: Vec<u16>,
+    /// The node declares `endpoints` (reported in traces).
+    named: bool,
     // window accounting
     busy_area: f64,
     last_change: Time,
@@ -363,14 +381,24 @@ impl NodeRt {
         self.cpu_last = now;
     }
 
-    /// Downstream calls a request makes here.
-    fn effective_calls(&self) -> u32 {
-        if self.out.is_empty() {
+    /// Downstream calls a request to endpoint `ep` makes here.
+    fn effective_calls(&self, ep: u16) -> u32 {
+        let e = &self.eps[ep as usize];
+        if e.out.is_empty() {
             0
-        } else if self.routing == Routing::Pick {
-            self.calls
+        } else if e.routing == Routing::Pick {
+            e.calls
         } else {
-            self.stages.len() as u32
+            e.stages.len() as u32
+        }
+    }
+
+    /// Endpoint serving a request with `path`.
+    fn resolve(&self, path: u16) -> u16 {
+        if path == NO_PATH {
+            0
+        } else {
+            self.ep_by_path.get(path as usize).copied().unwrap_or(0)
         }
     }
 
@@ -431,6 +459,8 @@ struct Breaker {
 
 struct EdgeRt {
     to: u32,
+    /// Path set on the callee (`toEndpoint`), `NO_PATH` = pass through.
+    path: u16,
     latency: Time,
     timeout: Option<Time>,
     retries: u32,
@@ -521,6 +551,13 @@ struct Call {
     /// Fork: successes still needed, failures still tolerated (quorum).
     need: u32,
     spare: u32,
+    /// Endpoint of `node` serving the call, and the request path.
+    ep: u16,
+    path: u16,
+    /// Async boundaries crossed so far (queue deliveries, fire-and-forget).
+    hops: u32,
+    /// Request type of a root call (`NO_TYPE` otherwise).
+    rtype: u16,
 }
 
 #[derive(Default)]
@@ -532,10 +569,24 @@ struct Acc {
     async_err: u64,
     retries: u64,
     dropped: u64,
+    /// Async messages dropped by the hop limit (event loops).
+    loop_dropped: u64,
     hist: Histogram,
 }
 
 impl Acc {
+    fn tally(&mut self, ok: bool, timed_out: bool, latency: Time) {
+        if ok {
+            self.ok += 1;
+        } else {
+            self.err += 1;
+        }
+        if timed_out {
+            self.timeouts += 1;
+        }
+        self.hist.record(latency);
+    }
+
     fn clear(&mut self) {
         self.ok = 0;
         self.err = 0;
@@ -544,6 +595,7 @@ impl Acc {
         self.async_err = 0;
         self.retries = 0;
         self.dropped = 0;
+        self.loop_dropped = 0;
         self.hist.clear();
     }
 }
@@ -630,6 +682,9 @@ pub struct TraceEvent {
     pub wait_ms: f64,
     /// `send`: the caller does not wait for the answer.
     pub fire_and_forget: bool,
+    /// Index into the node's `endpoints`, when it declares some.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<u32>,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -651,10 +706,40 @@ pub struct WindowMetrics {
     pub p95_ms: f64,
     pub p99_ms: f64,
     pub slo_ok: bool,
+    /// Async messages dropped by the hop limit (an event loop).
+    pub loop_dropped: u64,
+    /// Per request type, same order as `scenario.requests`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<RequestWindow>,
     /// Same order as `design.nodes`.
     pub nodes: Vec<NodeWindow>,
     /// Same order as `design.edges`.
     pub edges: Vec<EdgeWindow>,
+}
+
+/// One request type during a window.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestWindow {
+    pub rps: f64,
+    pub error_rps: f64,
+    pub p50_ms: f64,
+    pub p99_ms: f64,
+}
+
+/// One request type over the whole run.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestSummary {
+    pub name: String,
+    pub total: u64,
+    pub ok: u64,
+    pub errors: u64,
+    pub timeouts: u64,
+    pub error_rate: f64,
+    pub p50_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -682,6 +767,11 @@ pub struct Summary {
     pub budget_per_hour: Option<f64>,
     /// Async messages still waiting in queue nodes at the end of the run.
     pub backlog: u64,
+    /// Async messages dropped by the hop limit (an event loop).
+    pub loop_dropped: u64,
+    /// Per request type, same order as `scenario.requests`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<RequestSummary>,
     /// Game rating 0..3, see [`Summary::rate`].
     pub stars: u8,
 }
@@ -694,7 +784,7 @@ impl Summary {
         let within_budget = self
             .budget_per_hour
             .is_none_or(|b| self.cost_per_hour <= b + 1e-9);
-        let resilient = self.slo_window_ratio >= 0.98 && self.backlog == 0;
+        let resilient = self.slo_window_ratio >= 0.98 && self.backlog == 0 && self.loop_dropped == 0;
         self.stars = match (self.slo_pass, within_budget, resilient) {
             (true, true, true) => 3,
             (true, true, false) => 2,
@@ -744,6 +834,12 @@ pub struct Simulation {
     trace_budget: u32,
     next_trace: u32,
     traces: Vec<TraceEvent>,
+    /// Request mix: (cumulative weight, entry path), names, accumulators.
+    types: Vec<(f64, u16)>,
+    type_names: Vec<String>,
+    type_win: Vec<Acc>,
+    type_total: Vec<Acc>,
+    max_hops: u32,
 }
 
 impl Simulation {
@@ -873,10 +969,6 @@ impl Simulation {
                     cpu_mu,
                     cpu_sigma,
                     io,
-                    calls: match n.kind {
-                        NodeKind::Service | NodeKind::Database => c.calls_per_request.clamp(1, 100),
-                        _ => 1,
-                    },
                     contention: c.contention.max(0.0),
                     coherency: c.coherency.max(0.0),
                     gc_pause: ms_to_us(c.gc_pause_ms),
@@ -892,13 +984,10 @@ impl Simulation {
                     hit_rate: c.hit_rate.clamp(0.0, 1.0),
                     down: false,
                     out: Vec::new(),
-                    rr: 0,
                     quorum: c.quorum,
-                    routing: match n.kind {
-                        NodeKind::Client | NodeKind::LoadBalancer => Routing::Pick,
-                        _ => c.routing,
-                    },
-                    stages: Vec::new(),
+                    eps: Vec::new(),
+                    ep_by_path: Vec::new(),
+                    named: false,
                     busy_area: 0.0,
                     last_change: 0,
                     cpu_area: 0.0,
@@ -910,6 +999,30 @@ impl Simulation {
                 }
             })
             .collect();
+
+        // endpoint names form one global set of request paths
+        let mut paths: Vec<String> = Vec::new();
+        for n in design.nodes.iter().filter(|n| n.kind != NodeKind::Client) {
+            for (k, ep) in n.config.endpoints.iter().enumerate() {
+                if ep.name.trim().is_empty() {
+                    return Err(format!("node '{}': endpoint {k} has no name", n.id));
+                }
+                if n.config.endpoints[..k].iter().any(|o| o.name == ep.name) {
+                    return Err(format!("node '{}': duplicate endpoint '{}'", n.id, ep.name));
+                }
+                if !paths.contains(&ep.name) {
+                    paths.push(ep.name.clone());
+                }
+            }
+        }
+        if paths.len() >= NO_PATH as usize {
+            return Err("too many endpoints".into());
+        }
+        let path_id = |name: &str| paths.iter().position(|p| p == name).map(|i| i as u16);
+        let named = |i: u32| {
+            let n = &design.nodes[i as usize];
+            n.kind != NodeKind::Client && !n.config.endpoints.is_empty()
+        };
 
         let mut edges = Vec::with_capacity(design.edges.len());
         for (i, e) in design.edges.iter().enumerate() {
@@ -926,6 +1039,25 @@ impl Simulation {
                 return Err(format!("edge {i}: a node cannot call itself"));
             }
             nodes[from as usize].out.push(i as u32);
+            if let Some(name) = &e.from_endpoint {
+                if !named(from) || !design.nodes[from as usize].config.endpoints.iter().any(|d| &d.name == name) {
+                    return Err(format!("edge {i}: '{}' has no endpoint '{name}'", e.source));
+                }
+            }
+            let path = match &e.to_endpoint {
+                None => NO_PATH,
+                Some(name) => {
+                    let ok = if named(to) {
+                        design.nodes[to as usize].config.endpoints.iter().any(|d| &d.name == name)
+                    } else {
+                        path_id(name).is_some()
+                    };
+                    if !ok {
+                        return Err(format!("edge {i}: '{}' has no endpoint '{name}'", e.target));
+                    }
+                    path_id(name).expect("checked")
+                }
+            };
             let pool = e.pool_size.filter(|p| *p > 0).map(|p| {
                 let src = &nodes[from as usize];
                 let per_inst = p.saturating_mul(src.processes);
@@ -950,6 +1082,7 @@ impl Simulation {
             };
             edges.push(EdgeRt {
                 to,
+                path,
                 latency: ms_to_us(e.latency_ms),
                 timeout,
                 retries: e.retries.min(10),
@@ -978,31 +1111,95 @@ impl Simulation {
                 w_hedges: 0,
             });
         }
-        for n in nodes.iter_mut().filter(|n| n.routing != Routing::Pick) {
-            // (order, edge), sorted; equal orders form one stage
-            let mut out: Vec<(u32, u32)> = n
-                .out
+        for (i, spec) in design.nodes.iter().enumerate() {
+            let c = &spec.config;
+            let pick_only = matches!(spec.kind, NodeKind::Client | NodeKind::LoadBalancer);
+            let calls = |v: u32| match spec.kind {
+                NodeKind::Service | NodeKind::Database => v.clamp(1, 100),
+                _ => 1,
+            };
+            let is_named = named(i as u32);
+            let defs: Vec<Endpoint> = if is_named { c.endpoints.clone() } else { vec![Endpoint::default()] };
+            let mut eps: Vec<EpRt> = defs
                 .iter()
-                .map(|&e| match n.routing {
-                    Routing::Sequence => (design.edges[e as usize].order, e),
-                    _ => (0, e),
+                .map(|d| EpRt {
+                    name: if is_named { path_id(&d.name).expect("interned") } else { NO_PATH },
+                    routing: if pick_only { Routing::Pick } else { d.routing.unwrap_or(c.routing) },
+                    out: Vec::new(),
+                    stages: Vec::new(),
+                    rr: 0,
+                    calls: calls(d.calls_per_request.unwrap_or(c.calls_per_request)),
+                    work: if d.work.is_finite() && d.work > 0.0 { d.work } else { 1.0 },
                 })
                 .collect();
-            out.sort();
-            let mut last = None;
-            for (order, e) in out {
-                if last == Some(order) {
-                    n.stages.last_mut().expect("stage").push(e);
-                } else {
-                    n.stages.push(vec![e]);
-                    last = Some(order);
+            for &e in &nodes[i].out {
+                match &design.edges[e as usize].from_endpoint {
+                    Some(name) => {
+                        let k = defs.iter().position(|d| &d.name == name).expect("validated");
+                        eps[k].out.push(e);
+                    }
+                    None => eps.iter_mut().for_each(|ep| ep.out.push(e)),
                 }
             }
+            for ep in eps.iter_mut().filter(|ep| ep.routing != Routing::Pick) {
+                // (order, edge), sorted; equal orders form one stage
+                let mut out: Vec<(u32, u32)> = ep
+                    .out
+                    .iter()
+                    .map(|&e| match ep.routing {
+                        Routing::Sequence => (design.edges[e as usize].order, e),
+                        _ => (0, e),
+                    })
+                    .collect();
+                out.sort();
+                let mut last = None;
+                for (order, e) in out {
+                    if last == Some(order) {
+                        ep.stages.last_mut().expect("stage").push(e);
+                    } else {
+                        ep.stages.push(vec![e]);
+                        last = Some(order);
+                    }
+                }
+            }
+            let mut by_path = vec![0u16; paths.len()];
+            for (k, ep) in eps.iter().enumerate() {
+                if ep.name != NO_PATH {
+                    by_path[ep.name as usize] = k as u16;
+                }
+            }
+            let n = &mut nodes[i];
+            n.eps = eps;
+            n.ep_by_path = by_path;
+            n.named = is_named;
         }
+
+        let mut types = Vec::new();
+        let mut cumulative = 0.0;
+        for (i, r) in sc.requests.iter().enumerate() {
+            if !(r.weight.is_finite() && r.weight >= 0.0) {
+                return Err(format!("request type '{}': weight must be >= 0", r.name));
+            }
+            let path = match &r.endpoint {
+                None => NO_PATH,
+                Some(name) => path_id(name)
+                    .ok_or_else(|| format!("request type '{}': no node has endpoint '{name}'", r.name))?,
+            };
+            if sc.requests[..i].iter().any(|o| o.name == r.name) {
+                return Err(format!("duplicate request type '{}'", r.name));
+            }
+            cumulative += r.weight;
+            types.push((cumulative, path));
+        }
+        if !types.is_empty() && cumulative <= 0.0 {
+            return Err("request types need a positive total weight".into());
+        }
+        let roots: Vec<u16> = if types.is_empty() { vec![NO_PATH] } else { types.iter().map(|t| t.1).collect() };
+
         if nodes[client as usize].out.is_empty() {
             return Err("the client node has no outgoing edge".into());
         }
-        check_acyclic(&nodes, &edges, design)?;
+        check_acyclic(&nodes, &edges, design, client, &roots, &paths)?;
 
         let mut traffic: Vec<(Time, f64)> = sc
             .traffic
@@ -1060,6 +1257,11 @@ impl Simulation {
             trace_budget: 0,
             next_trace: 0,
             traces: Vec::new(),
+            type_names: sc.requests.iter().map(|r| r.name.clone()).collect(),
+            type_win: sc.requests.iter().map(|_| Acc::default()).collect(),
+            type_total: sc.requests.iter().map(|_| Acc::default()).collect(),
+            types,
+            max_hops: sc.max_async_hops,
         };
         for i in 0..sim.chaos.len() {
             let at = sim.chaos[i].at;
@@ -1190,6 +1392,26 @@ impl Simulation {
                 .filter(|n| n.kind == NodeKind::Queue)
                 .map(|n| n.queued() as u64)
                 .sum(),
+            loop_dropped: t.loop_dropped,
+            requests: self
+                .type_total
+                .iter()
+                .zip(&self.type_names)
+                .map(|(a, name)| {
+                    let total = a.ok + a.err;
+                    RequestSummary {
+                        name: name.clone(),
+                        total,
+                        ok: a.ok,
+                        errors: a.err,
+                        timeouts: a.timeouts,
+                        error_rate: if total > 0 { a.err as f64 / total as f64 } else { 0.0 },
+                        p50_ms: us_to_ms(a.hist.percentile(0.5)),
+                        p95_ms: us_to_ms(a.hist.percentile(0.95)),
+                        p99_ms: us_to_ms(a.hist.percentile(0.99)),
+                    }
+                })
+                .collect(),
             stars: 0,
         };
         s.rate();
@@ -1411,6 +1633,7 @@ impl Simulation {
             attempt: c.attempt,
             wait_ms: us_to_ms(wait as f64),
             fire_and_forget: ff && ev == "send",
+            endpoint: self.nodes[c.node as usize].named.then_some(c.ep as u32),
         });
     }
 
@@ -1448,6 +1671,10 @@ impl Simulation {
                     primary_failed: false,
                     need: 0,
                     spare: 0,
+                    ep: 0,
+                    path: NO_PATH,
+                    hops: 0,
+                    rtype: NO_TYPE,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -1479,6 +1706,10 @@ impl Simulation {
         c.primary_failed = false;
         c.need = 0;
         c.spare = 0;
+        c.ep = 0;
+        c.path = NO_PATH;
+        c.hops = 0;
+        c.rtype = NO_TYPE;
         id
     }
 
@@ -1501,9 +1732,10 @@ impl Simulation {
     }
 
     /// Local processing time of a `threads` node.
-    fn sample_latency(&mut self, node: u32, inst: usize) -> Time {
+    fn sample_latency(&mut self, node: u32, inst: usize, ep: u16) -> Time {
         let n = &self.nodes[node as usize];
-        let (mu, sigma, factor) = (n.mu, n.sigma, n.latency_factor * n.usl(inst));
+        let work = n.eps[ep as usize].work;
+        let (mu, sigma, factor) = (n.mu, n.sigma, n.latency_factor * n.usl(inst) * work);
         let v = self.sample(mu, sigma);
         (v * factor).clamp(1.0, MAX_LATENCY_US) as Time
     }
@@ -1574,6 +1806,13 @@ impl Simulation {
             } else {
                 self.user_in_flight += 1;
                 let root = self.alloc_call(self.client, Parent::User, NO_EDGE, self.now);
+                if let Some(&(total, _)) = self.types.last() {
+                    let u = self.rng.f64() * total;
+                    let t = self.types.iter().position(|&(w, _)| u < w).unwrap_or(self.types.len() - 1);
+                    let c = &mut self.calls[root as usize];
+                    c.rtype = t as u16;
+                    c.path = self.types[t].1;
+                }
                 if self.trace_budget > 0 {
                     self.trace_budget -= 1;
                     self.next_trace += 1;
@@ -1645,7 +1884,9 @@ impl Simulation {
             }
             Balance::Random => (self.rng.f64() * k as f64) as usize % k,
         };
+        let ep = n.resolve(self.calls[call as usize].path);
         self.calls[call as usize].inst = inst as u32;
+        self.calls[call as usize].ep = ep;
         let span = self.calls[call as usize].span;
         self.record(call, "arrive", span, 0, NO_EDGE, true, 0);
         let n = &mut self.nodes[node as usize];
@@ -1664,6 +1905,14 @@ impl Simulation {
             let c = &mut self.calls[call as usize];
             c.parent = Parent::Async;
             c.start = self.now;
+            c.hops += 1;
+            if c.hops > self.max_hops {
+                // message TTL exceeded: an event loop, not real work
+                self.win.loop_dropped += 1;
+                self.total.loop_dropped += 1;
+                self.free_call(call);
+                return;
+            }
         }
         let n = &mut self.nodes[node as usize];
         if n.insts[inst].busy < n.slots {
@@ -1681,16 +1930,17 @@ impl Simulation {
         let span = self.calls[call as usize].span;
         self.record(call, "start", span, 0, NO_EDGE, true, 0);
         let c = &self.calls[call as usize];
-        let (node, gen, inst) = (c.node, c.gen, c.inst as usize);
+        let (node, gen, inst, ep) = (c.node, c.gen, c.inst as usize, c.ep);
         match self.nodes[node as usize].model {
             ExecModel::Threads => {
-                let lat = self.sample_latency(node, inst);
+                let lat = self.sample_latency(node, inst, ep);
                 self.schedule(self.now + lat, Ev::LocalDone { call, gen });
             }
             ExecModel::Cpu => {
                 let n = &self.nodes[node as usize];
-                let (mu, sigma, slices) = (n.cpu_mu, n.cpu_sigma, n.effective_calls() + 1);
-                let total = self.sample(mu, sigma);
+                let (mu, sigma, slices) = (n.cpu_mu, n.cpu_sigma, n.effective_calls(ep) + 1);
+                let work = n.eps[ep as usize].work;
+                let total = self.sample(mu, sigma) * work;
                 self.calls[call as usize].slice = (total / slices as f64).max(1.0) as Time;
                 self.maybe_gc(node, inst);
                 self.request_cpu(call);
@@ -1811,14 +2061,14 @@ impl Simulation {
 
     /// Make the next downstream call, or answer once all calls are done.
     fn proceed(&mut self, call: u32) {
-        let node = self.calls[call as usize].node;
-        let calls = self.nodes[node as usize].effective_calls();
+        let (node, ep) = (self.calls[call as usize].node, self.calls[call as usize].ep);
+        let calls = self.nodes[node as usize].effective_calls(ep);
         if self.calls[call as usize].step >= calls {
             self.finish(call, true);
             return;
         }
         self.calls[call as usize].attempt = 0;
-        if self.nodes[node as usize].routing != Routing::Pick {
+        if self.nodes[node as usize].eps[ep as usize].routing != Routing::Pick {
             self.fork(call);
             return;
         }
@@ -1833,7 +2083,7 @@ impl Simulation {
     /// its own branch (each with the edge's retry/timeout/pool policy) and
     /// continue once all awaited branches answered.
     fn fork(&mut self, call: u32) {
-        let (node, step, gen, start, inst, trace, span) = {
+        let (node, step, gen, start, inst, trace, span, ep, path, hops) = {
             let c = &self.calls[call as usize];
             (
                 c.node,
@@ -1843,14 +2093,22 @@ impl Simulation {
                 c.inst,
                 c.trace,
                 c.span,
+                c.ep,
+                c.path,
+                c.hops,
             )
         };
-        let stage = self.nodes[node as usize].stages[step].clone();
+        let stage = self.nodes[node as usize].eps[ep as usize].stages[step].clone();
         self.next_token += 1;
         let fork = self.next_token;
         let mut awaited = 0;
         for edge in stage {
             let fire_and_forget = self.edges[edge as usize].fire_and_forget;
+            if fire_and_forget && hops >= self.max_hops {
+                self.win.loop_dropped += 1;
+                self.total.loop_dropped += 1;
+                continue;
+            }
             let parent = if fire_and_forget {
                 Parent::Async
             } else {
@@ -1870,6 +2128,9 @@ impl Simulation {
             let c = &mut self.calls[b as usize];
             c.branch = true;
             c.fixed_edge = edge;
+            c.ep = ep;
+            c.path = path;
+            c.hops = hops + fire_and_forget as u32;
             c.inst = inst;
             c.trace = trace;
             c.span = span;
@@ -2058,8 +2319,8 @@ impl Simulation {
     /// Make the next downstream call for `call` (round-robin, skipping edges
     /// whose breaker is open).
     fn send(&mut self, call: u32) -> Send {
-        let node = self.calls[call as usize].node;
-        let k = self.nodes[node as usize].out.len();
+        let (node, ep) = (self.calls[call as usize].node, self.calls[call as usize].ep as usize);
+        let k = self.nodes[node as usize].eps[ep].out.len();
         if k == 0 {
             return Send::NoEdge;
         }
@@ -2072,10 +2333,10 @@ impl Simulation {
                 self.edges[fixed as usize].w_short_circuits += 1;
             }
         } else {
-            let start = self.nodes[node as usize].rr;
-            self.nodes[node as usize].rr = start.wrapping_add(1);
+            let start = self.nodes[node as usize].eps[ep].rr;
+            self.nodes[node as usize].eps[ep].rr = start.wrapping_add(1);
             for i in 0..k {
-                let e = self.nodes[node as usize].out[(start + i) % k];
+                let e = self.nodes[node as usize].eps[ep].out[(start + i) % k];
                 if self.breaker_allows(e) {
                     chosen = Some(e);
                     break;
@@ -2125,6 +2386,7 @@ impl Simulation {
         };
         let lat = self.link_delay(edge, false);
         let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
+        self.inherit(call, child, edge);
         let token = self.calls[child as usize].token;
         let child_gen = self.calls[child as usize].gen;
         self.calls[call as usize].waiting = token;
@@ -2144,10 +2406,7 @@ impl Simulation {
         if trace != 0 {
             let wait = if since > 0 { self.now - since } else { 0 };
             self.record(call, "send", token, span, edge, true, wait);
-            // the event is about the child span, at the target node
-            if let Some(ev) = self.traces.last_mut() {
-                ev.node = to;
-            }
+            self.retarget_trace(child);
         }
         self.schedule(
             self.now + lat,
@@ -2165,6 +2424,27 @@ impl Simulation {
             PARTICLE_REQUEST
         };
         self.emit(edge, lat, kind, trace != 0);
+    }
+
+    /// A child call takes the path set by its edge (or the caller's) and the
+    /// caller's async hop count.
+    fn inherit(&mut self, call: u32, child: u32, edge: u32) {
+        let (path, hops) = (self.calls[call as usize].path, self.calls[call as usize].hops);
+        let p = self.edges[edge as usize].path;
+        let c = &mut self.calls[child as usize];
+        c.path = if p == NO_PATH { path } else { p };
+        c.hops = hops;
+    }
+
+    /// The last trace event is about `child`'s span, at the target node.
+    fn retarget_trace(&mut self, child: u32) {
+        let (to, path) = (self.calls[child as usize].node, self.calls[child as usize].path);
+        let n = &self.nodes[to as usize];
+        let ep = n.named.then(|| n.resolve(path) as u32);
+        if let Some(ev) = self.traces.last_mut() {
+            ev.node = to;
+            ev.endpoint = ep;
+        }
     }
 
     /// A pooled connection on `edge` is free again: hand it to the next
@@ -2279,6 +2559,7 @@ impl Simulation {
         };
         let lat = self.link_delay(edge, false);
         let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
+        self.inherit(call, child, edge);
         let (child_token, child_gen) = (self.calls[child as usize].token, self.calls[child as usize].gen);
         self.calls[call as usize].hedge = child_token;
         let trace = self.calls[call as usize].trace;
@@ -2286,9 +2567,7 @@ impl Simulation {
         if trace != 0 {
             let span = self.calls[call as usize].span;
             self.record(call, "hedge", child_token, span, edge, true, 0);
-            if let Some(ev) = self.traces.last_mut() {
-                ev.node = to;
-            }
+            self.retarget_trace(child);
         }
         self.schedule(self.now + lat, Ev::Arrive { call: child, gen: child_gen });
         self.emit(edge, lat, PARTICLE_RETRY, trace != 0);
@@ -2429,16 +2708,12 @@ impl Simulation {
         let c = &self.calls[call as usize];
         let latency = self.now - c.start;
         let timed_out = !ok && c.last_timeout;
-        for acc in [&mut self.win, &mut self.total] {
-            if ok {
-                acc.ok += 1;
-            } else {
-                acc.err += 1;
-            }
-            if timed_out {
-                acc.timeouts += 1;
-            }
-            acc.hist.record(latency);
+        let rtype = c.rtype as usize;
+        self.win.tally(ok, timed_out, latency);
+        self.total.tally(ok, timed_out, latency);
+        if rtype < self.type_win.len() {
+            self.type_win[rtype].tally(ok, timed_out, latency);
+            self.type_total[rtype].tally(ok, timed_out, latency);
         }
     }
 
@@ -2583,10 +2858,22 @@ impl Simulation {
                 p95_ms: us_to_ms(w.hist.percentile(0.95)),
                 p99_ms,
                 slo_ok,
+                loop_dropped: w.loop_dropped,
+                requests: self
+                    .type_win
+                    .iter()
+                    .map(|a| RequestWindow {
+                        rps: a.ok as f64 / secs,
+                        error_rps: a.err as f64 / secs,
+                        p50_ms: us_to_ms(a.hist.percentile(0.5)),
+                        p99_ms: us_to_ms(a.hist.percentile(0.99)),
+                    })
+                    .collect(),
                 nodes,
                 edges,
             });
             self.win.clear();
+            self.type_win.iter_mut().for_each(Acc::clear);
             self.window_start = end;
         }
     }
@@ -2601,39 +2888,70 @@ enum Send {
 }
 
 /// Synchronous calls must not loop back, or a request could never finish.
+/// The check runs on (node, path) pairs reachable from the client, so A →
+/// B → A is fine when it lands on another endpoint of A. Calls that do not
+/// hold the caller (queue deliveries, fire-and-forget branches) may close a
+/// loop: the hop limit bounds those at run time.
 fn check_acyclic(
     nodes: &[NodeRt],
     edges: &[EdgeRt],
     design: &crate::model::Design,
+    client: u32,
+    roots: &[u16],
+    paths: &[String],
 ) -> Result<(), String> {
+    let p = paths.len() + 1; // last slot = NO_PATH
+    let slot = |path: u16| if path == NO_PATH { paths.len() } else { path as usize };
+    let label = |n: usize, path: u16| {
+        let node = &nodes[n];
+        if node.named {
+            let ep = &node.eps[node.resolve(path) as usize];
+            format!("{}.{}", design.nodes[n].id, paths[ep.name as usize])
+        } else {
+            design.nodes[n].id.clone()
+        }
+    };
     // 0 = unvisited, 1 = on stack, 2 = done
-    let mut state = vec![0u8; nodes.len()];
-    for root in 0..nodes.len() {
-        if state[root] != 0 {
+    let mut state = vec![0u8; nodes.len() * p];
+    // async deliveries start new roots: their own sync calls are checked too
+    let mut pending: Vec<(usize, u16)> = roots.iter().map(|&r| (client as usize, r)).collect();
+    while let Some(r) = pending.pop() {
+        if state[r.0 * p + slot(r.1)] != 0 {
             continue;
         }
-        let mut stack = vec![(root, 0usize)];
-        state[root] = 1;
+        let mut stack = vec![(r.0, r.1, 0usize)];
+        state[r.0 * p + slot(r.1)] = 1;
         while let Some(top) = stack.last_mut() {
-            let (n, i) = *top;
-            if let Some(&e) = nodes[n].out.get(i) {
-                top.1 += 1;
-                let to = edges[e as usize].to as usize;
-                match state[to] {
+            let (n, path, i) = *top;
+            let ep = &nodes[n].eps[nodes[n].resolve(path) as usize];
+            if let Some(&e) = ep.out.get(i) {
+                top.2 += 1;
+                let edge = &edges[e as usize];
+                let detached = nodes[n].kind == NodeKind::Queue
+                    || (edge.fire_and_forget && ep.routing != Routing::Pick);
+                let to = edge.to as usize;
+                let child = if edge.path == NO_PATH { path } else { edge.path };
+                if detached {
+                    pending.push((to, child));
+                    continue;
+                }
+                let k = to * p + slot(child);
+                match state[k] {
                     0 => {
-                        state[to] = 1;
-                        stack.push((to, 0));
+                        state[k] = 1;
+                        stack.push((to, child, 0));
                     }
                     1 => {
                         return Err(format!(
                             "cycle detected through '{}' -> '{}'",
-                            design.nodes[n].id, design.nodes[to].id
+                            label(n, path),
+                            label(to, child)
                         ))
                     }
                     _ => {}
                 }
             } else {
-                state[n] = 2;
+                state[n * p + slot(path)] = 2;
                 stack.pop();
             }
         }
@@ -2670,6 +2988,8 @@ mod tests {
             budget_per_hour: None,
             arrival: Arrival::Poisson,
             max_concurrent: None,
+            requests: Vec::new(),
+            max_async_hops: 16,
         }
     }
 
@@ -3438,6 +3758,198 @@ mod tests {
     fn rejects_cycles() {
         let mut input = api_db(1.0, edge("api", "db"), 10.0);
         input.design.edges.push(edge("db", "api"));
+        let err = Simulation::new(&input, false).err().unwrap();
+        assert!(err.contains("cycle"), "{err}");
+    }
+
+    // ------------------------------------------------------------ endpoints
+
+    fn ep(name: &str, work: f64) -> Endpoint {
+        Endpoint {
+            name: name.into(),
+            work,
+            ..Endpoint::default()
+        }
+    }
+
+    fn from_to(s: &str, from: Option<&str>, t: &str, to: Option<&str>) -> EdgeSpec {
+        EdgeSpec {
+            from_endpoint: from.map(Into::into),
+            to_endpoint: to.map(Into::into),
+            ..edge(s, t)
+        }
+    }
+
+    fn svc(endpoints: Vec<Endpoint>) -> NodeConfig {
+        NodeConfig {
+            latency_p50_ms: 2.0,
+            latency_p99_ms: 2.0,
+            endpoints,
+            ..NodeConfig::default()
+        }
+    }
+
+    fn mix(types: &[(&str, f64, &str)]) -> Vec<RequestType> {
+        types
+            .iter()
+            .map(|&(name, weight, endpoint)| RequestType {
+                name: name.into(),
+                weight,
+                endpoint: Some(endpoint.into()),
+            })
+            .collect()
+    }
+
+    /// order.create → payment → order.details is a loop between services
+    /// but not between endpoints.
+    fn order_payment(back_to: &str) -> SimInput {
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node("order", NodeKind::Service, svc(vec![ep("create", 1.0), ep("details", 1.0)])),
+                    node("payment", NodeKind::Service, svc(vec![])),
+                ],
+                edges: vec![
+                    from_to("c", None, "order", Some("create")),
+                    from_to("order", Some("create"), "payment", None),
+                    from_to("payment", None, "order", Some(back_to)),
+                ],
+            },
+            scenario: scenario(50.0, 5_000.0),
+        }
+    }
+
+    #[test]
+    fn calls_back_into_another_endpoint_are_not_a_cycle() {
+        let s = run(&order_payment("details"));
+        assert!(s.ok > 100 && s.errors == 0, "{s:?}");
+        // create → payment → details: three hops of ~2 ms plus the network
+        assert!(s.p50_ms > 6.0 && s.p50_ms < 20.0, "{s:?}");
+        let err = Simulation::new(&order_payment("create"), false).err().unwrap();
+        assert!(err.contains("cycle") && err.contains("order.create"), "{err}");
+    }
+
+    #[test]
+    fn endpoint_names_are_validated() {
+        let mut input = order_payment("details");
+        input.design.edges[2].to_endpoint = Some("nope".into());
+        assert!(Simulation::new(&input, false).err().unwrap().contains("nope"));
+        let mut input = order_payment("details");
+        input.design.edges[1].from_endpoint = Some("details2".into());
+        assert!(Simulation::new(&input, false).err().unwrap().contains("details2"));
+        let mut input = order_payment("details");
+        input.scenario.requests = mix(&[("x", 1.0, "missing")]);
+        assert!(Simulation::new(&input, false).err().unwrap().contains("missing"));
+    }
+
+    /// api has `browse` and `checkout`; both use one db with a single slot,
+    /// where a write costs 20 reads.
+    fn shop(checkout_weight: f64) -> SimInput {
+        let db = NodeConfig {
+            concurrency: 1,
+            queue_size: 10_000,
+            ..svc(vec![ep("read", 1.0), ep("write", 20.0)])
+        };
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node("lb", NodeKind::LoadBalancer, NodeConfig::default()),
+                    node("api", NodeKind::Service, svc(vec![ep("browse", 1.0), ep("checkout", 1.0)])),
+                    node("db", NodeKind::Database, db),
+                ],
+                edges: vec![
+                    edge("c", "lb"),
+                    edge("lb", "api"), // the path passes through the LB
+                    from_to("api", Some("browse"), "db", Some("read")),
+                    from_to("api", Some("checkout"), "db", Some("write")),
+                ],
+            },
+            scenario: Scenario {
+                requests: mix(&[("browse", 90.0, "browse"), ("checkout", checkout_weight, "checkout")]),
+                ..scenario(100.0 * (90.0 + checkout_weight) / 90.0, 30_000.0)
+            },
+        }
+    }
+
+    #[test]
+    fn request_mix_splits_traffic_and_reports_each_type() {
+        let s = run(&shop(10.0));
+        assert_eq!(s.requests.len(), 2);
+        let (browse, checkout) = (&s.requests[0], &s.requests[1]);
+        assert_eq!(browse.total + checkout.total, s.total);
+        let share = checkout.total as f64 / s.total as f64;
+        assert!((share - 0.1).abs() < 0.02, "{share}");
+        // a write holds the db 20x longer than a read
+        assert!(checkout.p50_ms > 30.0 && browse.p50_ms < checkout.p50_ms, "{s:?}");
+        let w = windows(&shop(10.0));
+        assert_eq!(w[5].requests.len(), 2);
+        assert!(w[5].requests[0].rps > 60.0 && w[5].requests[1].rps > 3.0);
+    }
+
+    #[test]
+    fn a_rare_heavy_request_type_slows_the_frequent_one_through_a_shared_db() {
+        let alone = run(&shop(0.0)).requests[0].p99_ms;
+        let s = run(&shop(10.0));
+        let mixed = s.requests[0].p99_ms;
+        assert!(mixed > 5.0 * alone, "browse p99 {alone} ms alone, {mixed} ms with checkout");
+        // same pressure through the endpoints' shared slot, not a new limit
+        assert!(s.errors == 0, "{s:?}");
+    }
+
+    #[test]
+    fn endpoints_without_a_mix_use_the_first_one() {
+        let mut input = shop(10.0);
+        input.scenario.requests.clear();
+        let w = windows(&input);
+        let db = 3;
+        let reads: f64 = w.iter().map(|w| w.nodes[db].arrivals).sum();
+        assert!(reads > 0.0);
+        let s = run(&input);
+        assert!(s.requests.is_empty() && s.p50_ms < 20.0, "{s:?}");
+    }
+
+    // ------------------------------------------------------------ async loops
+
+    /// api → q → worker, and the worker publishes back onto q.
+    fn event_loop(max_async_hops: u32) -> SimInput {
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node("api", NodeKind::Service, svc(vec![])),
+                    node("q", NodeKind::Queue, NodeConfig { queue_size: 1_000_000, ..NodeConfig::default() }),
+                    node("worker", NodeKind::Service, svc(vec![])),
+                ],
+                edges: vec![edge("c", "api"), edge("api", "q"), edge("q", "worker"), edge("worker", "q")],
+            },
+            scenario: Scenario {
+                max_async_hops,
+                ..scenario(20.0, 10_000.0)
+            },
+        }
+    }
+
+    #[test]
+    fn loops_through_a_queue_run_until_the_hop_limit() {
+        let s = run(&event_loop(16));
+        assert!(s.errors == 0 && s.loop_dropped > 100, "{s:?}");
+        assert!(s.stars < 3, "an event loop is not resilient");
+        let short = run(&event_loop(4));
+        assert!(short.async_ok * 2 < s.async_ok, "{} vs {}", short.async_ok, s.async_ok);
+        // each message is delivered max_async_hops times, then dropped
+        let per_msg = s.async_ok as f64 / s.loop_dropped as f64;
+        assert!((per_msg - 16.0).abs() < 1.5, "{per_msg}");
+    }
+
+    #[test]
+    fn sync_cycles_behind_a_queue_are_still_rejected() {
+        let mut input = event_loop(16);
+        input.design.edges.pop();
+        input.design.nodes.push(node("svc", NodeKind::Service, svc(vec![])));
+        input.design.edges.push(edge("worker", "svc"));
+        input.design.edges.push(edge("svc", "worker"));
         let err = Simulation::new(&input, false).err().unwrap();
         assert!(err.contains("cycle"), "{err}");
     }

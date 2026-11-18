@@ -3,7 +3,6 @@ import {
   Background,
   Controls,
   ReactFlow,
-  addEdge,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -31,6 +30,7 @@ import {
   type NodeConfig,
   type NodeKind,
   type Preset,
+  type RequestType,
   type SizingReport,
   type Summary,
   type TraceEvent,
@@ -44,7 +44,9 @@ import {
   toDesign,
   toFlow,
   uniqueId,
-  wouldCycle,
+  edgeId,
+  endpointsOf,
+  sanitizeScenario,
   type FlowEdgeType,
   type SystemNodeType,
 } from './model/flow';
@@ -194,7 +196,7 @@ export function App() {
       if (s.mode === 'game') {
         client.initLevel(s.level, design);
       } else {
-        const sc = { ...s.preset.scenario, durationMs: undefined };
+        const sc = sanitizeScenario({ ...s.preset.scenario, durationMs: undefined }, design);
         client.init({ design, scenario: sc }, s.scripted ? null : s.rps, s.multiplier);
       }
       if (autoplay) client.play();
@@ -483,6 +485,30 @@ export function App() {
     }
   };
 
+  /** Request mix of the open project: saved, then the run restarts with it (debounced while typing). */
+  const mixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateRequests = (requests: RequestType[]) => {
+    const current = projectRef.current;
+    if (!current) return;
+    const p = { ...current, scenario: { ...current.scenario, requests: requests.length ? requests : undefined }, updatedAt: Date.now() };
+    projectRef.current = p;
+    setProject(p);
+    settings.current.preset = { ...settings.current.preset, scenario: p.scenario };
+    // saved right away (writes stay in order); only the restart waits for typing to pause
+    store.putIfUnchanged(p, current.updatedAt).then((res) => {
+      if (!res.ok && projectRef.current === p) {
+        projectRef.current = current;
+        setProject(current);
+        setConflict({ theirs: res.current });
+      }
+    });
+    if (mixTimer.current) clearTimeout(mixTimer.current);
+    mixTimer.current = setTimeout(() => {
+      const r = reindex(nodesRef.current, edgesRef.current);
+      restart(r.nodes, r.edges, client.running);
+    }, 400);
+  };
+
   // another tab wrote this project: warn now, not only at the next save
   useEffect(() => {
     if (!projectId) return;
@@ -709,8 +735,13 @@ export function App() {
     if (!c.source || !c.target || c.source === c.target) return false;
     const target = nodesRef.current.find((n) => n.id === c.target);
     if (!target || target.data.kind === 'client') return false;
-    if (edgesRef.current.some((e) => e.source === c.source && e.target === c.target)) return false;
-    return !wouldCycle(edgesRef.current, c.source, c.target);
+    // a second edge to the same node only makes sense from another endpoint
+    const source = nodesRef.current.find((n) => n.id === c.source);
+    const multi = !!source && endpointsOf(source.data.kind, source.data.config).length > 1;
+    if (!multi && edgesRef.current.some((e) => e.source === c.source && e.target === c.target)) return false;
+    // loops between nodes are fine when they land on another endpoint or go
+    // through a queue; the engine checks the real (endpoint-level) cycles
+    return true;
   }, []);
 
   const onConnect = useCallback(
@@ -719,13 +750,13 @@ export function App() {
       const targetTech = techOf(nodesRef.current.find((n) => n.id === c.target)?.data.tech);
       const policy: EdgePolicy = { ...DEFAULT_POLICY, latencyMs: fromClient ? 5 : 1, ...targetTech?.edgeDefaults };
       const edge: FlowEdgeType = {
-        id: `e-${c.source}-${c.target}`,
+        id: edgeId(c.source, c.target, edgesRef.current),
         source: c.source,
         target: c.target,
         type: 'flow',
         data: { index: edgesRef.current.length, policy },
       };
-      commit(nodesRef.current, addEdge(edge, edgesRef.current));
+      commit(nodesRef.current, [...edgesRef.current, edge]);
     },
     [commit],
   );
@@ -1349,6 +1380,8 @@ export function App() {
                     windows={windows}
                     scenario={scenario}
                     cost={cost}
+                    endpoints={[...new Set(nodes.flatMap((n) => endpointsOf(n.data.kind, n.data.config)))]}
+                    onRequestsChange={mode === 'sandbox' && project && preset === projectPreset ? updateRequests : undefined}
                     replicas={nodes
                       .filter((n) => n.data.config.autoscale)
                       .map((n) => ({ index: n.data.index, label: n.data.label }))}
@@ -1358,6 +1391,7 @@ export function App() {
                   <TracePanel
                     events={traceEvents}
                     nodeLabel={(i) => nodes.find((n) => n.data.index === i)?.data.label ?? `#${i}`}
+                    endpointName={(i, ep) => nodes.find((n) => n.data.index === i)?.data.config.endpoints?.[ep]?.name}
                     edgeEnds={(i) => {
                       const e = edges.find((x) => x.data?.index === i);
                       if (!e) return undefined;
@@ -1431,6 +1465,15 @@ export function App() {
                       edge={selectedEdge.data!}
                       source={nodes.find((n) => n.id === selectedEdge.source)?.data.label ?? selectedEdge.source}
                       target={nodes.find((n) => n.id === selectedEdge.target)?.data.label ?? selectedEdge.target}
+                      sourceEndpoints={(() => {
+                        const n = nodes.find((x) => x.id === selectedEdge.source);
+                        return n ? endpointsOf(n.data.kind, n.data.config) : [];
+                      })()}
+                      targetEndpoints={(() => {
+                        const n = nodes.find((x) => x.id === selectedEdge.target);
+                        return n ? endpointsOf(n.data.kind, n.data.config) : [];
+                      })()}
+                      allEndpoints={[...new Set(nodes.flatMap((n) => endpointsOf(n.data.kind, n.data.config)))]}
                       game={mode === 'game'}
                       allowFireAndForget={mode !== 'game' || !!level.allowFireAndForget}
                       onChange={(p) => updateEdge(selectedEdge.id, p)}

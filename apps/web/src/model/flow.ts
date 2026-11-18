@@ -10,6 +10,7 @@ import {
   type NodeKind,
   type NodeWindow,
   type Routing,
+  type Scenario,
 } from '@/types';
 
 export type SystemNodeData = {
@@ -41,7 +42,7 @@ export interface EdgeView {
   outCount: number;
   inSlot: number;
   inCount: number;
-  /** Routing of the source node. */
+  /** Routing of the source handler (its endpoint's, else the node's). */
   routing: Routing;
   /** 1-based step for `sequence` routing (equal steps run together). */
   step: number;
@@ -62,6 +63,8 @@ export function policyOf(e: DesignEdge): EdgePolicy {
     order: e.order ?? 0,
     fireAndForget: e.fireAndForget ?? false,
     hedgeAfterMs: e.hedgeAfterMs ?? null,
+    fromEndpoint: e.fromEndpoint ?? null,
+    toEndpoint: e.toEndpoint ?? null,
     requestKb: e.requestKb ?? 0,
     responseKb: e.responseKb ?? 0,
     bandwidthMbps: e.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps,
@@ -69,8 +72,22 @@ export function policyOf(e: DesignEdge): EdgePolicy {
 }
 
 /** Routing the engine really uses (clients and LBs always pick one edge). */
-export function effectiveRouting(kind: NodeKind, config: NodeConfig): Routing {
-  return kind === 'client' || kind === 'loadBalancer' ? 'pick' : (config.routing ?? 'pick');
+export function effectiveRouting(kind: NodeKind, config: NodeConfig, endpoint?: string | null): Routing {
+  if (kind === 'client' || kind === 'loadBalancer') return 'pick';
+  const ep = endpoint ? config.endpoints?.find((d) => d.name === endpoint) : undefined;
+  return ep?.routing ?? config.routing ?? 'pick';
+}
+
+/** Endpoint names a node declares (none for clients, like the engine). */
+export function endpointsOf(kind: NodeKind, config: NodeConfig): string[] {
+  return kind === 'client' ? [] : (config.endpoints ?? []).map((d) => d.name);
+}
+
+/** Unique edge id: several edges may join the same pair (one per endpoint). */
+export function edgeId(source: string, target: string, taken: { id: string }[]) {
+  const base = `e-${source}-${target}`;
+  if (!taken.some((e) => e.id === base)) return base;
+  for (let i = 2; ; i++) if (!taken.some((e) => e.id === `${base}-${i}`)) return `${base}-${i}`;
 }
 
 /**
@@ -92,11 +109,17 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
   outs.forEach((list) => [...list].sort((a, b) => y(a.target) - y(b.target)).forEach((e, i) => outSlot.set(e.id, i)));
   ins.forEach((list) => [...list].sort((a, b) => y(a.source) - y(b.source)).forEach((e, i) => inSlot.set(e.id, i)));
   const steps = new Map<string, [number, number]>();
+  const handler = (e: FlowEdgeType) => e.data?.policy.fromEndpoint ?? null;
   outs.forEach((list, src) => {
     const n = byId.get(src);
-    if (!n || effectiveRouting(n.data.kind, n.data.config) !== 'sequence') return;
-    const orders = [...new Set(list.map((e) => e.data?.policy.order ?? 0))].sort((a, b) => a - b);
-    list.forEach((e) => steps.set(e.id, [orders.indexOf(e.data?.policy.order ?? 0) + 1, orders.length]));
+    if (!n) return;
+    // steps are numbered per handler: its own edges plus the shared ones
+    for (const h of new Set(list.map(handler))) {
+      if (effectiveRouting(n.data.kind, n.data.config, h) !== 'sequence') continue;
+      const mine = list.filter((e) => handler(e) === h || handler(e) === null);
+      const orders = [...new Set(mine.map((e) => e.data?.policy.order ?? 0))].sort((a, b) => a - b);
+      mine.filter((e) => handler(e) === h).forEach((e) => steps.set(e.id, [orders.indexOf(e.data?.policy.order ?? 0) + 1, orders.length]));
+    }
   });
   return edges.map((e) => {
     const src = byId.get(e.source);
@@ -106,7 +129,7 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
       outCount: outs.get(e.source)?.length ?? 1,
       inSlot: inSlot.get(e.id) ?? 0,
       inCount: ins.get(e.target)?.length ?? 1,
-      routing: src ? effectiveRouting(src.data.kind, src.data.config) : 'pick',
+      routing: src ? effectiveRouting(src.data.kind, src.data.config, handler(e)) : 'pick',
       step,
       steps: count,
     };
@@ -167,13 +190,13 @@ export function toFlow(
         tech: n.tech,
       },
     })),
-    edges: design.edges.map((e, index) => ({
-      id: `e-${e.source}-${e.target}`,
+    edges: design.edges.reduce<FlowEdgeType[]>((acc, e, index) => [...acc, {
+      id: edgeId(e.source, e.target, acc),
       source: e.source,
       target: e.target,
       type: 'flow',
       data: { index, policy: policyOf(e) },
-    })),
+    }], []),
   };
 }
 
@@ -195,13 +218,16 @@ export function reindex(nodes: SystemNodeType[], edges: FlowEdgeType[]) {
 export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design {
   const ns = [...nodes].sort((a, b) => a.data.index - b.data.index);
   const es = [...edges].sort((a, b) => a.data!.index - b.data!.index);
+  // a renamed or removed endpoint must not leave edges pointing at nothing (the engine rejects them)
+  const own = new Map(ns.map((n) => [n.id, endpointsOf(n.data.kind, n.data.config)]));
+  const every = new Set([...own.values()].flat());
   return {
     nodes: ns.map((n) => ({
       id: n.id,
       kind: n.data.kind,
       label: n.data.label,
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
-      config: withoutDanglingQueue(n.data.config, ns),
+      config: withoutBadEndpoints(withoutDanglingQueue(n.data.config, ns)),
       ...(n.data.tech ? { tech: n.data.tech } : {}),
     })),
     edges: es.map((e) => {
@@ -221,6 +247,9 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       if (p.order) out.order = p.order;
       if (p.fireAndForget) out.fireAndForget = true;
       if (p.hedgeAfterMs) out.hedgeAfterMs = p.hedgeAfterMs;
+      if (p.fromEndpoint && own.get(e.source)?.includes(p.fromEndpoint)) out.fromEndpoint = p.fromEndpoint;
+      const targetEps = own.get(e.target) ?? [];
+      if (p.toEndpoint && (targetEps.length ? targetEps.includes(p.toEndpoint) : every.has(p.toEndpoint))) out.toEndpoint = p.toEndpoint;
       if (p.requestKb) out.requestKb = p.requestKb;
       if (p.responseKb) out.responseKb = p.responseKb;
       if (p.requestKb || p.responseKb) out.bandwidthMbps = p.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps;
@@ -229,27 +258,30 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
   };
 }
 
+/** Endpoints need distinct non-empty names; drop the ones being typed. */
+function withoutBadEndpoints(config: NodeConfig): NodeConfig {
+  if (!config.endpoints) return config;
+  const seen = new Set<string>();
+  const endpoints = config.endpoints.filter((e) => {
+    const ok = e.name.trim() !== '' && !seen.has(e.name);
+    seen.add(e.name);
+    return ok;
+  });
+  return { ...config, endpoints: endpoints.length ? endpoints : undefined };
+}
+
+/** Request types may only enter through endpoints that exist. */
+export function sanitizeScenario(sc: Scenario, design: Design): Scenario {
+  if (!sc.requests?.length) return sc;
+  const names = new Set(design.nodes.filter((n) => n.kind !== 'client').flatMap((n) => (n.config?.endpoints ?? []).map((e) => e.name)));
+  return { ...sc, requests: sc.requests.map((r) => (r.endpoint && !names.has(r.endpoint) ? { ...r, endpoint: null } : r)) };
+}
+
 /** A deleted queue node must not leave a KEDA scaler pointing at nothing (the engine rejects it). */
 function withoutDanglingQueue(config: NodeConfig, nodes: SystemNodeType[]): NodeConfig {
   const q = config.autoscale?.queue;
   if (!q || nodes.some((n) => n.id === q)) return config;
   return { ...config, autoscale: { ...config.autoscale!, queue: null } };
-}
-
-/** Would adding source -> target create a cycle (target already reaches source)? */
-export function wouldCycle(edges: { source: string; target: string }[], source: string, target: string) {
-  const out = new Map<string, string[]>();
-  edges.forEach((e) => out.set(e.source, [...(out.get(e.source) ?? []), e.target]));
-  const stack = [target];
-  const seen = new Set<string>();
-  while (stack.length) {
-    const n = stack.pop()!;
-    if (n === source) return true;
-    if (seen.has(n)) continue;
-    seen.add(n);
-    stack.push(...(out.get(n) ?? []));
-  }
-  return false;
 }
 
 export function uniqueId(kind: string, taken: Set<string>) {

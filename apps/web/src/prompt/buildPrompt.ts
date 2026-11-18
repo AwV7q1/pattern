@@ -50,14 +50,17 @@ function role(n: Node, outs: DesignEdge[]) {
 function scale(n: Node) {
   if (n.kind === 'client') return '—';
   const c = n.cfg;
-  if (c.model === 'cpu') return `${c.instances} instance × ${c.cpuLanes} CPU, tối đa ${c.maxInFlight} request mở/instance`;
+  const eps = c.endpoints?.length ? `; endpoint ${c.endpoints.map((e) => `\`/${e.name}\``).join(', ')}` : '';
+  if (c.model === 'cpu') return `${c.instances} instance × ${c.cpuLanes} CPU, tối đa ${c.maxInFlight} request mở/instance${eps}`;
   if (n.kind === 'queue') return `${c.instances} node, consumer concurrency ${c.concurrency}`;
-  return `${c.instances} instance × ${c.concurrency} concurrency`;
+  return `${c.instances} instance × ${c.concurrency} concurrency${eps}`;
 }
 
 function policyText(e: DesignEdge, target: Node) {
   const p = policyOf(e);
   const parts: string[] = [];
+  if (p.fromEndpoint) parts.push(`chỉ trong handler \`/${p.fromEndpoint}\``);
+  if (p.toEndpoint) parts.push(`gọi endpoint \`/${p.toEndpoint}\``);
   if (p.fireAndForget) parts.push('không chờ kết quả (fire-and-forget)');
   if (p.timeoutMs) parts.push(`timeout ${ms(p.timeoutMs)}`);
   if (p.hedgeAfterMs) parts.push(`hedged request: sau ${ms(p.hedgeAfterMs)} chưa có trả lời thì gửi thêm 1 bản tới replica khác, lấy bản về trước, huỷ bản còn lại (chỉ cho thao tác idempotent)`);
@@ -122,7 +125,8 @@ function mermaid(nodes: Node[], edges: DesignEdge[], groups: Project['design']['
     const orders = sequential ? [...new Set(edges.filter((x) => x.source === e.source).map((x) => x.order ?? 0))].sort((a, b) => a - b) : [];
     const order = sequential ? `${orders.indexOf(p.order ?? 0) + 1}` : '';
     const async = src?.kind === 'queue' ? 'async' : p.fireAndForget ? 'fire&forget' : '';
-    const text = [order && `#${order}`, async].filter(Boolean).join(' ');
+    const route = p.fromEndpoint || p.toEndpoint ? `${p.fromEndpoint ?? '*'}→/${p.toEndpoint ?? '…'}` : '';
+    const text = [order && `#${order}`, async, route].filter(Boolean).join(' ');
     const arrow = async ? '-.->' : '-->';
     lines.push(`  ${id(e.source)} ${arrow}${text ? `|${text}|` : ''} ${id(e.target)}`);
   }
@@ -233,6 +237,11 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
   out.push(`- **SLO**: p99 ≤ ${ms(sc.slo.p99Ms)}, tỉ lệ lỗi ≤ ${pct(sc.slo.errorRate)}; timeout phía client ${ms(sc.timeoutMs)}.`);
   const traffic = sc.traffic.map((t) => `${t.rps} rps từ giây ${Math.round(t.atMs / 1000)}`).join(' → ');
   out.push(`- **Traffic**: ${traffic}.`);
+  if (sc.requests?.length) {
+    const total = sc.requests.reduce((sum, r) => sum + r.weight, 0) || 1;
+    const mix = sc.requests.map((r) => `${r.name} ${pct(r.weight / total)}${r.endpoint ? ` (\`/${r.endpoint}\`)` : ''}`).join(', ');
+    out.push(`- **Traffic mix**: ${mix}. Script k6 cần chia request theo đúng tỉ lệ này.`);
+  }
   if (sc.events?.length) {
     out.push('- **Phải chịu được các sự cố**:');
     for (const ev of sc.events) {

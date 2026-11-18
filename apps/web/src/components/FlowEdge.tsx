@@ -43,6 +43,8 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
   const width = (selected || breaker !== 'closed' ? 2 : 1.5) + Math.min(2.5, Math.log10(1 + (m?.calls ?? 0)) * 0.6);
 
   const badges: { text: string; bad?: boolean }[] = [];
+  // which handler calls which endpoint (`create → /details`)
+  if (p?.fromEndpoint || p?.toEndpoint) badges.push({ text: `${p.fromEndpoint ?? '*'} → /${p.toEndpoint ?? '…'}` });
   if (p?.timeoutMs) badges.push({ text: `⏱ ${p.timeoutMs}ms` });
   if (p?.retries) badges.push({ text: `↻ ${p.retries}` });
   if (p?.circuitBreaker) badges.push({ text: breaker === 'closed' ? 'CB' : `CB ${breaker === 'open' ? 'OPEN' : 'half'}`, bad: breaker === 'open' });

@@ -161,6 +161,8 @@ impl Level {
                     pool_size: None,
                     fire_and_forget: e.fire_and_forget && self.allow_fire_and_forget,
                     hedge_after_ms: None,
+                    from_endpoint: None,
+                    to_endpoint: None,
                     request_kb: 0.0,
                     response_kb: 0.0,
                     bandwidth_mbps: 1000.0,

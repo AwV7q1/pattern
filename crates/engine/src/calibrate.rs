@@ -478,6 +478,8 @@ fn scenario_for(
         budget_per_hour: None,
         arrival,
         max_concurrent: opts.max_vus,
+        requests: Vec::new(),
+        max_async_hops: 16,
     }
 }
 

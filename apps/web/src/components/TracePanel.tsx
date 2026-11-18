@@ -20,6 +20,8 @@ export interface Span {
   /** Second copy of a slow attempt. */
   hedge?: boolean;
   waitMs: number;
+  /** Endpoint of `node` serving the span, when it declares some. */
+  endpoint?: number;
   send: number;
   arrive?: number;
   start?: number;
@@ -60,6 +62,7 @@ export function buildTraces(events: TraceEvent[]): Trace[] {
           fireAndForget: e.fireAndForget,
           hedge: e.ev === 'hedge',
           waitMs: e.waitMs,
+          endpoint: e.endpoint,
           send: e.tMs,
           depth: 0,
         });
@@ -177,6 +180,8 @@ const SEG = {
 interface Props {
   events: TraceEvent[];
   nodeLabel: (index: number) => string;
+  /** Name of endpoint `ep` of node `index`. */
+  endpointName?: (index: number, ep: number) => string | undefined;
   edgeEnds: (index: number) => { source: string; target: string } | undefined;
   running: boolean;
   auto: boolean;
@@ -196,7 +201,7 @@ interface Props {
  * timeline. The followed request is also drawn bigger, with a white ring,
  * on the canvas.
  */
-export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto, onTrace, onSlow, pinned, onPin, pinNote }: Props) {
+export function TracePanel({ events, nodeLabel, endpointName, edgeEnds, running, auto, onAuto, onTrace, onSlow, pinned, onPin, pinNote }: Props) {
   const traces = useMemo(() => buildTraces(events), [events]);
   const [picked, setPicked] = useState<number | null>(null);
   const done = traces.filter((t) => t.end !== undefined);
@@ -205,7 +210,9 @@ export function TracePanel({ events, nodeLabel, edgeEnds, running, auto, onAuto,
 
   const label = (s: Span) => {
     const ends = s.edge !== null ? edgeEnds(s.edge) : undefined;
-    return { from: ends?.source ?? '?', to: ends?.target ?? nodeLabel(s.node) };
+    const ep = s.endpoint !== undefined ? endpointName?.(s.node, s.endpoint) : undefined;
+    const to = ends?.target ?? nodeLabel(s.node);
+    return { from: ends?.source ?? '?', to: ep ? `${to} /${ep}` : to };
   };
 
   return (

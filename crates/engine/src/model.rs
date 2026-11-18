@@ -128,6 +128,40 @@ pub struct NodeConfig {
     /// Horizontal autoscaling (Kubernetes HPA); `instances` is the start count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoscale: Option<Autoscale>,
+    /// Handlers of one service (`POST /orders`, `GET /orders/:id`). They share
+    /// the node's instances, slots, CPU and pools, but each makes its own
+    /// downstream calls (edges with `fromEndpoint`). A request is served by the
+    /// endpoint named by its path (edge `toEndpoint`, else the caller's path),
+    /// or the first one. Empty = one implicit endpoint, as before.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub endpoints: Vec<Endpoint>,
+}
+
+/// One handler of a node; see `NodeConfig::endpoints`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Endpoint {
+    pub name: String,
+    /// Routing of this handler's calls; the node's `routing` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routing: Option<Routing>,
+    /// Processing time relative to the node's latency / CPU (a checkout
+    /// costing 3x a read = 3).
+    pub work: f64,
+    /// `pick` routing: downstream calls per request; the node's when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls_per_request: Option<u32>,
+}
+
+impl Default for Endpoint {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            routing: None,
+            work: 1.0,
+            calls_per_request: None,
+        }
+    }
 }
 
 /// Keyspace model of a cache node: each request reads one key (Zipf
@@ -256,6 +290,7 @@ impl Default for NodeConfig {
             autoscale: None,
             quorum: 0,
             cache: None,
+            endpoints: Vec::new(),
         }
     }
 }
@@ -347,6 +382,14 @@ pub struct EdgeSpec {
     /// event, send an email). Its outcome is counted as async.
     #[serde(default)]
     pub fire_and_forget: bool,
+    /// Endpoint of the source whose handler makes this call; every endpoint
+    /// of the source when absent (a shared auth check, a DB connection).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_endpoint: Option<String>,
+    /// Endpoint called on the target (sets the request's path). Absent = the
+    /// caller's path passes through, like a reverse proxy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_endpoint: Option<String>,
     /// Request and response body sizes in KB. With `bandwidthMbps` they add
     /// a transfer time, and big bodies queue behind each other on the link.
     /// Hedged request: no answer after this many ms → send one more copy
@@ -386,6 +429,8 @@ impl EdgeSpec {
             pool_timeout_ms: default_pool_timeout(),
             order: 0,
             fire_and_forget: false,
+            from_endpoint: None,
+            to_endpoint: None,
             hedge_after_ms: None,
             request_kb: 0.0,
             response_kb: 0.0,
@@ -498,6 +543,36 @@ pub struct Scenario {
     /// failed, while this many are in flight.
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    /// Request mix: each user request is one of these types, drawn by
+    /// weight, and enters with its `endpoint` as path. Empty = one type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requests: Vec<RequestType>,
+    /// Async boundaries (queue deliveries, fire-and-forget calls) a message
+    /// may cross; beyond that it is dropped (message TTL / hop limit). Stops
+    /// event loops (A emits -> B emits -> A emits ...) from growing forever.
+    #[serde(default = "default_max_hops")]
+    pub max_async_hops: u32,
+}
+
+fn default_max_hops() -> u32 {
+    16
+}
+
+/// One kind of user request in `Scenario::requests`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestType {
+    pub name: String,
+    /// Relative share of the traffic.
+    #[serde(default = "default_weight")]
+    pub weight: f64,
+    /// Path the request enters with; absent = no path (first endpoints).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
+
+fn default_weight() -> f64 {
+    1.0
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

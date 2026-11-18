@@ -39,6 +39,19 @@ export interface NodeConfig {
   quorum?: number;
   /** Cache nodes: simulate the keyspace (hit rate emerges) instead of `hitRate`. */
   cache?: CacheModel | null;
+  /** Handlers sharing the node's instances, slots, CPU and pools; each makes its own calls. */
+  endpoints?: Endpoint[];
+}
+
+/** One handler of a node (`POST /orders`). */
+export interface Endpoint {
+  name: string;
+  /** The node's routing when absent. */
+  routing?: Routing | null;
+  /** Processing time relative to the node's latency / CPU. */
+  work?: number;
+  /** `pick` routing: calls per request; the node's when absent. */
+  callsPerRequest?: number | null;
 }
 
 export interface CacheModel {
@@ -108,6 +121,10 @@ export interface EdgePolicy {
   fireAndForget?: boolean;
   /** Hedged request: send a second copy if no answer after this many ms. */
   hedgeAfterMs?: number | null;
+  /** Source endpoint whose handler makes this call; every endpoint when absent. */
+  fromEndpoint?: string | null;
+  /** Endpoint called on the target; the caller's path passes through when absent. */
+  toEndpoint?: string | null;
   requestKb?: number;
   responseKb?: number;
   bandwidthMbps?: number;
@@ -165,6 +182,17 @@ export interface Scenario {
   budgetPerHour?: number | null;
   arrival?: 'poisson' | 'uniform';
   maxConcurrent?: number | null;
+  /** Request mix: each user request is one type, drawn by weight. */
+  requests?: RequestType[];
+  /** Async boundaries a message may cross before it is dropped (default 16). */
+  maxAsyncHops?: number;
+}
+
+export interface RequestType {
+  name: string;
+  weight: number;
+  /** Path the request enters with (an endpoint name). */
+  endpoint?: string | null;
 }
 
 export interface Design {
@@ -234,6 +262,8 @@ export interface TraceEvent {
   attempt: number;
   waitMs: number;
   fireAndForget: boolean;
+  /** Index into the node's `endpoints`, when it declares some. */
+  endpoint?: number;
 }
 
 export interface WindowMetrics {
@@ -250,6 +280,10 @@ export interface WindowMetrics {
   p95Ms: number;
   p99Ms: number;
   sloOk: boolean;
+  /** Async messages dropped by the hop limit (an event loop). */
+  loopDropped?: number;
+  /** Per request type, same order as `scenario.requests`. */
+  requests?: { rps: number; errorRps: number; p50Ms: number; p99Ms: number }[];
   nodes: NodeWindow[];
   edges: EdgeWindow[];
 }
@@ -273,7 +307,21 @@ export interface Summary {
   sloWindowRatio: number;
   budgetPerHour: number | null;
   backlog: number;
+  loopDropped?: number;
+  requests?: RequestSummary[];
   stars: number;
+}
+
+export interface RequestSummary {
+  name: string;
+  total: number;
+  ok: number;
+  errors: number;
+  timeouts: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
 }
 
 export const DEFAULT_CONFIG: NodeConfig = {

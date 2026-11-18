@@ -388,6 +388,8 @@ fn scenario(spec: &SizingSpec, rps: f64, events: Vec<ChaosEvent>) -> Scenario {
         budget_per_hour: None,
         arrival: Arrival::Poisson,
         max_concurrent: None,
+        requests: Vec::new(),
+        max_async_hops: 16,
     }
 }
 

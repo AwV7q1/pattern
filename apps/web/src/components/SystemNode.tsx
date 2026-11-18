@@ -73,6 +73,16 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
             {c.routing === 'sequence' && data.kind !== 'loadBalancer' && ' · ①② tuần tự'}
             {c.routing === 'parallel' && data.kind !== 'loadBalancer' && (c.quorum ? ` · ∥ quorum ${c.quorum}` : ' · ∥ song song')}
           </div>
+          {!!c.endpoints?.length && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {c.endpoints.map((e) => (
+                <span key={e.name} className="rounded border bg-muted/40 px-1 font-mono text-[10px] leading-4 text-muted-foreground">
+                  /{e.name}
+                  {e.work && e.work !== 1 ? ` ×${e.work}` : ''}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className="h-full transition-[width,background-color] duration-300"
