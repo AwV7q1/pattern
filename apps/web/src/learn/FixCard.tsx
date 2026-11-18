@@ -474,7 +474,6 @@ function MiniCanvas({
                 strokeWidth={knob ? 2 : 1.2}
                 strokeDasharray={knob && focus !== knob.id ? '5 3' : undefined}
               />
-              <rect x={p.x} y={p.y + 8} width={3} height={NODE_H - 16} rx={1.5} fill={meta.color} />
               <text x={p.x + 12} y={p.y + 19} fontSize="12.5" fontWeight={600} fill="currentColor">
                 {n.label ?? meta.name}
               </text>
