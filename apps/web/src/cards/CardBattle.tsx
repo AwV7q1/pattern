@@ -3,7 +3,12 @@ import { Link } from 'react-router';
 import {
   ArrowLeft,
   ArrowRight,
+  Bot,
   Bug,
+  Filter,
+  TriangleAlert,
+  Users,
+  ZapOff,
   Database,
   Dices,
   Heart,
@@ -371,7 +376,7 @@ export function CardBattle() {
         {/* the two sides face each other across the arena */}
         {/* equal side columns keep VS on the exact middle of the screen */}
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] gap-4 overflow-y-auto px-6 pb-[200px] pt-2">
-          <div className="flex min-w-0 flex-col items-center justify-center">
+          <div className="flex min-w-0 flex-col items-start justify-center">
             <div className="flex w-full max-w-[400px] flex-col gap-4">
               <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
               {state.reports.length === 0 && <FirstTurnHint />}
@@ -395,8 +400,8 @@ export function CardBattle() {
             )}
           </div>
 
-          <div className="flex min-w-0 flex-col items-center justify-center">
-            <BotSide state={state} name={enemy.name} description={enemy.description} intent={intent} flash={flash} botRef={botRef} attacking={resolving} />
+          <div className="flex min-w-0 flex-col items-end justify-center">
+            <BotSide state={state} intents={enemy.intents} name={enemy.name} description={enemy.description} intent={intent} flash={flash} botRef={botRef} attacking={resolving} />
           </div>
         </div>
 
@@ -544,11 +549,11 @@ function SystemPanel({
     Boolean,
   ) as string[];
   return (
-    <div className="flex items-stretch gap-3">
+    <div className="relative">
       <div
         ref={panelRef}
         className={cn(
-          'relative min-w-0 flex-1 rounded-3xl border-2 bg-[linear-gradient(160deg,rgba(14,165,233,0.10),rgba(9,9,11,0.55)_55%)] p-4 shadow-2xl shadow-black/50 backdrop-blur transition-[border-color,box-shadow] duration-300',
+          'relative rounded-3xl border-2 bg-[linear-gradient(160deg,rgba(14,165,233,0.10),rgba(9,9,11,0.55)_55%)] p-4 shadow-2xl shadow-black/50 backdrop-blur transition-[border-color,box-shadow] duration-300',
           status === 'ok' ? 'border-sky-500/35' : status === 'warn' ? 'border-amber-500/45' : 'animate-pulse border-rose-500/60',
           state.headroom > 0 && 'shadow-[0_0_0_4px_rgba(56,189,248,0.25),0_0_36px_6px_rgba(56,189,248,0.3)]',
           hit && 'border-sky-400/60',
@@ -598,8 +603,9 @@ function SystemPanel({
         </div>
       </div>
 
-      {/* the shield stands outside the system, between it and the bot */}
-      <div className="relative flex w-6 shrink-0 items-center justify-center">
+      {/* the shield stands outside the system, between it and the bot; it
+          floats so the frame keeps the same width with or without it */}
+      <div className="absolute inset-y-0 -right-6 flex w-6 items-center justify-center">
         {shields.length > 0 && (
           <>
             <div ref={shieldRef} className="h-3/4 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_16px_4px_rgba(52,211,153,0.45)]" />
@@ -630,8 +636,58 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
   );
 }
 
+/** What an intent does beyond raw traffic, as icon chips. */
+function intentEffects(intent: Intent): { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal' }[] {
+  const out: { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal' }[] = [];
+  const node = (n: string) => (n === 'db' ? 'DB' : 'API');
+  if (intent.chaos)
+    out.push(
+      intent.chaos.action === 'latency'
+        ? { icon: Turtle, text: `${node(intent.chaos.node)} chậm ×${intent.chaos.value}`, tone: 'bad' }
+        : { icon: TriangleAlert, text: `${node(intent.chaos.node)} lỗi ${Math.round(intent.chaos.value * 100)}%`, tone: 'bad' },
+    );
+  if (intent.clientRetries) out.push({ icon: Repeat, text: `retry ×${intent.clientRetries}`, tone: 'bad' });
+  if (intent.cacheHitScale !== undefined) out.push({ icon: ZapOff, text: `cache hit ×${intent.cacheHitScale}`, tone: 'warn' });
+  if (intent.addCards) out.push({ icon: Bug, text: `+${intent.addCards.n} thẻ nợ`, tone: 'warn' });
+  if (intent.heal) out.push({ icon: HeartPulse, text: `hồi ${intent.heal} máu`, tone: 'heal' });
+  return out;
+}
+
+/** The botnet's intent cycle: done (dim), now (lit), coming (outlined). */
+function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
+  const n = intents.length;
+  const at = step % n;
+  return (
+    <div className="flex items-center justify-center gap-1" aria-label="Chu kỳ ý định của botnet">
+      {intents.map((it, i) => {
+        const I = INTENT_ICON[it.icon];
+        const now = i === at;
+        const past = i < at;
+        return (
+          <span
+            key={it.id}
+            title={`${now ? 'Lượt này' : i === (at + 1) % n ? 'Lượt sau' : past ? 'Đã qua' : 'Sắp tới'}: ${it.label}`}
+            className={cn(
+              'flex size-6 items-center justify-center rounded-full border transition-colors [&_svg]:size-3.5',
+              now
+                ? 'border-amber-400 bg-amber-400/20 text-amber-300 shadow-[0_0_10px_rgba(251,191,36,0.5)]'
+                : past
+                  ? 'border-transparent text-muted-foreground/35'
+                  : 'border-muted-foreground/40 text-muted-foreground',
+            )}
+          >
+            <I />
+          </span>
+        );
+      })}
+      {step >= n && <span className="ml-1 font-mono text-[10px] text-rose-300">vòng {Math.floor(step / n) + 1}</span>}
+    </div>
+  );
+}
+
 function BotSide({
   state,
+  intents,
   name,
   description,
   intent,
@@ -640,6 +696,7 @@ function BotSide({
   attacking,
 }: {
   state: BattleState;
+  intents: Intent[];
   name: string;
   description: string;
   intent: Intent;
@@ -650,14 +707,37 @@ function BotSide({
   const Icon = INTENT_ICON[intent.icon];
   const raw = botRpsNow(CONTENT, state);
   const cut = botCutNow(state);
+  const effects = intentEffects(intent);
   return (
     <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
+      <IntentTrack intents={intents} step={state.enemy.step} />
       {/* what it is about to do, said out loud */}
       <div className="relative rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center">
         <div className="flex items-center justify-center gap-1.5 font-semibold">
           <Icon className="size-4 text-amber-300" /> {intent.label}
         </div>
         <div className="font-mono text-xs text-amber-200/80">{n0(raw * (1 - cut))} rps lọt vào</div>
+        {effects.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap justify-center gap-1">
+            {effects.map((e) => (
+              <span
+                key={e.text}
+                className={cn(
+                  'flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium [&_svg]:size-3',
+                  state.temp.hotfix && e.tone !== 'heal' && e.icon !== Bug
+                    ? 'bg-muted text-muted-foreground line-through'
+                    : e.tone === 'bad'
+                      ? 'bg-rose-500/20 text-rose-300'
+                      : e.tone === 'warn'
+                        ? 'bg-orange-500/20 text-orange-300'
+                        : 'bg-emerald-500/20 text-emerald-300',
+                )}
+              >
+                <e.icon /> {e.text}
+              </span>
+            ))}
+          </div>
+        )}
         <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-b border-r border-amber-500/40 bg-[color-mix(in_oklab,var(--background)_88%,#f59e0b)]" />
       </div>
 
@@ -677,9 +757,9 @@ function BotSide({
       <div className="w-full rounded-lg bg-card/60 p-3 text-xs backdrop-blur">
         <p className="mb-2 text-muted-foreground">{intent.text}</p>
         <div className="space-y-1 font-mono">
-          <Row label="Bot dự kiến" value={`${n0(raw)} rps`} />
-          <Row label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
-          <Row label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
+          <Row icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
+          <Row icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
+          <Row icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
           {state.temp.hotfix && (intent.chaos || intent.clientRetries || intent.cacheHitScale !== undefined) && (
             <div className="pt-1 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
           )}
@@ -689,10 +769,13 @@ function BotSide({
   );
 }
 
-function Row({ label, value, good }: { label: string; value: string; good?: boolean }) {
+function Row({ icon, label, value, good }: { icon?: ReactNode; label: string; value: string; good?: boolean }) {
   return (
     <div className="flex justify-between gap-2">
-      <span className="text-muted-foreground">{label}</span>
+      <span className="flex items-center gap-1.5 text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">
+        {icon}
+        {label}
+      </span>
       <span className={good ? 'text-emerald-300' : undefined}>{value}</span>
     </div>
   );
@@ -728,7 +811,7 @@ function InfraLine({
   return (
     <div className="pt-4">
       <div className="flex items-center gap-0.5">
-        <InfraNode nodeRef={set('db')} icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
+        <InfraNode nodeRef={set('db')} icon={<Database />} title="Postgres" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
         {cache && (
           <>
             <Pipe />
