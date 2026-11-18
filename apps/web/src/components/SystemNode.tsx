@@ -68,9 +68,14 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
               ? `${replicas}×${c.cpuLanes} CPU · ${n2(c.cpuP50Ms)}ms CPU${c.ioP50Ms ? ` + ${n2(c.ioP50Ms)}ms I/O` : ''}`
               : `${replicas}×${c.concurrency} slot · p50 ${n2(c.latencyP50Ms)}ms`}
             {c.callsPerRequest > 1 && (data.kind === 'service' || data.kind === 'database') && ` · ${c.callsPerRequest} call`}
-            {data.kind === 'cache' && ` · hit ${Math.round(c.hitRate * 100)}%`}
+            {data.kind === 'cache' &&
+              (c.cache
+                ? ` · hit ${Math.round((m?.hitRatio ?? 0) * 100)}% · TTL ${c.cache.ttlMs ? `${n2(c.cache.ttlMs / 1000)}s` : '∞'}${c.cache.coalesce ? ' · 1⇢' : ''}`
+                : ` · hit ${Math.round(c.hitRate * 100)}%`)}
             {c.routing === 'sequence' && data.kind !== 'loadBalancer' && ' · ①② tuần tự'}
             {c.routing === 'parallel' && data.kind !== 'loadBalancer' && ' · ∥ song song'}
+            {c.routing === 'hedge' && data.kind !== 'loadBalancer' && ` · ⧗ hedge ${n2(c.hedgeAfterMs)}ms`}
+            {c.routing === 'quorum' && data.kind !== 'loadBalancer' && ` · quorum${c.quorum ? ` ${c.quorum}` : ''}`}
           </div>
           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
             <div
@@ -87,8 +92,15 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
             )}
             {rejected > 0 && <span className="text-destructive">drop {fmt.rps(rejected)}/s</span>}
             {c.autoscale && (
-              <span className="ml-auto text-primary" title={`HPA ${c.autoscale.min}–${c.autoscale.max}, mục tiêu ${Math.round(c.autoscale.targetUtilization * 100)}%`}>
-                HPA {replicas}
+              <span
+                className="ml-auto text-primary"
+                title={
+                  c.autoscale.metric === 'queueLength'
+                    ? `KEDA ${c.autoscale.min}–${c.autoscale.max}, ${c.autoscale.targetQueuePerInstance ?? 100} message/replica`
+                    : `HPA ${c.autoscale.min}–${c.autoscale.max}, mục tiêu ${Math.round(c.autoscale.targetUtilization * 100)}%`
+                }
+              >
+                {c.autoscale.metric === 'queueLength' ? 'KEDA' : 'HPA'} {replicas}
                 {(m?.starting ?? 0) > 0 && `+${m!.starting}`}
               </span>
             )}

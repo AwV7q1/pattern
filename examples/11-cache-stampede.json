@@ -1,0 +1,135 @@
+{
+  "title": "Cache stampede khi Redis restart",
+  "description": "Cache key-level (Zipf, TTL). Giây 20 Redis bị flush: mọi request vào key nóng cùng miss và cùng đổ xuống DB (thundering herd). Query mất 100ms, DB chỉ có 30 connection nên nghẽn và trả lỗi vài giây. Bật coalesce (singleflight) ở node cache để mỗi key chỉ một request đi lấy dữ liệu: hết lỗi, đạt 3 sao.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 260,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 520,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "cache",
+        "kind": "cache",
+        "label": "Redis",
+        "position": {
+          "x": 780,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 5000,
+          "queueSize": 1000,
+          "latencyP50Ms": 0.5,
+          "latencyP99Ms": 2,
+          "costPerHour": 0.15,
+          "cache": {
+            "keys": 300,
+            "zipf": 1.0,
+            "capacity": 300,
+            "ttlMs": 0,
+            "coalesce": false,
+            "staleWhileRevalidate": false,
+            "warm": true
+          }
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 1040,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 30,
+          "queueSize": 200,
+          "latencyP50Ms": 100,
+          "latencyP99Ms": 150,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "cache"
+      },
+      {
+        "source": "cache",
+        "target": "db",
+        "timeoutMs": 1000
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 2500
+      }
+    ],
+    "events": [
+      {
+        "atMs": 20000,
+        "node": "cache",
+        "action": "flush"
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    }
+  }
+}

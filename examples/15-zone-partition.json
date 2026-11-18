@@ -1,0 +1,193 @@
+{
+  "title": "Mất zone và chia cắt mạng",
+  "description": "API và DB replica ở 2 zone. Giây 15 zone B mất hẳn (một sự kiện tắt cả API-B và DB-B). Giây 35 đường mạng API-A → DB-A bị chia cắt: request mất trong im lặng, chỉ timeout mới phát hiện ra. Chaos monkey tắt ngẫu nhiên một node mỗi 20s. Thử bỏ timeout trên edge để thấy request treo.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 260,
+          "y": 200
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "apiA",
+        "kind": "service",
+        "label": "API zone A",
+        "position": {
+          "x": 520,
+          "y": 80
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "apiB",
+        "kind": "service",
+        "label": "API zone B",
+        "position": {
+          "x": 520,
+          "y": 320
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "dbA",
+        "kind": "database",
+        "label": "DB zone A",
+        "position": {
+          "x": 800,
+          "y": 80
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 50,
+          "queueSize": 200,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.5
+        }
+      },
+      {
+        "id": "dbB",
+        "kind": "database",
+        "label": "DB zone B",
+        "position": {
+          "x": 800,
+          "y": 320
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 50,
+          "queueSize": 200,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "apiA"
+      },
+      {
+        "source": "lb",
+        "target": "apiB"
+      },
+      {
+        "source": "apiA",
+        "target": "dbA",
+        "timeoutMs": 100,
+        "retries": 1,
+        "backoffMs": 10
+      },
+      {
+        "source": "apiA",
+        "target": "dbB",
+        "timeoutMs": 100,
+        "retries": 1,
+        "backoffMs": 10
+      },
+      {
+        "source": "apiB",
+        "target": "dbB",
+        "timeoutMs": 100,
+        "retries": 1,
+        "backoffMs": 10
+      },
+      {
+        "source": "apiB",
+        "target": "dbA",
+        "timeoutMs": 100,
+        "retries": 1,
+        "backoffMs": 10
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 800
+      }
+    ],
+    "events": [
+      {
+        "atMs": 15000,
+        "nodes": [
+          "apiB",
+          "dbB"
+        ],
+        "action": "down"
+      },
+      {
+        "atMs": 30000,
+        "nodes": [
+          "apiB",
+          "dbB"
+        ],
+        "action": "up"
+      },
+      {
+        "atMs": 35000,
+        "edge": {
+          "source": "apiA",
+          "target": "dbA"
+        },
+        "action": "partition"
+      },
+      {
+        "atMs": 45000,
+        "edge": {
+          "source": "apiA",
+          "target": "dbA"
+        },
+        "action": "heal"
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    }
+  }
+}

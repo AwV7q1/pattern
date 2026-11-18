@@ -172,6 +172,49 @@ pub struct NodeConfig {
     /// Horizontal autoscaling (Kubernetes HPA); `instances` is the start count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoscale: Option<Autoscale>,
+    /// Shed requests that waited longer than this in the queue when their
+    /// turn comes (the caller has likely given up). 0 = never.
+    pub queue_timeout_ms: f64,
+    /// AIMD concurrency limit per instance (Netflix concurrency-limits):
+    /// requests beyond the current limit are rejected at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_limit: Option<AdaptiveLimit>,
+}
+
+/// Adaptive concurrency limit: +1 while latency stays under `targetMs` and
+/// the limit is in use, ×`backoff` when a request is slower.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AdaptiveLimit {
+    pub min: u32,
+    pub max: u32,
+    pub initial: u32,
+    /// Local processing time above which the node counts as overloaded.
+    pub target_ms: f64,
+    pub backoff: f64,
+}
+
+impl Default for AdaptiveLimit {
+    fn default() -> Self {
+        Self {
+            min: 5,
+            max: 200,
+            initial: 20,
+            target_ms: 50.0,
+            backoff: 0.9,
+        }
+    }
+}
+
+/// What the autoscaler follows.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ScaleMetric {
+    /// Slot or CPU utilization (Kubernetes HPA).
+    #[default]
+    Utilization,
+    /// Messages waiting in a queue (KEDA): replicas = backlog / target.
+    QueueLength,
 }
 
 /// HPA-like autoscaler: every `eval_every_ms`, desired replicas =
@@ -179,7 +222,7 @@ pub struct NodeConfig {
 /// changes within ±10 %. Scale-up is immediate but new instances take
 /// `pod_start_ms` before receiving traffic; scale-down uses the highest
 /// recommendation of the last `stabilization_ms`.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Autoscale {
     pub min: u32,
@@ -189,6 +232,12 @@ pub struct Autoscale {
     pub eval_every_ms: f64,
     pub stabilization_ms: f64,
     pub pod_start_ms: f64,
+    pub metric: ScaleMetric,
+    /// `queueLength`: node whose backlog is followed (default: this node).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_source: Option<String>,
+    /// `queueLength`: messages per replica (KEDA `queueLength`).
+    pub target_queue_per_instance: f64,
 }
 
 impl Default for Autoscale {
@@ -200,6 +249,9 @@ impl Default for Autoscale {
             eval_every_ms: 15_000.0,
             stabilization_ms: 60_000.0,
             pod_start_ms: 10_000.0,
+            metric: ScaleMetric::Utilization,
+            queue_source: None,
+            target_queue_per_instance: 100.0,
         }
     }
 }
@@ -234,6 +286,8 @@ impl Default for NodeConfig {
             quorum: 0,
             cost_per_hour: 0.0,
             autoscale: None,
+            queue_timeout_ms: 0.0,
+            adaptive_limit: None,
         }
     }
 }
@@ -334,6 +388,48 @@ pub struct EdgeSpec {
     /// Link capacity per direction (full duplex), shared by all calls.
     #[serde(default = "default_bandwidth")]
     pub bandwidth_mbps: f64,
+    /// Caller-side token bucket: calls beyond it fail at once (429).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
+    /// Retries allowed only while they stay a fraction of the traffic
+    /// (Finagle / gRPC retry budget), which stops retry storms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_budget: Option<RetryBudget>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RateLimit {
+    pub rps: f64,
+    /// Bucket size: calls allowed back to back.
+    pub burst: f64,
+}
+
+impl Default for RateLimit {
+    fn default() -> Self {
+        Self {
+            rps: 1000.0,
+            burst: 100.0,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RetryBudget {
+    /// Retries per first attempt (0.1 = at most +10 % load).
+    pub ratio: f64,
+    /// Retries always allowed per second, for low traffic.
+    pub min_per_sec: f64,
+}
+
+impl Default for RetryBudget {
+    fn default() -> Self {
+        Self {
+            ratio: 0.1,
+            min_per_sec: 10.0,
+        }
+    }
 }
 
 fn default_bandwidth() -> f64 {
@@ -362,6 +458,8 @@ impl EdgeSpec {
             request_kb: 0.0,
             response_kb: 0.0,
             bandwidth_mbps: default_bandwidth(),
+            rate_limit: None,
+            retry_budget: None,
         }
     }
 }
@@ -402,7 +500,14 @@ impl Default for Slo {
 pub struct ChaosEvent {
     pub at_ms: f64,
     /// Node id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub node: String,
+    /// More nodes hit at once (a whole zone).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<String>,
+    /// `partition` / `heal`: the link between two nodes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<EdgeRef>,
     pub action: ChaosAction,
     /// `latency`: multiplier on processing time; `errors`: error rate.
     #[serde(default)]
@@ -423,6 +528,39 @@ pub enum ChaosAction {
     /// `cache` nodes with a key-level model: drop every entry (restart,
     /// deploy, `FLUSHALL`).
     Flush,
+    /// The edge silently drops traffic both ways (only timeouts notice).
+    Partition,
+    /// End of a partition.
+    Heal,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct EdgeRef {
+    pub source: String,
+    pub target: String,
+}
+
+/// Random outages, generated deterministically from `seed`: every
+/// `everyMs` one of `targets` goes down for `downMs`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ChaosMonkey {
+    pub every_ms: f64,
+    pub down_ms: f64,
+    /// Node ids; empty = every node except the client.
+    pub targets: Vec<String>,
+    pub seed: u64,
+}
+
+impl Default for ChaosMonkey {
+    fn default() -> Self {
+        Self {
+            every_ms: 20_000.0,
+            down_ms: 5_000.0,
+            targets: Vec::new(),
+            seed: 7,
+        }
+    }
 }
 
 fn default_timeout() -> f64 {
@@ -471,6 +609,8 @@ pub struct Scenario {
     /// failed, while this many are in flight.
     #[serde(default)]
     pub max_concurrent: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chaos_monkey: Option<ChaosMonkey>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

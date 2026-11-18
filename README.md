@@ -103,6 +103,11 @@ scenario            requests  ok rps   err %   p99 ms  retries  cost/h  SLO   st
 06-circuit-breaker     60219     775   22.80    204.5     2815    0.73  FAIL  ☆☆☆   (hồi phục ngay khi DB khoẻ)
 07-nestjs-pool        125896    2098    0.00   1239.4        0    0.67  FAIL  ☆☆☆   (pool cạn lúc spike; pool 10 → p99 45ms)
 08-checkout-fan-out     6078     101    0.00   1315.3        0    1.05  FAIL  ☆☆☆   (đường truyền 100 Mbps nghẽn ở ~208 rps lúc spike)
+11-cache-stampede     149797    2486    0.42     30.5        0    0.88  PASS  ★★☆   (Redis flush → herd xuống DB; coalesce → ★★★)
+12-hedged-requests     30130     502    0.00     61.1        0    0.60  PASS  ★★★   (replica p99 300ms; hedge sau 15ms)
+13-retry-budget        59976     749   25.04    146.0     1855    0.73  FAIL  ☆☆☆   (như 05 nhưng retry chỉ +10%, hồi phục ngay khi DB khoẻ)
+14-keda-queue          16638     139    0.00     23.6        0    1.90  PASS  ★★★   (worker scale theo queue, về 0 khi rảnh)
+15-zone-partition      48100     659   17.78    221.3     5021    1.43  FAIL  ☆☆☆   (mất zone B, rồi partition API-A → DB-A)
 ```
 
 ## Các quyết định thiết kế
@@ -155,4 +160,17 @@ Gọi nhiều nhánh, payload và băng thông:
 { "source": "client", "target": "checkout", "requestKb": 2, "responseKb": 60, "bandwidthMbps": 100 }
 ```
 
-Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`.
+Cache theo key, hedge/quorum, bảo vệ tải, KEDA và chaos nâng cao:
+
+```jsonc
+{ "id": "cache", "kind": "cache", "config": { "cache": { "keys": 300, "zipf": 1.0, "capacity": 300, "ttlMs": 30000, "coalesce": true } } }
+{ "id": "api", "kind": "service", "config": { "routing": "hedge", "hedgeAfterMs": 15 } }        // hoặc "quorum" + "quorum": 2
+{ "id": "api", "kind": "service", "config": { "queueTimeoutMs": 200, "adaptiveLimit": { "min": 5, "max": 200, "targetMs": 50 } } }
+{ "source": "api", "target": "db", "rateLimit": { "rps": 500, "burst": 50 }, "retryBudget": { "ratio": 0.1, "minPerSec": 10 } }
+{ "autoscale": { "min": 0, "max": 10, "metric": "queueLength", "queueSource": "q", "targetQueuePerInstance": 50 } }
+{ "atMs": 15000, "nodes": ["apiB", "dbB"], "action": "down" }                              // mất cả zone
+{ "atMs": 35000, "edge": { "source": "apiA", "target": "dbA" }, "action": "partition" }   // "heal" để nối lại
+"chaosMonkey": { "everyMs": 20000, "downMs": 5000, "targets": ["api", "db"], "seed": 7 }   // trong scenario
+```
+
+Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate` hoặc `cache`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`, `flush`, `partition`, `heal`.

@@ -30,6 +30,9 @@ const CHAOS_LABEL: Record<string, string> = {
   up: 'hồi phục',
   latency: 'chậm ×',
   errors: 'lỗi ',
+  flush: 'mất cache',
+  partition: 'đứt mạng',
+  heal: 'nối lại',
 };
 
 interface Props {
@@ -123,7 +126,8 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
             {sc.events.map((e, i) => (
               <span key={i} className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
                 <Zap className="size-2.5" />
-                {e.atMs / 1000}s {e.node} {CHAOS_LABEL[e.action]}
+                {e.atMs / 1000}s {e.edge ? `${e.edge.source}→${e.edge.target}` : [e.node, ...(e.nodes ?? [])].filter(Boolean).join(', ')}{' '}
+                {CHAOS_LABEL[e.action]}
                 {e.action === 'latency' || e.action === 'errors' ? e.value : ''}
               </span>
             ))}

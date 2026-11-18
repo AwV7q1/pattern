@@ -31,8 +31,9 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
   if (data) setEdgeGeometry(data.index, b, [payloadScale(p?.requestKb), payloadScale(p?.responseKb), ff ? 1 : 0, 0]);
   const m = data?.metrics;
   const breaker = m?.breaker ?? 'closed';
+  const partitioned = !!m?.partitioned;
   const stroke =
-    breaker === 'open'
+    partitioned || breaker === 'open'
       ? 'var(--destructive)'
       : breaker === 'halfOpen'
         ? 'var(--warning)'
@@ -47,6 +48,9 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
   if (p?.retries) badges.push({ text: `↻ ${p.retries}` });
   if (p?.circuitBreaker) badges.push({ text: breaker === 'closed' ? 'CB' : `CB ${breaker === 'open' ? 'OPEN' : 'half'}`, bad: breaker === 'open' });
   const pool = m?.poolUtilization ?? 0;
+  if (partitioned) badges.push({ text: '✂ partition', bad: true });
+  if (p?.rateLimit) badges.push({ text: `⛁ ${p.rateLimit.rps}/s`, bad: (m?.rateLimited ?? 0) > 0 });
+  if (p?.retryBudget) badges.push({ text: `↻≤${Math.round(p.retryBudget.ratio * 100)}%`, bad: (m?.budgetExhausted ?? 0) > 0 });
   if (p?.poolSize) badges.push({ text: `pool ${p.poolSize}${pool > 0.01 ? ` · ${Math.round(pool * 100)}%` : ''}`, bad: pool > 0.9 });
   if (p?.requestKb || p?.responseKb) {
     const link = m?.bandwidthUtilization ?? 0;
@@ -64,6 +68,8 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
     if (ff) role = { text: '⇢', title: 'fire-and-forget: gửi đi, không chờ trả lời' };
     else if (v.routing === 'sequence') role = { text: CIRCLED[v.step] ?? String(v.step), title: `bước ${v.step}/${v.steps}: gọi tuần tự` };
     else if (v.routing === 'parallel') role = { text: '∥', title: 'song song: gọi cùng lúc, chờ tất cả' };
+    else if (v.routing === 'hedge') role = { text: v.step === 1 ? '⧗' : String(v.step), title: `hedge: nhánh thử thứ ${v.step}` };
+    else if (v.routing === 'quorum') role = { text: 'k', title: 'quorum: gọi tất cả, đủ k nhánh OK là xong' };
     else role = { text: '⇄', title: 'chọn 1 trong các nhánh (round-robin)' };
   } else if (ff) role = { text: '⇢', title: 'fire-and-forget: gửi đi, không chờ trả lời' };
 
@@ -80,7 +86,7 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
         style={{
           stroke,
           strokeWidth: width,
-          strokeDasharray: breaker === 'open' ? '6 4' : ff ? '2 5' : undefined,
+          strokeDasharray: partitioned ? '1 6' : breaker === 'open' ? '6 4' : ff ? '2 5' : undefined,
           strokeLinecap: 'round',
         }}
       />

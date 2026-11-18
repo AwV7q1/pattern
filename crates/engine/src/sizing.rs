@@ -387,6 +387,7 @@ fn scenario(spec: &SizingSpec, rps: f64, events: Vec<ChaosEvent>) -> Scenario {
         events,
         budget_per_hour: None,
         arrival: Arrival::Poisson,
+        chaos_monkey: None,
         max_concurrent: None,
     }
 }
@@ -460,6 +461,8 @@ fn checks(
         let slow = vec![ChaosEvent {
             at_ms: 0.0,
             node: "db".into(),
+            nodes: vec![],
+            edge: None,
             action: ChaosAction::Latency,
             value: 2.0,
         }];

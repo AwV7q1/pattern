@@ -1201,6 +1201,9 @@ export function App() {
                   {selectedNode ? (
                     <NodeInspector
                       node={selectedNode.data}
+                      queues={nodes
+                        .filter((n) => n.type === 'system' && (n as SystemNodeType).data.kind === 'queue')
+                        .map((n) => ({ id: n.id, label: (n as SystemNodeType).data.label }))}
                       outDegree={edges.filter((e) => e.source === selectedNode.id).length}
                       game={mode === 'game'}
                       maxInstances={level.maxInstances ?? 10}

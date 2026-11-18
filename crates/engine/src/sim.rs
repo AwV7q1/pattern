@@ -35,8 +35,8 @@ use serde::Serialize;
 use crate::cache::{CacheRt, Lookup};
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Autoscale, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
-    Slo,
+    AdaptiveLimit, Arrival, Autoscale, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind,
+    Routing, ScaleMetric, SimInput, Slo,
 };
 use crate::rng::Rng;
 
@@ -143,6 +143,10 @@ enum Ev {
     PodReady {
         node: u32,
     },
+    /// A connection stuck behind a partition gives up (TCP timeout).
+    PoolRelease {
+        edge: u32,
+    },
     /// `hedge` routing: time to call the next edge of fork `fork`.
     Hedge {
         call: u32,
@@ -196,6 +200,8 @@ struct Inst {
 /// Autoscaler state of one node.
 struct HpaRt {
     cfg: Autoscale,
+    /// `queueLength`: node whose backlog is followed.
+    queue_src: Option<u32>,
     /// Busy and capacity areas since the last evaluation.
     busy: f64,
     cap: f64,
@@ -254,6 +260,9 @@ struct NodeRt {
     w_hits: u64,
     hedge_after: Time,
     quorum: u32,
+    /// Shed queued requests older than this (0 = never).
+    queue_timeout: Time,
+    adaptive: Option<AimdRt>,
     down: bool,
     out: Vec<u32>,
     rr: usize,
@@ -328,6 +337,41 @@ impl NodeRt {
     }
 }
 
+/// AIMD concurrency limit of a node (per instance).
+struct AimdRt {
+    cfg: AdaptiveLimit,
+    limit: f64,
+    target: Time,
+}
+
+/// Token bucket (rate limit) or retry budget of an edge.
+struct Bucket {
+    /// Tokens added per µs of time.
+    refill: f64,
+    /// Tokens added per first attempt (retry budget), 0 otherwise.
+    per_call: f64,
+    cap: f64,
+    tokens: f64,
+    last: Time,
+}
+
+impl Bucket {
+    fn take(&mut self, now: Time) -> bool {
+        self.tokens = (self.tokens + self.refill * now.saturating_sub(self.last) as f64).min(self.cap);
+        self.last = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn deposit(&mut self) {
+        self.tokens = (self.tokens + self.per_call).min(self.cap);
+    }
+}
+
 struct PoolRt {
     cap: u32,
     /// Connections per caller instance (pool size × processes).
@@ -383,6 +427,11 @@ struct EdgeRt {
     res_free: Time,
     w_req_busy: f64,
     w_res_busy: f64,
+    limiter: Option<Bucket>,
+    budget: Option<Bucket>,
+    partitioned: bool,
+    w_rate_limited: u64,
+    w_budget_exhausted: u64,
     // window accounting
     w_calls: u64,
     w_retries: u64,
@@ -458,6 +507,9 @@ struct Call {
     fails_left: u32,
     hedge_next: u32,
     hedge_tok: u64,
+    /// When the call entered the node queue, and when it got its slot.
+    queued_at: Time,
+    began: Time,
 }
 
 #[derive(Default)]
@@ -531,6 +583,12 @@ pub struct EdgeWindow {
     pub pool_timeouts: u64,
     /// Busiest direction of the link, fraction of time transferring bodies.
     pub bandwidth_utilization: f64,
+    /// Calls refused by the edge rate limit.
+    pub rate_limited: u64,
+    /// Retries skipped because the retry budget was spent.
+    pub budget_exhausted: u64,
+    /// The link drops traffic (chaos partition) at the end of the window.
+    pub partitioned: bool,
 }
 
 /// One step in the life of a traced request (see [`Simulation::trace_next`]).
@@ -630,7 +688,8 @@ impl Summary {
 
 struct ChaosRt {
     at: Time,
-    node: u32,
+    nodes: Vec<u32>,
+    edge: Option<u32>,
     action: ChaosAction,
     value: f64,
 }
@@ -705,19 +764,21 @@ impl Simulation {
                 let (mu, sigma) = lognormal_params(c.latency_p50_ms, c.latency_p99_ms);
                 let (cpu_mu, cpu_sigma) = lognormal_params(c.cpu_p50_ms, c.cpu_p99_ms);
                 let io = (c.io_p50_ms > 0.0).then(|| lognormal_params(c.io_p50_ms, c.io_p99_ms));
-                let hpa = c.autoscale.filter(|_| n.kind != NodeKind::Client).map(|a| {
-                    let min = a.min.max(1);
+                let hpa = c.autoscale.clone().filter(|_| n.kind != NodeKind::Client).map(|a| {
+                    // scale to zero only makes sense when following a queue
+                    let floor = if a.metric == ScaleMetric::QueueLength { 0 } else { 1 };
+                    let min = a.min.max(floor);
                     Autoscale {
                         min,
-                        max: a.max.max(min),
+                        max: a.max.max(min).max(1),
                         ..a
                     }
                 });
-                let instances = match hpa {
+                let instances = match &hpa {
                     Some(a) => c.instances.clamp(a.min, a.max),
                     None => c.instances.max(1),
                 };
-                let allocated = hpa.map_or(instances, |a| a.max.max(instances));
+                let allocated = hpa.as_ref().map_or(instances, |a| a.max.max(instances));
                 if n.kind != NodeKind::Client {
                     cost_per_hour += c.cost_per_hour * instances as f64;
                 }
@@ -745,6 +806,7 @@ impl Simulation {
                     active: instances as usize,
                     hpa: hpa.map(|cfg| HpaRt {
                         cfg,
+                        queue_src: None,
                         busy: 0.0,
                         cap: 0.0,
                         history: VecDeque::new(),
@@ -796,6 +858,16 @@ impl Simulation {
                     w_hits: 0,
                     hedge_after: ms_to_us(c.hedge_after_ms.max(0.0)),
                     quorum: c.quorum,
+                    queue_timeout: ms_to_us(c.queue_timeout_ms.max(0.0)),
+                    adaptive: c.adaptive_limit.filter(|_| n.kind != NodeKind::Client).map(|cfg| {
+                        let min = cfg.min.max(1) as f64;
+                        let max = (cfg.max as f64).max(min);
+                        AimdRt {
+                            cfg,
+                            limit: (cfg.initial as f64).clamp(min, max),
+                            target: ms_to_us(cfg.target_ms.max(0.001)),
+                        }
+                    }),
                     down: false,
                     out: Vec::new(),
                     rr: 0,
@@ -815,6 +887,17 @@ impl Simulation {
                 }
             })
             .collect();
+        for (i, n) in design.nodes.iter().enumerate() {
+            let Some(src) = n.config.autoscale.as_ref().and_then(|a| a.queue_source.as_ref()) else {
+                continue;
+            };
+            let id = *index
+                .get(src.as_str())
+                .ok_or_else(|| format!("node '{}': unknown queueSource '{src}'", n.id))?;
+            if let Some(h) = nodes[i].hpa.as_mut() {
+                h.queue_src = Some(id);
+            }
+        }
 
         let mut edges = Vec::with_capacity(design.edges.len());
         for (i, e) in design.edges.iter().enumerate() {
@@ -875,6 +958,26 @@ impl Simulation {
                 res_free: 0,
                 w_req_busy: 0.0,
                 w_res_busy: 0.0,
+                limiter: e.rate_limit.filter(|r| r.rps > 0.0).map(|r| Bucket {
+                    refill: r.rps / 1e6,
+                    per_call: 0.0,
+                    cap: r.burst.max(1.0),
+                    tokens: r.burst.max(1.0),
+                    last: 0,
+                }),
+                budget: e.retry_budget.map(|b| {
+                    let cap = (b.min_per_sec.max(0.0) * 10.0).max(1.0) + 100.0 * b.ratio.max(0.0);
+                    Bucket {
+                        refill: b.min_per_sec.max(0.0) / 1e6,
+                        per_call: b.ratio.max(0.0),
+                        cap,
+                        tokens: cap,
+                        last: 0,
+                    }
+                }),
+                partitioned: false,
+                w_rate_limited: 0,
+                w_budget_exhausted: 0,
                 w_calls: 0,
                 w_retries: 0,
                 w_timeouts: 0,
@@ -919,18 +1022,73 @@ impl Simulation {
 
         let mut chaos = Vec::with_capacity(sc.events.len());
         for (i, ev) in sc.events.iter().enumerate() {
-            let node = *index
-                .get(ev.node.as_str())
-                .ok_or_else(|| format!("event {i}: unknown node '{}'", ev.node))?;
-            if node == client {
-                return Err(format!("event {i}: chaos cannot target the client"));
+            let mut targets = Vec::new();
+            for id in std::iter::once(&ev.node).filter(|id| !id.is_empty()).chain(&ev.nodes) {
+                let node = *index
+                    .get(id.as_str())
+                    .ok_or_else(|| format!("event {i}: unknown node '{id}'"))?;
+                if node == client {
+                    return Err(format!("event {i}: chaos cannot target the client"));
+                }
+                targets.push(node);
+            }
+            let edge = match &ev.edge {
+                Some(r) => Some(
+                    design
+                        .edges
+                        .iter()
+                        .position(|e| e.source == r.source && e.target == r.target)
+                        .ok_or_else(|| format!("event {i}: no edge {} -> {}", r.source, r.target))?
+                        as u32,
+                ),
+                None => None,
+            };
+            let needs_edge = matches!(ev.action, ChaosAction::Partition | ChaosAction::Heal);
+            if needs_edge && edge.is_none() {
+                return Err(format!("event {i}: partition/heal needs an edge"));
+            }
+            if !needs_edge && targets.is_empty() {
+                return Err(format!("event {i}: no node to act on"));
             }
             chaos.push(ChaosRt {
                 at: ms_to_us(ev.at_ms),
-                node,
+                nodes: targets,
+                edge,
                 action: ev.action,
                 value: ev.value,
             });
+        }
+        if let Some(m) = &sc.chaos_monkey {
+            let mut targets = Vec::new();
+            for id in &m.targets {
+                let node = *index
+                    .get(id.as_str())
+                    .ok_or_else(|| format!("chaosMonkey: unknown node '{id}'"))?;
+                if node != client {
+                    targets.push(node);
+                }
+            }
+            if m.targets.is_empty() {
+                targets = (0..nodes.len() as u32).filter(|&n| n != client).collect();
+            }
+            // own RNG so the main random stream is unchanged
+            let mut rng = Rng::new(m.seed);
+            let horizon = sc.duration_ms.unwrap_or(3_600_000.0);
+            let every = m.every_ms.max(1000.0);
+            let mut t = every;
+            while t < horizon && !targets.is_empty() {
+                let node = targets[(rng.f64() * targets.len() as f64) as usize % targets.len()];
+                for (at, action) in [(t, ChaosAction::Down), (t + m.down_ms.max(0.0), ChaosAction::Up)] {
+                    chaos.push(ChaosRt {
+                        at: ms_to_us(at),
+                        nodes: vec![node],
+                        edge: None,
+                        action,
+                        value: 0.0,
+                    });
+                }
+                t += every;
+            }
         }
 
         let mut sim = Simulation {
@@ -1121,17 +1279,38 @@ impl Simulation {
         n.account(now);
         n.account_cpu(now);
         let (ready, active) = (n.ready, n.active);
-        let Some(h) = n.hpa.as_mut() else { return };
+        let Some(h) = n.hpa.as_ref() else { return };
+        let (metric, src) = (h.cfg.metric, h.queue_src.unwrap_or(node as u32));
+        let backlog = self.nodes[src as usize].queued() as f64;
+        let n = &mut self.nodes[node];
+        let h = n.hpa.as_mut().expect("hpa");
         let util = if h.cap > 0.0 { h.busy / h.cap } else { 0.0 };
         h.busy = 0.0;
         h.cap = 0.0;
-        let cfg = h.cfg;
-        let target = cfg.target_utilization.clamp(0.01, 1.0);
-        let ratio = util * ready as f64 / active.max(1) as f64 / target;
-        let desired = if (ratio - 1.0).abs() <= 0.1 {
-            active
-        } else {
-            (ready as f64 * util / target).ceil() as usize
+        let cfg = h.cfg.clone();
+        let desired = match metric {
+            ScaleMetric::Utilization => {
+                let target = cfg.target_utilization.clamp(0.01, 1.0);
+                let ratio = util * ready as f64 / active.max(1) as f64 / target;
+                if (ratio - 1.0).abs() <= 0.1 {
+                    active
+                } else {
+                    (ready as f64 * util / target).ceil() as usize
+                }
+            }
+            ScaleMetric::QueueLength => {
+                // KEDA: AverageValue target; in-flight work keeps at least
+                // the busy replicas alive
+                let target = cfg.target_queue_per_instance.max(1.0);
+                let busy = n.insts.iter().take(n.ready).filter(|i| i.busy > 0).count();
+                let wanted = (backlog / target).ceil() as usize;
+                let ratio = backlog / (active.max(1) as f64 * target);
+                if active > 0 && wanted > 0 && (ratio - 1.0).abs() <= 0.1 {
+                    active
+                } else {
+                    wanted.max(busy.min(1))
+                }
+            }
         }
         .clamp(cfg.min as usize, cfg.max as usize);
         let stab = ms_to_us(cfg.stabilization_ms.max(0.0));
@@ -1164,8 +1343,34 @@ impl Simulation {
         }
         n.account(now);
         n.account_cpu(now);
+        let from_zero = n.ready == 0;
         n.ready += 1;
         self.resize(node);
+        if from_zero {
+            self.drain_held(node);
+        }
+    }
+
+    /// Hand waiting requests to free slots of ready instances (after a
+    /// scale-up from zero, requests wait on instance 0).
+    fn drain_held(&mut self, node: usize) {
+        loop {
+            let n = &mut self.nodes[node];
+            let Some(free) = (0..n.ready.min(n.insts.len())).find(|&i| n.insts[i].busy < n.slots) else {
+                return;
+            };
+            let Some(from) = (0..n.insts.len()).max_by_key(|&i| n.insts[i].queue.len()) else {
+                return;
+            };
+            let Some(call) = n.insts[from].queue.pop_front() else {
+                return;
+            };
+            n.account(self.now);
+            n.busy += 1;
+            n.insts[free].busy += 1;
+            self.calls[call as usize].inst = free as u32;
+            self.start(call);
+        }
     }
 
     /// Capacity and caller-side pools follow the number of ready instances.
@@ -1328,6 +1533,8 @@ impl Simulation {
                     fails_left: 0,
                     hedge_next: 0,
                     hedge_tok: 0,
+                    queued_at: 0,
+                    began: 0,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -1360,6 +1567,8 @@ impl Simulation {
         c.fails_left = 0;
         c.hedge_next = 0;
         c.hedge_tok = 0;
+        c.queued_at = 0;
+        c.began = 0;
         id
     }
 
@@ -1433,6 +1642,7 @@ impl Simulation {
             Ev::Chaos { index } => self.on_chaos(index as usize),
             Ev::Autoscale { node } => self.on_autoscale(node as usize),
             Ev::PodReady { node } => self.on_pod_ready(node as usize),
+            Ev::PoolRelease { edge } => self.release_pool(edge),
             Ev::BranchDone {
                 call,
                 gen,
@@ -1481,10 +1691,23 @@ impl Simulation {
     }
 
     fn on_chaos(&mut self, index: usize) {
-        let (node, action, value) = {
+        let (nodes, edge, action, value) = {
             let c = &self.chaos[index];
-            (c.node, c.action, c.value)
+            (c.nodes.clone(), c.edge, c.action, c.value)
         };
+        if let Some(e) = edge {
+            match action {
+                ChaosAction::Partition => self.edges[e as usize].partitioned = true,
+                ChaosAction::Heal => self.edges[e as usize].partitioned = false,
+                _ => {}
+            }
+        }
+        for node in nodes {
+            self.chaos_node(node, action, value);
+        }
+    }
+
+    fn chaos_node(&mut self, node: u32, action: ChaosAction, value: f64) {
         match action {
             ChaosAction::Down => {
                 let _ = self.set_node_down(node as usize, true);
@@ -1502,6 +1725,7 @@ impl Simulation {
                     c.flush();
                 }
             }
+            ChaosAction::Partition | ChaosAction::Heal => {}
         }
     }
 
@@ -1530,8 +1754,18 @@ impl Simulation {
         let span = self.calls[call as usize].span;
         self.record(call, "arrive", span, 0, NO_EDGE, true, 0);
         let n = &mut self.nodes[node as usize];
+        if n.ready == 0 && !n.down && n.kind != NodeKind::Queue {
+            // scaled to zero: wait for the first replica (KEDA activation)
+            n.insts[0].queue.push_back(call);
+            self.calls[call as usize].queued_at = self.now;
+            return;
+        }
         let slot = &n.insts[inst];
-        let has_room = slot.busy < n.slots || slot.queue.len() < n.queue_cap;
+        let over_limit = n
+            .adaptive
+            .as_ref()
+            .is_some_and(|a| slot.busy as f64 >= a.limit.floor());
+        let has_room = !over_limit && (slot.busy < n.slots || slot.queue.len() < n.queue_cap);
         if n.down || !has_room {
             n.rejected += 1;
             self.record(call, "reject", span, 0, NO_EDGE, false, 0);
@@ -1554,11 +1788,13 @@ impl Simulation {
             self.start(call);
         } else {
             n.insts[inst].queue.push_back(call);
+            self.calls[call as usize].queued_at = self.now;
         }
     }
 
     /// The call got its slot (`threads`) or in-flight permit (`cpu`).
     fn start(&mut self, call: u32) {
+        self.calls[call as usize].began = self.now;
         let span = self.calls[call as usize].span;
         self.record(call, "start", span, 0, NO_EDGE, true, 0);
         let c = &self.calls[call as usize];
@@ -2040,8 +2276,14 @@ impl Simulation {
         let Some(edge) = chosen else {
             return Send::Blocked;
         };
-        self.calls[call as usize].out_edge = edge;
         let now = self.now;
+        if let Some(b) = self.edges[edge as usize].limiter.as_mut() {
+            if !b.take(now) {
+                self.edges[edge as usize].w_rate_limited += 1;
+                return Send::Blocked;
+            }
+        }
+        self.calls[call as usize].out_edge = edge;
         let gen = self.calls[call as usize].gen;
         let mut wait = None;
         if let Some(pool) = self.edges[edge as usize].pool.as_mut() {
@@ -2072,10 +2314,15 @@ impl Simulation {
             let c = &self.calls[call as usize];
             (c.gen, c.start, c.attempt)
         };
-        let (to, timeout) = {
+        let (to, timeout, partitioned) = {
             let e = &mut self.edges[edge as usize];
             e.w_calls += 1;
-            (e.to, e.timeout)
+            if attempt == 0 {
+                if let Some(b) = e.budget.as_mut() {
+                    b.deposit();
+                }
+            }
+            (e.to, e.timeout, e.partitioned)
         };
         let lat = self.link_delay(edge, false);
         let child = self.alloc_call(to, Parent::Call { id: call, gen }, edge, start_t);
@@ -2096,13 +2343,19 @@ impl Simulation {
                 ev.node = to;
             }
         }
-        self.schedule(
-            self.now + lat,
-            Ev::Arrive {
-                call: child,
-                gen: child_gen,
-            },
-        );
+        if partitioned {
+            // the request is lost; the connection hangs until a timeout
+            self.free_call(child);
+            self.hang_pool(edge, timeout);
+        } else {
+            self.schedule(
+                self.now + lat,
+                Ev::Arrive {
+                    call: child,
+                    gen: child_gen,
+                },
+            );
+        }
         if let Some(t) = timeout {
             self.schedule(self.now + t, Ev::Timeout { call, gen, token });
         }
@@ -2112,6 +2365,15 @@ impl Simulation {
             PARTICLE_REQUEST
         };
         self.emit(edge, lat, kind, trace != 0);
+    }
+
+    /// A pooled connection whose traffic was dropped by a partition is freed
+    /// after the call timeout (or a 30 s TCP timeout).
+    fn hang_pool(&mut self, edge: u32, timeout: Option<Time>) {
+        if self.edges[edge as usize].pool.is_some() {
+            let after = timeout.unwrap_or(30_000_000);
+            self.schedule(self.now + after, Ev::PoolRelease { edge });
+        }
     }
 
     /// A pooled connection on `edge` is free again: hand it to the next
@@ -2205,6 +2467,14 @@ impl Simulation {
             self.downstream_done(call, false);
             return;
         }
+        let now = self.now;
+        if let Some(b) = self.edges[edge as usize].budget.as_mut() {
+            if !b.take(now) {
+                self.edges[edge as usize].w_budget_exhausted += 1;
+                self.downstream_done(call, false);
+                return;
+            }
+        }
         self.calls[call as usize].attempt = attempt + 1;
         self.edges[edge as usize].w_retries += 1;
         self.win.retries += 1;
@@ -2227,18 +2497,43 @@ impl Simulation {
 
     /// Release the slot held by `call` and answer its caller.
     fn finish(&mut self, call: u32, ok: bool) {
-        let (node, inst) = (
-            self.calls[call as usize].node,
-            self.calls[call as usize].inst as usize,
-        );
+        let (node, inst, began) = {
+            let c = &self.calls[call as usize];
+            (c.node, c.inst as usize, c.began)
+        };
+        let now = self.now;
         let n = &mut self.nodes[node as usize];
-        if let Some(next) = n.insts[inst].queue.pop_front() {
+        if let Some(a) = n.adaptive.as_mut() {
+            let (min, max) = (a.cfg.min.max(1) as f64, (a.cfg.max as f64).max(a.cfg.min.max(1) as f64));
+            if !ok || now.saturating_sub(began) > a.target {
+                a.limit = (a.limit * a.cfg.backoff.clamp(0.1, 0.99)).max(min);
+            } else if n.insts[inst].busy as f64 * 2.0 >= a.limit {
+                a.limit = (a.limit + 1.0).min(max);
+            }
+        }
+        let deadline = n.queue_timeout;
+        let mut shed = Vec::new();
+        let mut next = None;
+        while let Some(c) = n.insts[inst].queue.pop_front() {
+            if deadline > 0 && now.saturating_sub(self.calls[c as usize].queued_at) > deadline {
+                shed.push(c);
+                continue;
+            }
+            next = Some(c);
+            break;
+        }
+        n.rejected += shed.len() as u64;
+        match next {
             // slot handed directly to the next waiting call
-            self.start(next);
-        } else {
-            n.account(self.now);
-            n.busy -= 1;
-            n.insts[inst].busy -= 1;
+            Some(next) => self.start(next),
+            None => {
+                n.account(now);
+                n.busy -= 1;
+                n.insts[inst].busy -= 1;
+            }
+        }
+        for c in shed {
+            self.settle(c, false);
         }
         self.settle(call, ok);
     }
@@ -2249,6 +2544,11 @@ impl Simulation {
         if let Parent::Call { id, gen } = c.parent {
             let (edge, token, traced) = (c.edge, c.token, c.trace != 0);
             self.record(call, "reply", token, 0, edge, ok, 0);
+            if self.edges[edge as usize].partitioned {
+                let timeout = self.edges[edge as usize].timeout;
+                self.hang_pool(edge, timeout);
+                return;
+            }
             let lat = self.link_delay(edge, true);
             self.schedule(
                 self.now + lat,
@@ -2448,9 +2748,14 @@ impl Simulation {
                         bandwidth_utilization: (e.w_req_busy.max(e.w_res_busy)
                             / self.window as f64)
                             .min(1.0),
+                        rate_limited: e.w_rate_limited,
+                        budget_exhausted: e.w_budget_exhausted,
+                        partitioned: e.partitioned,
                     };
                     e.w_req_busy = 0.0;
                     e.w_res_busy = 0.0;
+                    e.w_rate_limited = 0;
+                    e.w_budget_exhausted = 0;
                     e.w_calls = 0;
                     e.w_retries = 0;
                     e.w_timeouts = 0;
@@ -2576,6 +2881,7 @@ mod tests {
             budget_per_hour: None,
             arrival: Arrival::Poisson,
             max_concurrent: None,
+            chaos_monkey: None,
         }
     }
 
@@ -2641,6 +2947,7 @@ mod tests {
             eval_every_ms: 5_000.0,
             stabilization_ms: 30_000.0,
             pod_start_ms: 8_000.0,
+            ..Autoscale::default()
         };
         let (ws, summary) = instance_series(&autoscaled(hpa));
         let at = |s: usize| ws[s].nodes[1].instances;
@@ -2670,6 +2977,7 @@ mod tests {
             eval_every_ms: 2_000.0,
             stabilization_ms: 0.0,
             pod_start_ms: 3_000.0,
+            ..Autoscale::default()
         };
         let (ws, _) = instance_series(&autoscaled(hpa));
         assert!(ws.iter().all(|w| w.nodes[1].instances >= 3 && w.nodes[1].instances <= 4));
@@ -2913,6 +3221,8 @@ mod tests {
         input.scenario.events = vec![ChaosEvent {
             at_ms: 2000.0,
             node: "db".into(),
+            nodes: vec![],
+            edge: None,
             action: ChaosAction::Down,
             value: 0.0,
         }];
@@ -2932,12 +3242,16 @@ mod tests {
             ChaosEvent {
                 at_ms: 3000.0,
                 node: "svc".into(),
+                nodes: vec![],
+                edge: None,
                 action: ChaosAction::Errors,
                 value: 1.0,
             },
             ChaosEvent {
                 at_ms: 6000.0,
                 node: "svc".into(),
+                nodes: vec![],
+                edge: None,
                 action: ChaosAction::Up,
                 value: 0.0,
             },
@@ -3408,6 +3722,8 @@ mod tests {
             input.scenario.events = vec![ChaosEvent {
                 at_ms: 10_000.0,
                 node: "cache".into(),
+                nodes: vec![],
+                edge: None,
                 action: ChaosAction::Flush,
                 value: 0.0,
             }];
@@ -3515,6 +3831,8 @@ mod tests {
             input.scenario.events = vec![ChaosEvent {
                 at_ms: 0.0,
                 node: "r1".into(),
+                nodes: vec![],
+                edge: None,
                 action: ChaosAction::Down,
                 value: 0.0,
             }];
@@ -3530,5 +3848,215 @@ mod tests {
         // quorum 1 = any replica
         input.design.nodes[1].config.quorum = 1;
         assert_eq!(run(&input).errors, 0);
+    }
+
+    // ------------------------------------------------- load protection
+
+    #[test]
+    fn rate_limit_fails_excess_calls_fast() {
+        let mut input = single_service(500.0, 100, 5.0);
+        input.design.edges[0].rate_limit = Some(RateLimit { rps: 100.0, burst: 10.0 });
+        let ws = windows(&input);
+        let s = run(&input);
+        assert!((s.throughput_rps - 100.0).abs() < 10.0, "{}", s.throughput_rps);
+        assert!(s.error_rate > 0.7, "{}", s.error_rate);
+        assert!(ws[3].edges[0].rate_limited > 300);
+    }
+
+    #[test]
+    fn retry_budget_stops_the_retry_storm() {
+        let storm = EdgeSpec {
+            timeout_ms: Some(30.0),
+            retries: 3,
+            backoff_ms: 5.0,
+            ..edge("api", "db")
+        };
+        let budgeted = EdgeSpec {
+            retry_budget: Some(RetryBudget { ratio: 0.1, min_per_sec: 10.0 }),
+            ..storm.clone()
+        };
+        let a = arrivals(&api_db(10.0, storm, 1900.0), 2);
+        let b = arrivals(&api_db(10.0, budgeted.clone(), 1900.0), 2);
+        assert!(b < a * 0.9, "budget {b}/s vs storm {a}/s");
+        let ws = windows(&api_db(10.0, budgeted, 1900.0));
+        let retries: u64 = ws.iter().map(|w| w.edges[1].retries).sum();
+        let calls: f64 = ws.iter().map(|w| w.edges[1].calls).sum();
+        assert!((retries as f64) < calls * 0.12, "{retries} retries / {calls} calls");
+    }
+
+    #[test]
+    fn queue_deadline_sheds_stale_work() {
+        // 10 slots × 50 ms = 200 rps, offered 300 rps with a deep queue
+        let mut input = single_service(300.0, 10, 50.0);
+        input.design.nodes[1].config.queue_size = 5000;
+        let slow = run(&input);
+        input.design.nodes[1].config.queue_timeout_ms = 100.0;
+        let shed = run(&input);
+        assert!(shed.p99_ms < slow.p99_ms * 0.5, "shed p99 {} vs {}", shed.p99_ms, slow.p99_ms);
+        assert!(shed.errors > 0);
+    }
+
+    #[test]
+    fn adaptive_limit_keeps_latency_bounded_under_overload() {
+        let mut input = single_service(3000.0, 2000, 10.0);
+        let svc = &mut input.design.nodes[1].config;
+        svc.queue_size = 2000;
+        svc.contention = 0.05; // latency grows with concurrency
+        let plain = run(&input);
+        input.design.nodes[1].config.adaptive_limit = Some(AdaptiveLimit {
+            min: 5,
+            max: 500,
+            initial: 20,
+            target_ms: 30.0,
+            backoff: 0.9,
+        });
+        let limited = run(&input);
+        assert!(limited.p99_ms < plain.p99_ms * 0.3, "{} vs {}", limited.p99_ms, plain.p99_ms);
+        assert!(limited.ok > plain.ok, "goodput {} vs {}", limited.ok, plain.ok);
+    }
+
+    // ---------------------------------------------- KEDA autoscaling
+
+    #[test]
+    fn keda_scales_a_queue_worker_from_zero_and_back() {
+        let mut worker = NodeConfig {
+            instances: 0,
+            concurrency: 10,
+            queue_size: 100,
+            latency_p50_ms: 20.0,
+            latency_p99_ms: 20.0,
+            cost_per_hour: 1.0,
+            ..NodeConfig::default()
+        };
+        worker.autoscale = Some(Autoscale {
+            min: 0,
+            max: 5,
+            eval_every_ms: 2_000.0,
+            stabilization_ms: 10_000.0,
+            pod_start_ms: 3_000.0,
+            metric: ScaleMetric::QueueLength,
+            queue_source: Some("q".into()),
+            target_queue_per_instance: 50.0,
+            ..Autoscale::default()
+        });
+        let mut input = SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "q",
+                        NodeKind::Queue,
+                        NodeConfig {
+                            concurrency: 20,
+                            queue_size: 100_000,
+                            latency_p50_ms: 0.2,
+                            latency_p99_ms: 0.2,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                    node("w", NodeKind::Service, worker),
+                ],
+                edges: vec![edge("c", "q"), edge("q", "w")],
+            },
+            scenario: scenario(0.0, 60_000.0),
+        };
+        input.scenario.traffic = vec![
+            TrafficPhase { at_ms: 0.0, rps: 0.0 },
+            TrafficPhase { at_ms: 10_000.0, rps: 300.0 },
+            TrafficPhase { at_ms: 30_000.0, rps: 0.0 },
+        ];
+        let (ws, s) = instance_series(&input);
+        assert_eq!(ws[5].nodes[2].instances, 0, "idle: no replica");
+        assert!(ws[25].nodes[2].instances >= 1, "scaled up while busy");
+        assert_eq!(ws[59].nodes[2].instances, 0, "back to zero");
+        assert_eq!(s.async_err, 0, "messages wait for the first replica");
+        assert_eq!(s.backlog, 0);
+        assert!(s.cost_per_hour < 2.0, "pays only while busy: {}", s.cost_per_hour);
+    }
+
+    // ---------------------------------------------------- chaos
+
+    #[test]
+    fn partition_drops_traffic_until_healed() {
+        let mut input = api_db(
+            5.0,
+            EdgeSpec {
+                timeout_ms: Some(50.0),
+                ..edge("api", "db")
+            },
+            200.0,
+        );
+        let at = |ms: f64, action| ChaosEvent {
+            at_ms: ms,
+            node: String::new(),
+            nodes: vec![],
+            edge: Some(EdgeRef {
+                source: "api".into(),
+                target: "db".into(),
+            }),
+            action,
+            value: 0.0,
+        };
+        input.scenario.events = vec![at(2_000.0, ChaosAction::Partition), at(5_000.0, ChaosAction::Heal)];
+        let ws = windows(&input);
+        assert_eq!(ws[3].ok_count, 0);
+        assert!(ws[3].timeout_count > 0 || ws[3].error_count > 0);
+        assert!(ws[3].edges[1].partitioned);
+        assert_eq!(ws[3].nodes[2].arrivals, 0.0, "nothing reaches the db");
+        assert_eq!(ws[7].error_count, 0);
+        assert!(!ws[7].edges[1].partitioned);
+    }
+
+    #[test]
+    fn one_event_can_take_a_whole_zone_down() {
+        let mut input = api_db(5.0, edge("api", "db"), 100.0);
+        input.scenario.events = vec![ChaosEvent {
+            at_ms: 2_000.0,
+            node: String::new(),
+            nodes: vec!["api".into(), "db".into()],
+            edge: None,
+            action: ChaosAction::Down,
+            value: 0.0,
+        }];
+        let ws = windows(&input);
+        assert!(ws[3].nodes[1].down && ws[3].nodes[2].down);
+        assert!(Simulation::new(
+            &SimInput {
+                scenario: Scenario {
+                    events: vec![ChaosEvent {
+                        at_ms: 0.0,
+                        node: String::new(),
+                        nodes: vec![],
+                        edge: None,
+                        action: ChaosAction::Down,
+                        value: 0.0,
+                    }],
+                    ..input.scenario.clone()
+                },
+                ..input.clone()
+            },
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn chaos_monkey_is_deterministic_and_independent_of_the_main_rng() {
+        let mut input = api_db(5.0, edge("api", "db"), 100.0);
+        input.scenario.chaos_monkey = Some(ChaosMonkey {
+            every_ms: 2_000.0,
+            down_ms: 1_000.0,
+            targets: vec!["db".into()],
+            seed: 3,
+        });
+        let a = windows(&input);
+        assert_eq!(a, windows(&input));
+        assert!(a.iter().filter(|w| w.nodes[2].down).count() >= 3);
+        assert!(a.iter().any(|w| w.error_count > 0));
+        let mut other = input.clone();
+        other.scenario.chaos_monkey.as_mut().unwrap().seed = 4;
+        // same outage times (every 2 s), only the target choice is random;
+        // with a single target the runs match
+        assert_eq!(windows(&other), a);
     }
 }

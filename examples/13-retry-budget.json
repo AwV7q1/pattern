@@ -1,0 +1,118 @@
+{
+  "title": "Retry budget chặn retry storm",
+  "description": "Giống ví dụ 05: DB chậm gấp 3 từ giây 20 đến 35, edge API → DB timeout 60ms, retry 3 lần. Ở đây thêm retry budget 10%: retry chỉ được phép khi tổng retry không quá 10% số request, nên tải lên DB không bị nhân lên và hệ thống tự hồi phục khi DB khoẻ lại.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 260,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 520,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 80,
+          "queueSize": 50,
+          "latencyP50Ms": 15,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 780,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20,
+          "queueSize": 200,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 40,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "db",
+        "timeoutMs": 60,
+        "retries": 3,
+        "backoffMs": 10,
+        "jitter": true,
+        "retryBudget": {
+          "ratio": 0.1,
+          "minPerSec": 10
+        }
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 1000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 1000
+      }
+    ],
+    "events": [
+      {
+        "atMs": 20000,
+        "node": "db",
+        "action": "latency",
+        "value": 3
+      },
+      {
+        "atMs": 35000,
+        "node": "db",
+        "action": "up"
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    }
+  }
+}

@@ -477,6 +477,7 @@ fn scenario_for(
         events: vec![],
         budget_per_hour: None,
         arrival,
+        chaos_monkey: None,
         max_concurrent: opts.max_vus,
     }
 }
