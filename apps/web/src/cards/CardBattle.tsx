@@ -8,8 +8,9 @@ import {
   Dices,
   Heart,
   HeartPulse,
-  Hourglass,
   Info,
+  ScrollText,
+  X,
   Layers,
   LoaderCircle,
   Network,
@@ -87,6 +88,9 @@ export function CardBattle() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [showRules, setShowRules] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  /** How many turn reports the player has looked at (the rest light the badge). */
+  const [seenReports, setSeenReports] = useState(0);
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
   const [splash, setSplash] = useState<{ key: number; def: CardDef; x: number; y: number } | null>(null);
   const busy = useRef(false);
@@ -113,6 +117,7 @@ export function CardBattle() {
     setState(newBattle(CONTENT, s));
     setError(null);
     setFlash(null);
+    setSeenReports(0);
   };
 
   /** Green bolts from your gateway into the bot. */
@@ -303,15 +308,24 @@ export function CardBattle() {
         if (card) keys.current.play(card.uid);
       } else if (e.key === 'e' || e.key === 'E') {
         void keys.current.endTurn();
+      } else if (e.key === 'l' || e.key === 'L') {
+        setShowLog((v) => !v);
+      } else if (e.key === 'Escape') {
+        setShowLog(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [state.hand]);
 
+  // an open log counts as read
+  useEffect(() => {
+    if (showLog) setSeenReports(state.reports.length);
+  }, [showLog, state.reports.length]);
+  const unseen = showLog ? 0 : state.reports.length - seenReports;
+
   const intent = currentIntent(CONTENT, state);
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
-  const lastReport = state.reports.at(-1);
   const over = state.phase === 'won' || state.phase === 'lost';
   const hand = state.hand.map((inst) => ({
     uid: inst.uid,
@@ -333,6 +347,12 @@ export function CardBattle() {
         <span className="text-muted-foreground">Lượt {state.turn}</span>
         <span className="font-mono text-xs text-muted-foreground">seed {seed}</span>
         <div className="ml-auto flex items-center gap-2">
+          <Button size="sm" variant={showLog ? 'secondary' : 'ghost'} className="relative" aria-expanded={showLog} onClick={() => setShowLog((v) => !v)}>
+            <ScrollText /> Nhật ký
+            {unseen > 0 && (
+              <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-amber-400 font-mono text-[10px] font-bold text-black">{unseen}</span>
+            )}
+          </Button>
           <Button size="sm" variant="ghost" onClick={() => setShowRules((v) => !v)}>
             <Info /> Luật chơi
           </Button>
@@ -352,7 +372,7 @@ export function CardBattle() {
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1.5fr)_minmax(140px,0.55fr)_minmax(260px,0.75fr)] gap-6 overflow-y-auto px-6 pb-[200px] pt-2">
           <div className="flex min-w-0 flex-col justify-center gap-4">
             <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
-            {lastReport ? <ReportCard report={lastReport} /> : <FirstTurnHint />}
+            {state.reports.length === 0 && <FirstTurnHint />}
             {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
           </div>
 
@@ -370,7 +390,6 @@ export function CardBattle() {
             ) : (
               <span className="select-none font-black italic tracking-tighter text-foreground/10 [font-size:64px]">VS</span>
             )}
-            <TurnLog reports={state.reports} />
           </div>
 
           <div className="flex min-w-0 flex-col items-center justify-center">
@@ -416,6 +435,8 @@ export function CardBattle() {
           </Button>
         </div>
 
+        <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
+
         <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={setDragState} />
         {hand.length === 0 && !over && (
           <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
@@ -424,7 +445,7 @@ export function CardBattle() {
 
       {splash && <PlayedSplash key={splash.key} def={splash.def} x={splash.x} y={splash.y} onDone={() => setSplash(null)} />}
 
-      {over && <EndScreen state={state} seed={seed} onRetry={() => restart(seed)} onNew={() => restart(randomSeed())} />}
+      {over && <EndScreen state={state} seed={seed} onLog={() => setShowLog(true)} onRetry={() => restart(seed)} onNew={() => restart(randomSeed())} />}
     </div>
   );
 }
@@ -789,20 +810,21 @@ function FirstTurnHint() {
   );
 }
 
-function ReportCard({ report: r }: { report: TurnReport }) {
+function ReportCard({ report: r, onCollapse }: { report: TurnReport; onCollapse?: () => void }) {
   return (
-    <div className="rounded-lg border bg-card p-4 text-sm">
-      <div className="mb-2 flex items-center gap-2 font-medium">
-        Kết quả lượt {r.turn}: {r.intent}
-        <span className="ml-auto text-xs text-muted-foreground">10 giây mô phỏng</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="rounded-lg border bg-background/60 p-3 text-sm">
+      <button type="button" onClick={onCollapse} className="mb-2 flex w-full items-center gap-2 text-left font-medium">
+        <span className="font-mono text-xs text-muted-foreground">T{r.turn}</span>
+        <span className="flex-1">{r.intent}</span>
+        <span className="text-xs font-normal text-muted-foreground">10 giây mô phỏng</span>
+      </button>
+      <div className="grid grid-cols-2 gap-2">
         <Stat label="Lỗi" value={`${(r.errorRate * 100).toFixed(1)}%`} bad={r.errorRate > 0.01} />
         <Stat label="p99" value={`${Math.round(r.p99Ms)}ms`} bad={r.damage.latency > 0} />
         <Stat label="Bot bị chặn" value={`${n0(r.botBlockedRps)}/${n0(r.botRps)} rps`} />
         <Stat label="Chi phí" value={`$${r.costPerHour.toFixed(2)}/h`} bad={r.damage.budget > 0} />
       </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-3">
         <div>
           <div className="mb-1 text-xs font-medium text-rose-300">Bạn mất {r.damage.total} máu</div>
           <ul className="space-y-0.5 text-xs text-muted-foreground">
@@ -836,33 +858,66 @@ function Stat({ label, value, bad }: { label: string; value: string; bad?: boole
   );
 }
 
-function TurnLog({ reports }: { reports: TurnReport[] }) {
-  if (reports.length === 0) return null;
+/**
+ * The battle log: a drawer on the right edge, closed by default so the
+ * arena stays clear. Newest turn first and opened in full; older turns
+ * collapse to one line and expand on click.
+ */
+function LogDrawer({ open, reports, onClose }: { open: boolean; reports: TurnReport[]; onClose: () => void }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const latest = reports.at(-1)?.turn;
+  // a new turn comes in: show it in full
+  useEffect(() => setExpanded(latest ?? null), [latest]);
   return (
-    <div className="rounded-lg border bg-card p-3">
-      <div className="mb-2 flex items-center gap-1.5 text-sm font-medium">
-        <Hourglass className="size-4" /> Diễn biến
+    <aside
+      aria-label="Nhật ký trận"
+      aria-hidden={!open}
+      inert={!open}
+      className={cn(
+        'absolute bottom-[150px] right-4 top-2 z-40 flex w-[min(440px,calc(100%-2rem))] flex-col rounded-2xl border bg-card/95 shadow-2xl shadow-black/60 backdrop-blur transition-[transform,opacity] duration-300 ease-out',
+        open ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-[calc(100%+2rem)] opacity-0',
+      )}
+    >
+      <div className="flex items-center gap-2 border-b px-4 py-2.5">
+        <ScrollText className="size-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">Nhật ký</span>
+        <span className="text-xs text-muted-foreground">{reports.length} lượt · phím L</span>
+        <Button size="icon" variant="ghost" className="ml-auto size-7" aria-label="Đóng nhật ký" onClick={onClose}>
+          <X />
+        </Button>
       </div>
-      <ol className="space-y-1 font-mono text-[11px]">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {reports.length === 0 && (
+          <p className="p-2 text-sm text-muted-foreground">Chưa có lượt nào. Kết quả mỗi lượt sẽ hiện ở đây sau khi bạn bấm Kết thúc lượt.</p>
+        )}
         {reports
           .slice()
           .reverse()
-          .map((r) => (
-            <li key={r.turn} className="flex gap-2">
-              <span className="w-6 text-muted-foreground">T{r.turn}</span>
-              <span className="flex-1 truncate">{r.intent}</span>
-              <span className={r.damage.total ? 'text-rose-400' : 'text-muted-foreground'}>−{r.damage.total}</span>
-              <span className={r.enemyDamage ? 'text-emerald-300' : 'text-muted-foreground'}>⚔{r.enemyDamage}</span>
-            </li>
-          ))}
-      </ol>
-    </div>
+          .map((r) =>
+            expanded === r.turn ? (
+              <ReportCard key={r.turn} report={r} onCollapse={() => setExpanded(null)} />
+            ) : (
+              <button
+                key={r.turn}
+                type="button"
+                onClick={() => setExpanded(r.turn)}
+                className="flex w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-left font-mono text-xs hover:bg-muted/60"
+              >
+                <span className="w-7 text-muted-foreground">T{r.turn}</span>
+                <span className="flex-1 truncate font-sans">{r.intent}</span>
+                <span className={r.damage.total ? 'text-rose-400' : 'text-muted-foreground'}>−{r.damage.total}</span>
+                <span className={r.enemyDamage ? 'text-emerald-300' : 'text-muted-foreground'}>⚔{r.enemyDamage}</span>
+              </button>
+            ),
+          )}
+      </div>
+    </aside>
   );
 }
 
 // ---------------------------------------------------------------- overlays
 
-function EndScreen({ state, seed, onRetry, onNew }: { state: BattleState; seed: number; onRetry: () => void; onNew: () => void }) {
+function EndScreen({ state, seed, onLog, onRetry, onNew }: { state: BattleState; seed: number; onLog: () => void; onRetry: () => void; onNew: () => void }) {
   const won = state.phase === 'won';
   const failed = state.reports.reduce((s, r) => s + r.legitFailed, 0);
   const blocked = state.reports.reduce((s, r) => s + r.botBlockedRps * (CONTENT.battle.turnMs / 1000), 0);
@@ -877,7 +932,7 @@ function EndScreen({ state, seed, onRetry, onNew }: { state: BattleState; seed: 
         <p className="mb-4 text-sm text-muted-foreground">
           {won
             ? `Bạn giữ hệ thống sống qua ${state.turn} lượt và còn ${state.hp}/${state.maxHp} Error Budget.`
-            : `Hệ thống không đạt SLO quá nhiều lần ở lượt ${state.turn}. Xem lại Diễn biến để biết lượt nào mất máu nhiều nhất.`}
+            : `Hệ thống không đạt SLO quá nhiều lần ở lượt ${state.turn}. Mở Nhật ký để biết lượt nào mất máu nhiều nhất.`}
         </p>
         <div className="mb-5 grid grid-cols-2 gap-2">
           <Stat label="Request người dùng lỗi" value={n0(failed)} bad={failed > 0} />
@@ -891,6 +946,9 @@ function EndScreen({ state, seed, onRetry, onNew }: { state: BattleState; seed: 
           </Button>
           <Button variant="outline" onClick={onRetry}>
             <RotateCcw /> Chơi lại seed này
+          </Button>
+          <Button variant="outline" size="icon" aria-label="Mở nhật ký" onClick={onLog}>
+            <ScrollText />
           </Button>
         </div>
       </div>
