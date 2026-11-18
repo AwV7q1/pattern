@@ -12,9 +12,13 @@ import {
   type Routing,
 } from '@/types';
 
+/** Design-lint findings on a node or edge (derived for drawing, never stored). */
+export type LintBadge = { count: number; worst: 'error' | 'warn' | 'info' };
+
 export type SystemNodeData = {
   /** Position in the engine's node array (metrics are indexed by it). */
   index: number;
+  lint?: LintBadge;
   label: string;
   kind: NodeKind;
   config: NodeConfig;
@@ -33,6 +37,7 @@ export type FlowEdgeData = {
   metrics?: EdgeWindow;
   /** Derived for drawing (see `decorateEdges`), never stored. */
   view?: EdgeView;
+  lint?: LintBadge;
 };
 
 export interface EdgeView {
@@ -64,6 +69,8 @@ export function policyOf(e: DesignEdge): EdgePolicy {
     requestKb: e.requestKb ?? 0,
     responseKb: e.responseKb ?? 0,
     bandwidthMbps: e.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps,
+    rateLimit: e.rateLimit ?? null,
+    retryBudget: e.retryBudget ?? null,
   };
 }
 
@@ -222,6 +229,8 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       if (p.requestKb) out.requestKb = p.requestKb;
       if (p.responseKb) out.responseKb = p.responseKb;
       if (p.requestKb || p.responseKb) out.bandwidthMbps = p.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps;
+      if (p.rateLimit) out.rateLimit = p.rateLimit;
+      if (p.retryBudget) out.retryBudget = p.retryBudget;
       return out;
     }),
   };

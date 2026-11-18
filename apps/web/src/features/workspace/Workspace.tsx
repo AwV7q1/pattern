@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import {
   Background,
   Controls,
@@ -14,32 +14,34 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, BookA, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
-import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
-import { CaseLibrary } from './cases/CaseLibrary';
-import { LearnPage } from './learn/LearnPage';
-import { GlossaryPage } from './learn/Glossary';
-import { BottomTabBar, type TabItem } from './components/BottomTabBar';
-import { useProgress } from './learn/progress';
-import { LESSONS } from './learn/curriculum';
-import { SimClient } from './sim/client';
-import { clearEdgeGeometry } from './gpu/edgeGeometry';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw } from 'lucide-react';
+import { LEARN_LEVELS, LEVELS } from '@/presets';
+import { useProgress } from '@/learn/progress';
+import { LESSONS } from '@/learn/curriculum';
+import { useSimClient } from '@/app/sim-context';
+import { countByTarget, lint, type Finding, type LintDesign } from '@pattern/design-lint';
+import { LintPanel } from './LintPanel';
+import { CONFLICT_EVENT, setOpenProject, useSync } from '@/projects/sync';
+import { idbStore } from '@/projects/store';
+import { ShareDialog } from './ShareDialog';
+import { Copy, Eye, GitCompareArrows, Share2, Wrench } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { useUi } from '@/app/ui-store';
+import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
 import {
   BUILDABLE,
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
-  type Design,
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
+  type Design,
+  type Level,
   type Preset,
-  type SizingReport,
   type Summary,
   type TraceEvent,
   type WindowMetrics,
-} from './types';
-import { CapacityPage } from './capacity/CapacityPage';
-import { CardBattle } from './cards/CardBattle';
+} from '@/types';
 import {
   autoLayout,
   decorateEdges,
@@ -50,33 +52,30 @@ import {
   wouldCycle,
   type FlowEdgeType,
   type SystemNodeType,
-} from './model/flow';
-import { KIND_META, fmt } from './lib/meta';
-import { ParticleLegend } from './components/ParticleLegend';
-import { TracePanel, type PinnedTrace } from './components/TracePanel';
-import { SystemNode } from './components/SystemNode';
-import { FlowEdge } from './components/FlowEdge';
-import { ParticleLayer } from './components/ParticleLayer';
-import { MetricsPanel } from './components/MetricsPanel';
-import { EdgeInspector, NodeInspector } from './components/Inspector';
-import { LevelPanel } from './components/LevelPanel';
-import { ResultDialog } from './components/ResultDialog';
-import { DRAG_MIME, Palette } from './components/Palette';
-import { GROUP_MIME, TECH_MIME, TechLibrary } from './tech/TechLibrary';
-import { FrameNode, type FrameNodeType } from './components/FrameNode';
-import { GROUP_KINDS, childGroups, memberIds, withGroups } from './projects/groups';
-import { TechDialogs } from './tech/TechDialogs';
-import { techOf } from './tech/catalog';
-import { ProjectsHome } from './projects/ProjectsHome';
-import { SaveStatus, type SaveState } from './projects/SaveStatus';
-import { VersionHistory } from './projects/VersionHistory';
-import { Textarea } from './components/ui/textarea';
-import { PromptDialog } from './prompt/PromptDialog';
-import { Input } from './components/ui/input';
+} from '@/model/flow';
+import { KIND_META, fmt } from '@/lib/meta';
+import { ParticleLegend } from '@/components/ParticleLegend';
+import { TracePanel, type PinnedTrace } from '@/components/TracePanel';
+import { SystemNode } from '@/components/SystemNode';
+import { FlowEdge } from '@/components/FlowEdge';
+import { ParticleLayer } from '@/components/ParticleLayer';
+import { MetricsPanel } from '@/components/MetricsPanel';
+import { EdgeInspector, NodeInspector } from '@/components/Inspector';
+import { LevelPanel } from '@/components/LevelPanel';
+import { ResultDialog } from '@/components/ResultDialog';
+import { DRAG_MIME, Palette } from '@/components/Palette';
+import { GROUP_MIME, TECH_MIME, TechLibrary } from '@/tech/TechLibrary';
+import { FrameNode, type FrameNodeType } from '@/components/FrameNode';
+import { GROUP_KINDS, childGroups, memberIds, withGroups } from '@/projects/groups';
+import { techOf } from '@/tech/catalog';
+import { SaveStatus, type SaveState } from '@/projects/SaveStatus';
+import { VersionHistory } from '@/projects/VersionHistory';
+import { Textarea } from '@/components/ui/textarea';
+import { PromptDialog } from '@/prompt/PromptDialog';
+import { Input } from '@/components/ui/input';
 import {
   download,
   exportJson,
-  projectFromPreset,
   slug,
   snapshotOf,
   store,
@@ -85,18 +84,18 @@ import {
   type Project,
   type RunSnapshot,
   type Version,
-} from './projects/store';
-import { Button } from './components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { SidePanel } from './components/SidePanel';
-import { cn } from './lib/utils';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
-import { Slider } from './components/ui/slider';
-import { Switch } from './components/ui/switch';
-import { Label } from './components/ui/label';
-import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
-import { ScrollArea } from './components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+} from '@/projects/store';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SidePanel } from '@/components/SidePanel';
+import { cn } from '@/lib/utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const nodeTypes: NodeTypes = { system: SystemNode, frame: FrameNode };
 const edgeTypes: EdgeTypes = { flow: FlowEdge };
@@ -104,39 +103,61 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'learn' | 'sandbox' | 'game' | 'capacity' | 'glossary';
+type Mode = 'sandbox' | 'game';
 
-/** Modes without a live simulation on the canvas. */
-const PAGE_MODES: Mode[] = ['learn', 'capacity', 'glossary'];
-
-const TABS: TabItem<Mode>[] = [
-  { value: 'learn', label: 'Học', icon: GraduationCap },
-  { value: 'game', label: 'Game', icon: Gamepad2 },
-  { value: 'sandbox', label: 'Sandbox', icon: Shapes },
-  { value: 'capacity', label: 'Công suất', icon: Gauge },
-  { value: 'glossary', label: 'Từ điển', icon: BookA },
-];
-type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
+export type WorkspaceProps =
+  | {
+      mode: 'game';
+      levelKey: string;
+      /** Community level fetched from the server (official ones come from the repo). */
+      level?: Level;
+      /** Opened from a lesson of the learning path. */
+      lessonId?: string | null;
+      onBackToPath?: () => void;
+      onLevelChange: (key: string) => void;
+      /** Replaces the level picker in the toolbar (interviews). */
+      title?: ReactNode;
+      /** Replaces the Level tab content (interviews): gets the current design. */
+      panel?: (design: () => Design) => ReactNode;
+      panelLabel?: string;
+    }
+  | {
+      mode: 'sandbox';
+      project: Project;
+      onClose: () => void;
+      /** Shared link (`/s/:slug`): nothing is saved; the visitor can copy it to their projects. */
+      readOnly?: { author: string; onDuplicate: (p: Project) => void };
+    };
+type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes' | 'lint';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
 const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
 
 const bestKey = (id: string) => `pattern.best.${id}`;
+const EMPTY_PRESET: Preset = {
+  title: '',
+  description: '',
+  design: { nodes: [], edges: [] },
+  scenario: { seed: 1, timeoutMs: 2000, traffic: [{ atMs: 0, rps: 0 }], slo: { p99Ms: 200, errorRate: 0.01 }, windowMs: 1000 },
+};
 const ALL_LEVELS = { ...LEVELS, ...LEARN_LEVELS };
 
-export function App() {
-  const client = useMemo(() => new SimClient(), []);
+/** Canvas + simulation + side panel, for a game level or a studio project. */
+export function Workspace(props: WorkspaceProps) {
+  const client = useSimClient();
   const { screenToFlowPosition } = useReactFlow();
-  const [mode, setMode] = useState<Mode>('learn');
-  /** Game tab: classic levels on the canvas, or the card battle prototype. */
-  const [gameView, setGameView] = useState<'levels' | 'cards'>('levels');
-  const cardsOpen = mode === 'game' && gameView === 'cards';
+  const mode: Mode = props.mode;
+  const readOnly = props.mode === 'sandbox' ? props.readOnly : undefined;
+  const navigate = useNavigate();
+  const [shareOpen, setShareOpen] = useState(false);
+  const levelKey = props.mode === 'game' ? props.levelKey : Object.keys(LEVELS)[0];
   /** Practice level opened from a lesson of the learning path. */
-  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(null);
+  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(
+    props.mode === 'game' && props.lessonId ? { lessonId: props.lessonId, level: props.levelKey } : null,
+  );
   const { complete } = useProgress();
-  const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
-  const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
-  /** Studio project open on the sandbox canvas (null = projects home). */
+  const [presetKey, setPresetKey] = useState('');
+  /** Studio project open on the sandbox canvas. */
   const [project, setProject] = useState<Project | null>(null);
   const projectRef = useRef(project);
   const [reloadTick, setReloadTick] = useState(0);
@@ -147,12 +168,8 @@ export function App() {
         : null,
     [project],
   );
-  const preset =
-    project && presetKey === projectKey(project.id) && projectPreset
-      ? projectPreset
-      : (PRESETS[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]]);
-  const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
-  const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
+  const preset: Preset = projectPreset ?? EMPTY_PRESET;
+  const level = (props.mode === 'game' ? props.level : undefined) ?? ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<SystemNodeType>([]);
@@ -240,45 +257,18 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (PAGE_MODES.includes(mode) || cardsOpen) {
-      client.pause();
-      setRunning(false);
-      return;
-    }
+    if (mode === 'sandbox' && !presetKey) return; // project not opened yet
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
-  }, [client, mode, cardsOpen, presetKey, levelKey, load, reloadTick]);
+  }, [client, mode, presetKey, levelKey, load, reloadTick]);
 
-  const switchMode = (next: Mode) => {
-    if (mode === 'sandbox') {
-      setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
-      flushSave.current?.();
-    }
-    if (next !== 'game') setPractice(null);
-    // learning-path levels are only reachable from their lesson
-    if (next === 'game' && !practice && levelKey.startsWith('learn/')) setLevelKey(Object.keys(LEVELS)[0]);
-    setMode(next);
-  };
-
-  /** A lesson asks for its practice level on the canvas. */
-  const openPractice = (levelId: string, lessonId: string) => {
-    if (!ALL_LEVELS[levelId]) return;
-    setPractice({ lessonId, level: levelId });
-    setLevelKey(levelId);
-    setGameView('levels');
-    setMode('game');
-  };
   const backToPath = () => {
     setPractice(null);
-    setLevelKey(Object.keys(LEVELS)[0]);
-    setMode('learn');
+    if (props.mode === 'game') props.onBackToPath?.();
   };
 
   // ------------------------------------------------------------------ studio projects
 
-  const [homeTab, setHomeTab] = useState('mine');
-  /** A lesson is open full screen: hide the tab bar. */
-  const [immersive, setImmersive] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
   const [notes, setNotes] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -296,6 +286,7 @@ export function App() {
     setTimeout(() => setFlash((f) => (f === text ? null : f)), 2500);
   };
 
+  const firstVersionFor = useRef<string | null>(null);
   const openProject = useCallback((p: Project) => {
     const opened = { ...p, design: { ...autoLayout(p.design), groups: p.design.groups } };
     projectRef.current = opened;
@@ -308,19 +299,57 @@ export function App() {
     setScripted(false);
     settings.current.scripted = false;
     lastVersionAt.current = Date.now();
+    if (readOnly) return;
     store.versions(opened.id).then((vs) => {
       if (vs.length) lastVersionAt.current = vs[0].at;
-      else store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      // a project from the server already has its history elsewhere
+      else if (!opened.rev && firstVersionFor.current !== opened.id) {
+        firstVersionFor.current = opened.id; // StrictMode runs the open effect twice
+        store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      }
     });
-  }, []);
+  }, [readOnly]);
 
   const closeProject = () => {
     flushSave.current?.();
     client.pause();
     setRunning(false);
-    setProject(null);
-    setPresetKey(Object.keys(PRESETS)[0]);
+    if (props.mode === 'sandbox') props.onClose();
   };
+
+  // open the project given by the route
+  const initialProject = props.mode === 'sandbox' ? props.project : null;
+  useEffect(() => {
+    if (!initialProject) return;
+    openProject(initialProject);
+    // sync must not replace it while it is on the canvas
+    setOpenProject(initialProject.id);
+    return () => setOpenProject(null);
+  }, [initialProject, openProject]);
+  // is the open project in the account yet? (the sync engine sets `owner`)
+  const lastSync = useSync((s) => s.lastSync);
+  const [owned, setOwned] = useState(false);
+  useEffect(() => {
+    if (initialProject && !readOnly) void idbStore.get(initialProject.id).then((p) => setOwned(!!p?.owner));
+  }, [initialProject, readOnly, lastSync]);
+  useEffect(() => {
+    const onConflict = (e: Event) =>
+      showFlash(`“${(e as CustomEvent<{ name: string }>).detail.name}” cũng được sửa ở máy khác: bản đó được giữ trong lịch sử phiên bản`);
+    window.addEventListener(CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(CONFLICT_EVENT, onConflict);
+  }, []);
+
+  // leaving the page: stop the engine, save, remember the design for the capacity tools
+  const setLastDesign = useUi((s) => s.setLastDesign);
+  useEffect(
+    () => () => {
+      flushSave.current?.();
+      client.pause();
+      const p = projectRef.current;
+      if (p) setLastDesign({ title: p.name, design: toDesign(nodesRef.current, edgesRef.current) });
+    },
+    [client, setLastDesign],
+  );
 
   /** Write the canvas + notes to IndexedDB now. */
   const persist = useCallback(async (design: string, nextNotes: string) => {
@@ -356,9 +385,16 @@ export function App() {
     [project, mode, nodes, edges, groups],
   );
 
+  // design review (studio only: in game levels it would give the answer away)
+  const findings = useMemo<Finding[]>(
+    () => (designJson ? lint(JSON.parse(designJson) as LintDesign, preset.scenario) : []),
+    [designJson, preset.scenario],
+  );
+  const lintCounts = useMemo(() => countByTarget(findings), [findings]);
+
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
-    if (!designJson || !project || loaded.current.key !== projectKey(project.id)) return;
+    if (readOnly || !designJson || !project || loaded.current.key !== projectKey(project.id)) return;
     if (!saved.current.design) saved.current.design = loaded.current.design;
     const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
     if (!dirty) {
@@ -374,7 +410,7 @@ export function App() {
     flushSave.current = run;
     const t = setTimeout(run, 800);
     return () => clearTimeout(t);
-  }, [designJson, notes, project, persist]);
+  }, [designJson, notes, project, persist, readOnly]);
 
   // do not lose the last 800 ms when the tab closes
   useEffect(() => {
@@ -401,7 +437,7 @@ export function App() {
 
   // ⌘S / Ctrl+S: named version
   useEffect(() => {
-    if (mode !== 'sandbox' || !project) return;
+    if (mode !== 'sandbox' || !project || readOnly) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -410,7 +446,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, project, saveNamedVersion]);
+  }, [mode, project, saveNamedVersion, readOnly]);
 
   const restoreVersion = async (v: Version) => {
     const current = projectRef.current;
@@ -432,38 +468,6 @@ export function App() {
     setProject(p);
     await store.put(p);
   };
-
-  /** Load a generated design (sizing, calibration) into the sandbox as a new project. */
-  const openInSandbox = (key: string, p: Preset) => {
-    const created = projectFromPreset({ ...p, design: autoLayout(p.design) }, p.title, key);
-    store.put(created).then(() => {
-      openProject(created);
-      setMode('sandbox');
-    });
-  };
-  const openSizing = (r: SizingReport, title: string) => {
-    if (!r.input) return;
-    const t = r.input.scenario.traffic;
-    openInSandbox('custom-sizing', {
-      title,
-      description: `Đề xuất của Sizing wizard: Node cluster (1 process/vCPU) + Postgres, pool mỗi process. Cao điểm ${Math.round(t[0].rps)} rps; bật "Traffic theo kịch bản" để có đột biến ${Math.round(t[1]?.rps ?? 0)} rps ở giây 30–40. Thử tắt app server hoặc làm chậm DB.`,
-      design: r.input.design,
-      scenario: r.input.scenario,
-    });
-  };
-  const openCalibrated = (design: Design, title: string, slo?: { p99Ms: number; errorRate: number }) =>
-    openInSandbox('custom-calibrated', {
-      title,
-      description: 'Design đã hiệu chỉnh từ số đo k6. Kéo RPS để xem hệ thống phản ứng thế nào quanh giới hạn dự đoán.',
-      design,
-      scenario: {
-        seed: 1,
-        timeoutMs: 60000,
-        traffic: [{ atMs: 0, rps: 500 }],
-        slo: slo ?? { p99Ms: 200, errorRate: 0.01 },
-        windowMs: 1000,
-      },
-    });
 
   // worker events
   useEffect(() => {
@@ -535,8 +539,8 @@ export function App() {
     const p = { ...current, lastRun };
     projectRef.current = p;
     setProject(p);
-    store.put(p).catch(() => {});
-  }, [windows, mode]);
+    if (!readOnly) store.put(p).catch(() => {});
+  }, [windows, mode, readOnly]);
 
   // follow one request every 2 s of wall time
   useEffect(() => {
@@ -551,6 +555,7 @@ export function App() {
     () =>
       decorateEdges(nodes, edges).map((e) => ({
         ...e,
+        data: { ...e.data!, lint: lintCounts.edges.get(`${e.source}->${e.target}`) },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 14,
@@ -558,7 +563,7 @@ export function App() {
           color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
         },
       })),
-    [nodes, edges],
+    [nodes, edges, lintCounts],
   );
 
   // ------------------------------------------------------------------ editing
@@ -691,7 +696,16 @@ export function App() {
         : [],
     [mode, groups, groupSel, nodes],
   );
-  const canvasNodes = useMemo(() => [...frameNodes, ...nodes] as Node[], [frameNodes, nodes]);
+  const canvasNodes = useMemo(
+    () =>
+      [
+        ...frameNodes,
+        ...(lintCounts.nodes.size
+          ? nodes.map((n) => (lintCounts.nodes.has(n.id) ? { ...n, data: { ...n.data, lint: lintCounts.nodes.get(n.id) } } : n))
+          : nodes),
+      ] as Node[],
+    [frameNodes, nodes, lintCounts],
+  );
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
@@ -756,6 +770,31 @@ export function App() {
       .filter((n) => members.has(n.id) && n.data.kind !== 'client')
       .forEach((n) => client.setNodeDown(n.data.index, down));
     setNodes((ns) => ns.map((n) => (members.has(n.id) && n.data.kind !== 'client' ? { ...n, data: { ...n.data, down } } : n)));
+  };
+
+  /** Show a finding's node or edge on the canvas (opens its inspector). */
+  const selectFinding = (f: Finding) => {
+    const t = f.target;
+    if ('design' in t) return;
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: 'node' in t && n.id === t.node })));
+    setEdges((es) => es.map((e) => ({ ...e, selected: 'edge' in t && e.source === t.edge[0] && e.target === t.edge[1] })));
+  };
+  /** Apply the one-click fix of a finding and rerun. */
+  const applyFix = (f: Finding) => {
+    if (!f.fix) return;
+    let ns = nodesRef.current;
+    let es = edgesRef.current;
+    for (const p of f.fix.patches) {
+      const t = p.target;
+      if ('node' in t)
+        ns = ns.map((n) => (n.id === t.node ? { ...n, data: { ...n.data, config: { ...n.data.config, [p.field]: p.value } } } : n));
+      else
+        es = es.map((e) =>
+          e.source === t.edge[0] && e.target === t.edge[1] ? { ...e, data: { ...e.data!, policy: { ...e.data!.policy, [p.field]: p.value } } } : e,
+        );
+    }
+    commit(ns, es);
+    showFlash(`Đã áp dụng: ${f.fix.label}`);
   };
 
   const updateNode = (id: string, config: NodeConfig, label: string) =>
@@ -835,49 +874,37 @@ export function App() {
   const paletteKinds = mode === 'game' ? level.palette : BUILDABLE;
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <div className="flex items-center gap-2 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Shapes className="size-4" />
-          </span>
-          Pattern
-        </div>
-        {mode === 'game' && !practice && (
-          <ToggleGroup
-            type="single"
-            size="sm"
-            variant="outline"
-            value={gameView}
-            onValueChange={(v) => v && setGameView(v as 'levels' | 'cards')}
-          >
-            <ToggleGroupItem value="levels" className="px-3">
-              Level
-            </ToggleGroupItem>
-            <ToggleGroupItem value="cards" className="px-3">
-              Thẻ bài <span className="text-[10px] text-amber-300">beta</span>
-            </ToggleGroupItem>
-          </ToggleGroup>
-        )}
-        {PAGE_MODES.includes(mode) || cardsOpen ? null : mode === 'game' ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+        {props.mode === 'game' && props.title ? (
+          props.title
+        ) : mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
               setPractice(null);
-              setLevelKey(v);
+              if (props.mode === 'game') props.onLevelChange(v);
             }}
           >
             <SelectTrigger className="w-64">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(practice ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
+              {Object.entries(practice || !(levelKey in LEVELS) ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
                 <SelectItem key={key} value={key}>
                   {l.title}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        ) : project && readOnly ? (
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Eye className="size-4 text-muted-foreground" />
+            <span className="max-w-72 truncate font-medium">{project.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              chỉ xem · của {readOnly.author} · sửa thử thoải mái, không lưu
+            </span>
+          </div>
         ) : project ? (
           <div className="flex min-w-0 items-center gap-1 text-sm">
             <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" onClick={closeProject}>
@@ -905,16 +932,12 @@ export function App() {
               </button>
             )}
             <span className="ml-2">
-              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} />}
+              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} owned={owned} />}
             </span>
           </div>
         ) : null}
 
-        <div
-          className={
-            PAGE_MODES.includes(mode) || cardsOpen || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
-          }
-        >
+        <div className={mode === 'sandbox' && !project ? 'hidden' : 'ml-auto flex items-center gap-2'}>
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -963,8 +986,53 @@ export function App() {
               ))}
             </SelectContent>
           </Select>
-          {mode === 'sandbox' && (
+          {readOnly && (
+            <Button
+              size="sm"
+              onClick={() =>
+                project && readOnly.onDuplicate({ ...project, design: withGroups(toDesign(nodes, edges), groups), notes })
+              }
+            >
+              <Copy /> Nhân bản vào dự án của tôi
+            </Button>
+          )}
+          {mode === 'sandbox' && !readOnly && (
             <>
+              <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
+                <Share2 /> Chia sẻ
+              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Tạo level từ dự án"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/levels/new?from=${project.id}`);
+                    }}
+                  >
+                    <Wrench />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Tạo level game từ dự án này</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="So sánh A/B"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/studio/${project.id}/compare`);
+                    }}
+                  >
+                    <GitCompareArrows />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>So sánh A/B với phiên bản cũ hoặc dự án khác</TooltipContent>
+              </Tooltip>
               <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
                 <Sparkles /> Prompt
               </Button>
@@ -997,25 +1065,6 @@ export function App() {
         </div>
       </header>
 
-      {mode === 'learn' ? (
-        <LearnPage onBuild={openPractice} onImmersiveChange={setImmersive} />
-      ) : mode === 'glossary' ? (
-        <GlossaryPage />
-      ) : cardsOpen ? (
-        <CardBattle />
-      ) : mode === 'capacity' ? (
-        <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
-      ) : mode === 'sandbox' && !project ? (
-        <ProjectsHome
-          presets={PRESETS}
-          onOpen={openProject}
-          tab={homeTab}
-          onTab={setHomeTab}
-          extraTabs={[
-            { value: 'cases', label: `Case study · ${CASES.length}`, content: <CaseLibrary cases={CASES} onOpen={openProject} /> },
-          ]}
-        />
-      ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
           <aside className="flex w-60 shrink-0 flex-col gap-3 border-r p-3">
@@ -1052,7 +1101,7 @@ export function App() {
           >
             <Background gap={24} color="oklch(1 0 0 / 6%)" />
             <ParticleLayer client={client} />
-            <Controls showInteractive={false} position="bottom-right" style={{ marginBottom: 96 }} />
+            <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
           {practice && mode === 'game' && (
             <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
@@ -1067,7 +1116,7 @@ export function App() {
             </div>
           )}
           {error && (
-            <div className="absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
+            <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
               {error}
             </div>
           )}
@@ -1076,11 +1125,26 @@ export function App() {
         <SidePanel full={panelFull} onExitFull={exitPanelFull}>
           <Tabs value={panel} onValueChange={(v) => setPanel(v as Panel)} className="min-h-0 flex-1 gap-0">
             <div className="m-3 mb-0 flex items-center gap-2">
-              <TabsList className={cn('flex-1', panelFull && 'mx-auto max-w-xl')}>
-                {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
+              <TabsList className={cn('min-w-0 flex-1 justify-start overflow-x-auto', panelFull && 'mx-auto max-w-xl')}>
+                {mode === 'game' && <TabsTrigger value="level">{(props.mode === 'game' && props.panelLabel) || 'Level'}</TabsTrigger>}
                 <TabsTrigger value="metrics">Số liệu</TabsTrigger>
                 <TabsTrigger value="trace">Trace</TabsTrigger>
                 <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
+                {mode === 'sandbox' && (
+                  <TabsTrigger value="lint" className="gap-1">
+                    Kiểm tra
+                    {findings.some((f) => f.severity !== 'info') && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 font-mono text-[10px] leading-4 text-white',
+                          findings.some((f) => f.severity === 'error') ? 'bg-destructive' : 'bg-warning text-black',
+                        )}
+                      >
+                        {findings.filter((f) => f.severity !== 'info').length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                )}
                 {mode === 'sandbox' && project && <TabsTrigger value="notes">Ghi chú</TabsTrigger>}
               </TabsList>
               <Button
@@ -1098,14 +1162,18 @@ export function App() {
               <div className={cn('p-3', panelFull && 'mx-auto max-w-6xl px-6 py-4')}>
                 {mode === 'game' && (
                   <TabsContent value="level" className="max-w-2xl">
+                    {props.mode === 'game' && props.panel ? (
+                      props.panel(() => toDesign(nodesRef.current, edgesRef.current))
+                    ) : (
                     <LevelPanel
                       level={level}
                       design={() => toDesign(nodesRef.current, edgesRef.current)}
                       onVerify={verify}
                       verifying={verifying}
                       best={best}
-                      online={!levelKey.startsWith('learn/')}
+                      online={!levelKey.startsWith('learn/') && !levelKey.startsWith('interview-')}
                     />
+                    )}
                   </TabsContent>
                 )}
                 <TabsContent value="metrics" className="grid gap-3">
@@ -1168,6 +1236,9 @@ export function App() {
                     replicas={nodes
                       .filter((n) => n.data.config.autoscale)
                       .map((n) => ({ index: n.data.index, label: n.data.label }))}
+                    caches={nodes
+                      .filter((n) => n.data.kind === 'cache')
+                      .map((n) => ({ index: n.data.index, label: n.data.label }))}
                   />
                 </TabsContent>
                 <TabsContent value="trace">
@@ -1221,10 +1292,18 @@ export function App() {
                     )}
                   </TabsContent>
                 )}
+                {mode === 'sandbox' && (
+                  <TabsContent value="lint" className="max-w-2xl">
+                    <LintPanel findings={findings} onSelect={selectFinding} onFix={applyFix} />
+                  </TabsContent>
+                )}
                 <TabsContent value="inspect" className="max-w-2xl">
                   {selectedNode ? (
                     <NodeInspector
                       node={selectedNode.data}
+                      queues={nodes
+                        .filter((n) => n.type === 'system' && (n as SystemNodeType).data.kind === 'queue')
+                        .map((n) => ({ id: n.id, label: (n as SystemNodeType).data.label }))}
                       outDegree={edges.filter((e) => e.source === selectedNode.id).length}
                       game={mode === 'game'}
                       maxInstances={level.maxInstances ?? 10}
@@ -1325,9 +1404,6 @@ export function App() {
           </div>
         </SidePanel>
       </div>
-      )}
-      {!(mode === 'learn' && immersive) && <BottomTabBar items={TABS} value={mode} onChange={switchMode} />}
-      <TechDialogs />
       <PromptDialog
         open={promptOpen}
         onOpenChange={setPromptOpen}
@@ -1337,7 +1413,8 @@ export function App() {
             : null
         }
       />
-      {project && (
+      {project && !readOnly && <ShareDialog project={project} open={shareOpen} onOpenChange={setShareOpen} />}
+      {project && !readOnly && (
         <VersionHistory
           projectId={project.id}
           open={historyOpen}

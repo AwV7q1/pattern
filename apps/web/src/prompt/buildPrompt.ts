@@ -1,6 +1,6 @@
 import { KIND_META } from '@/lib/meta';
 import { policyOf } from '@/model/flow';
-import { DEFAULT_CONFIG, type DesignEdge, type DesignNode, type NodeConfig } from '@/types';
+import { DEFAULT_CONFIG, type ChaosAction, type DesignEdge, type DesignNode, type NodeConfig } from '@/types';
 import { techOf } from '@/tech/catalog';
 import type { Project } from '@/projects/store';
 
@@ -32,7 +32,9 @@ function role(n: Node, outs: DesignEdge[]) {
     case 'loadBalancer':
       return 'Nhận traffic và chia đều cho các node phía sau';
     case 'cache':
-      return `Cache, hit rate mục tiêu ${pct(n.cfg.hitRate)}; miss thì đọc xuống ${outs.length ? 'downstream' : 'nguồn dữ liệu'}`;
+      return n.cfg.cache
+        ? `Cache theo key: ${n.cfg.cache.capacity.toLocaleString('en')} key, TTL ${n.cfg.cache.ttlMs ? ms(n.cfg.cache.ttlMs) : 'không hết hạn'}${n.cfg.cache.coalesce ? ', singleflight khi miss' : ''}${n.cfg.cache.staleWhileRevalidate ? ', stale-while-revalidate' : ''}; miss thì đọc xuống ${outs.length ? 'downstream' : 'nguồn dữ liệu'}`
+        : `Cache, hit rate mục tiêu ${pct(n.cfg.hitRate)}; miss thì đọc xuống ${outs.length ? 'downstream' : 'nguồn dữ liệu'}`;
     case 'database':
       return 'Lưu trữ dữ liệu';
     case 'queue':
@@ -43,7 +45,11 @@ function role(n: Node, outs: DesignEdge[]) {
         ? 'Service, gọi tuần tự các downstream'
         : n.cfg.routing === 'parallel'
           ? 'Service, gọi song song các downstream (Promise.all)'
-          : 'Service';
+          : n.cfg.routing === 'hedge'
+            ? `Service, hedged request: gọi thêm replica nếu sau ${ms(n.cfg.hedgeAfterMs)} chưa có trả lời`
+            : n.cfg.routing === 'quorum'
+              ? `Service, ghi/đọc quorum ${n.cfg.quorum || Math.floor(outs.length / 2) + 1}/${outs.length}`
+              : 'Service';
   }
 }
 
@@ -68,6 +74,8 @@ function policyText(e: DesignEdge, target: Node) {
     );
   }
   if (p.poolSize) parts.push(`connection pool ${p.poolSize}/process (chờ tối đa ${ms(p.poolTimeoutMs ?? 10000)})`);
+  if (p.retryBudget) parts.push(`retry budget ${pct(p.retryBudget.ratio)} số request (tối thiểu ${p.retryBudget.minPerSec}/s)`);
+  if (p.rateLimit) parts.push(`rate limit ${p.rateLimit.rps} rps (burst ${p.rateLimit.burst}), vượt thì trả 429 ngay`);
   if (p.requestKb || p.responseKb) parts.push(`payload ~${p.requestKb ?? 0}KB → ~${p.responseKb ?? 0}KB`);
   if (target.kind === 'queue') parts.push('publish có xác nhận (publisher confirm / acks)');
   return parts.length ? parts.join(', ') : 'mặc định (nên đặt timeout)';
@@ -167,10 +175,17 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
       keys.push(`tổng connection từ app ≈ ${total} (max_connections phải lớn hơn)`);
     }
     if (n.kind === 'queue') keys.push(`consumer concurrency/prefetch tổng = ${n.cfg.concurrency}`, `độ sâu tối đa ${n.cfg.queueSize.toLocaleString('en')}`);
-    if (n.kind === 'cache') keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
+    if (n.kind === 'cache' && !n.cfg.cache) keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
+    if (n.cfg.cache?.coalesce) keys.push('singleflight / request coalescing khi miss (chống cache stampede)');
+    if (n.cfg.queueTimeoutMs) keys.push(`bỏ request đã chờ quá ${ms(n.cfg.queueTimeoutMs)} (deadline)`);
+    if (n.cfg.adaptiveLimit) keys.push(`adaptive concurrency limit ${n.cfg.adaptiveLimit.min}–${n.cfg.adaptiveLimit.max}, mục tiêu ${ms(n.cfg.adaptiveLimit.targetMs)}`);
     if (t) keys.push(...t.deploy.keySettings.slice(0, 3));
     const hpa = n.cfg.autoscale;
-    if (hpa) {
+    if (hpa?.metric === 'queueLength') {
+      keys.push(
+        `KEDA ${hpa.min}–${hpa.max} replica theo độ dài queue${hpa.queueSource ? ` \`${hpa.queueSource}\`` : ''}, ${hpa.targetQueuePerInstance ?? 100} message/replica`,
+      );
+    } else if (hpa) {
       keys.push(
         `HPA ${hpa.min}–${hpa.max} replica, ${n.cfg.model === 'cpu' ? 'CPU' : 'utilization'} mục tiêu ${pct(hpa.targetUtilization)}, pod ready trong ≤ ${ms(hpa.podStartMs)}, scale-down stabilization ${ms(hpa.stabilizationMs)}`,
       );
@@ -197,7 +212,11 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
                 ? 'gọi tuần tự (await lần lượt, cùng số thứ tự thì chạy song song)'
                 : n.cfg.routing === 'parallel'
                   ? 'gọi song song và chờ tất cả (Promise.all)'
-                  : es.length > 1
+                  : n.cfg.routing === 'hedge'
+                    ? `gọi theo thứ tự, thêm nhánh dự phòng sau ${ms(n.cfg.hedgeAfterMs)} hoặc khi lỗi (lấy kết quả về trước)`
+                    : n.cfg.routing === 'quorum'
+                      ? `gọi song song, đủ ${n.cfg.quorum || Math.floor(es.length / 2) + 1}/${es.length} OK là xong`
+                      : es.length > 1
                     ? 'mỗi request chọn một trong'
                     : 'gọi';
     out.push(`- **${n.label}** (${techName(n)}) ${mode}:`);
@@ -223,11 +242,25 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
   out.push(`- **Traffic**: ${traffic}.`);
   if (sc.events?.length) {
     out.push('- **Phải chịu được các sự cố**:');
+    const WHAT: Record<ChaosAction, (v?: number) => string> = {
+      down: () => 'ngừng hoạt động',
+      up: () => 'hoạt động trở lại',
+      latency: (v) => `chậm ×${v}`,
+      errors: (v) => `lỗi ${pct(v ?? 0)}`,
+      flush: () => 'mất toàn bộ dữ liệu cache (restart)',
+      partition: () => 'bị chia cắt mạng (gói tin rơi trong im lặng)',
+      heal: () => 'nối mạng lại',
+    };
     for (const ev of sc.events) {
-      const what =
-        ev.action === 'down' ? 'ngừng hoạt động' : ev.action === 'up' ? 'hoạt động trở lại' : ev.action === 'latency' ? `chậm ×${ev.value}` : `lỗi ${pct(ev.value ?? 0)}`;
-      out.push(`  - giây ${Math.round(ev.atMs / 1000)}: **${name(ev.node)}** ${what}`);
+      const who = ev.edge
+        ? `${name(ev.edge.source)} → ${name(ev.edge.target)}`
+        : [ev.node, ...(ev.nodes ?? [])].filter((x): x is string => !!x).map(name).join(', ');
+      out.push(`  - giây ${Math.round(ev.atMs / 1000)}: **${who}** ${WHAT[ev.action](ev.value)}`);
     }
+  }
+  if (sc.chaosMonkey) {
+    const m = sc.chaosMonkey;
+    out.push(`- **Chaos monkey**: cứ ${Math.round(m.everyMs / 1000)}s tắt ngẫu nhiên một thành phần trong ${Math.round(m.downMs / 1000)}s.`);
   }
   const cost = nodes.reduce((s, n) => s + (n.kind === 'client' ? 0 : n.cfg.costPerHour * n.cfg.instances), 0);
   out.push(`- **Chi phí ước tính** trong mô phỏng: ~${cost.toFixed(2)}/giờ${sc.budgetPerHour ? ` (ngân sách ${sc.budgetPerHour}/giờ)` : ''}.`);

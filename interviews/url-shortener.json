@@ -1,0 +1,182 @@
+{
+  "id": "url-shortener",
+  "title": "Dịch vụ rút gọn link",
+  "difficulty": "Dễ",
+  "timeMinutes": 30,
+  "brief": "Thiết kế dịch vụ chuyển hướng link rút gọn (kiểu bit.ly). Gần như toàn bộ traffic là đọc: một mã ngắn được mở hàng nghìn lần. Mã đã tạo thì không đổi.",
+  "requirements": [
+    "3.000 lượt mở link mỗi giây, cao điểm gấp đôi",
+    "p99 ≤ 150ms, lỗi ≤ 1%",
+    "Mất một server API vẫn phục vụ bình thường",
+    "Database chậm (backup, vacuum) không được làm sập dịch vụ",
+    "Ngân sách $1.50/giờ"
+  ],
+  "talkingPoints": [
+    "Cache-aside trước database: link không đổi nên hit rate rất cao",
+    "N+1 instance cho API sau load balancer",
+    "Timeout và retry có backoff khi gọi database",
+    "Database chỉ nhận phần cache miss, nên không cần scale database"
+  ],
+  "level": {
+    "palette": [
+      "loadBalancer",
+      "service",
+      "cache",
+      "database"
+    ],
+    "maxInstances": 6,
+    "locked": [
+      "client"
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng",
+          "position": {
+            "x": 0,
+            "y": 200
+          }
+        }
+      ],
+      "edges": []
+    },
+    "scenario": {
+      "seed": 7,
+      "durationMs": 60000,
+      "timeoutMs": 1000,
+      "windowMs": 1000,
+      "traffic": [
+        {
+          "atMs": 0,
+          "rps": 3000
+        }
+      ],
+      "slo": {
+        "p99Ms": 150,
+        "errorRate": 0.01
+      },
+      "budgetPerHour": 1.5
+    }
+  },
+  "grading": [
+    {
+      "name": "Bình thường",
+      "kind": "normal"
+    },
+    {
+      "name": "Cao điểm ×2",
+      "kind": "peak",
+      "traffic": {
+        "multiplier": 2
+      }
+    },
+    {
+      "name": "Mất 1 instance API",
+      "kind": "failure",
+      "loseInstance": "service"
+    },
+    {
+      "name": "Database chậm ×3",
+      "kind": "failure",
+      "faults": [
+        {
+          "kind": "database",
+          "action": "latency",
+          "value": 3
+        }
+      ]
+    }
+  ],
+  "reference": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 240,
+          "y": 200
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Redirect API",
+        "position": {
+          "x": 480,
+          "y": 200
+        },
+        "config": {
+          "instances": 3
+        }
+      },
+      {
+        "id": "cache",
+        "kind": "cache",
+        "label": "Redis",
+        "position": {
+          "x": 720,
+          "y": 200
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL primary",
+        "position": {
+          "x": 960,
+          "y": 120
+        }
+      },
+      {
+        "id": "db2",
+        "kind": "database",
+        "label": "PostgreSQL replica",
+        "position": {
+          "x": 960,
+          "y": 300
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "cache",
+        "timeoutMs": 200
+      },
+      {
+        "source": "cache",
+        "target": "db",
+        "timeoutMs": 80,
+        "retries": 1,
+        "backoffMs": 20
+      },
+      {
+        "source": "cache",
+        "target": "db2",
+        "timeoutMs": 80,
+        "retries": 1,
+        "backoffMs": 20
+      }
+    ]
+  }
+}

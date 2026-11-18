@@ -1,0 +1,103 @@
+{
+  "title": "Hedged request cắt đuôi p99",
+  "description": "Search có 2 replica, p50 5ms nhưng p99 300ms (GC, đĩa chậm). API dùng routing hedge: chưa có trả lời sau 15ms thì gọi thêm replica thứ 2, lấy kết quả về trước. p99 giảm mạnh, đổi lại replica nhận thêm vài phần trăm tải. Đổi routing về 'chọn 1' để so sánh.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 300,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 500,
+          "queueSize": 100,
+          "latencyP50Ms": 1,
+          "latencyP99Ms": 3,
+          "costPerHour": 0.1,
+          "routing": "hedge",
+          "hedgeAfterMs": 15
+        }
+      },
+      {
+        "id": "s1",
+        "kind": "database",
+        "label": "Search A",
+        "position": {
+          "x": 600,
+          "y": 80
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 500,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 300,
+          "costPerHour": 0.2
+        }
+      },
+      {
+        "id": "s2",
+        "kind": "database",
+        "label": "Search B",
+        "position": {
+          "x": 600,
+          "y": 260
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 500,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 300,
+          "costPerHour": 0.2
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "s1",
+        "order": 1,
+        "timeoutMs": 1000
+      },
+      {
+        "source": "api",
+        "target": "s2",
+        "order": 2,
+        "timeoutMs": 1000
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 60000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 500
+      }
+    ],
+    "slo": {
+      "p99Ms": 100,
+      "errorRate": 0.01
+    }
+  }
+}

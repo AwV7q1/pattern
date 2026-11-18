@@ -37,7 +37,22 @@ import {
 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
+import {
+  DEFAULT_ADAPTIVE,
+  DEFAULT_AUTOSCALE,
+  DEFAULT_BREAKER,
+  DEFAULT_CACHE,
+  DEFAULT_RATE_LIMIT,
+  DEFAULT_RETRY_BUDGET,
+  type AdaptiveLimit,
+  type Autoscale,
+  type Balance,
+  type CacheModel,
+  type EdgePolicy,
+  type ExecModel,
+  type NodeConfig,
+  type Routing,
+} from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -93,6 +108,7 @@ const FIELD_CELL = 'row-span-3 grid grid-rows-subgrid gap-y-1.5';
 const FIELD_ICON = 'pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground';
 
 type NumKey = { [K in keyof NodeConfig]-?: NodeConfig[K] extends number ? K : never }[keyof NodeConfig];
+type AutoscaleNum = 'min' | 'max' | 'targetUtilization' | 'evalEveryMs' | 'podStartMs' | 'stabilizationMs';
 type Field = { key: NumKey; label: string; icon: LucideIcon; step: number; kinds?: string[]; hint?: string };
 
 const ROUTING_HELP: Record<Routing, string> = {
@@ -101,6 +117,18 @@ const ROUTING_HELP: Record<Routing, string> = {
     'Gọi LẦN LƯỢT mọi nhánh theo thứ tự ①②③ (await a; await b). Latency = tổng các nhánh. Nhánh cùng số thứ tự chạy cùng lúc.',
   parallel:
     'Gọi CÙNG LÚC mọi nhánh rồi chờ tất cả (Promise.all). Latency = nhánh chậm nhất; một nhánh lỗi là cả request lỗi ngay.',
+  hedge:
+    'Hedged request: gọi nhánh đầu tiên, quá thời gian chờ mà chưa có trả lời thì gọi thêm nhánh kế tiếp, lấy kết quả về trước. Cắt đuôi p99, đổi lại tải tăng thêm ở phía dưới. Nhánh lỗi thì chuyển nhánh ngay.',
+  quorum:
+    'Gọi CÙNG LÚC mọi nhánh, đủ k nhánh OK là xong (như ghi vào 2/3 replica). Chịu được n−k nhánh lỗi hoặc chậm.',
+};
+
+const ROUTING_LABEL: Record<Routing, string> = {
+  pick: '⇄ Chọn 1 (round-robin)',
+  sequence: '①② Tuần tự',
+  parallel: '∥ Song song, chờ tất cả',
+  hedge: '⧗ Hedge (gọi dự phòng khi chậm)',
+  quorum: 'k/n Quorum',
 };
 
 /** How a node with several outgoing edges calls them. */
@@ -108,24 +136,18 @@ export function RoutingField({ value, onChange }: { value: Routing; onChange: (r
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">Gọi các nhánh phía sau</Label>
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        className="w-full"
-        value={value}
-        onValueChange={(v) => v && onChange(v as Routing)}
-      >
-        <ToggleGroupItem value="pick" className="text-xs">
-          ⇄ Chọn 1
-        </ToggleGroupItem>
-        <ToggleGroupItem value="sequence" className="text-xs">
-          ①② Tuần tự
-        </ToggleGroupItem>
-        <ToggleGroupItem value="parallel" className="text-xs">
-          ∥ Song song
-        </ToggleGroupItem>
-      </ToggleGroup>
+      <Select value={value} onValueChange={(v) => onChange(v as Routing)}>
+        <SelectTrigger size="sm" className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {(Object.keys(ROUTING_LABEL) as Routing[]).map((r) => (
+            <SelectItem key={r} value={r}>
+              {ROUTING_LABEL[r]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <p className="text-[12px] leading-relaxed text-muted-foreground">{ROUTING_HELP[value]}</p>
     </div>
   );
@@ -161,8 +183,67 @@ const ADVANCED_FIELDS: Field[] = [
   { key: 'gcEveryRequests', label: 'GC mỗi N request', icon: Hash, step: 100, kinds: ['cpu'] },
 ];
 
+/** A switchable block of number fields (cache model, adaptive limit, rate limit…). */
+function OptionBlock<T extends object>({
+  title,
+  help,
+  value,
+  fallback,
+  fields,
+  toggles,
+  onChange,
+  footer,
+}: {
+  title: string;
+  help: ReactNode;
+  value: T | null | undefined;
+  fallback: T;
+  fields: [keyof T & string, string, number, LucideIcon, string?][];
+  toggles?: [keyof T & string, string][];
+  onChange: (v: T | null) => void;
+  footer?: ReactNode;
+}) {
+  return (
+    <div className="grid gap-2 rounded-md border p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <Label className="text-xs">{title}</Label>
+          <p className="text-[12px] leading-snug text-muted-foreground">{help}</p>
+        </div>
+        <Switch checked={!!value} onCheckedChange={(on) => onChange(on ? { ...fallback } : null)} />
+      </div>
+      {value && (
+        <>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+            {fields.map(([k, label, step, icon, hint]) => (
+              <NumberField
+                key={k}
+                label={label}
+                icon={icon}
+                step={step}
+                hint={hint}
+                value={value[k] as number}
+                onChange={(v) => onChange({ ...value, [k]: v })}
+              />
+            ))}
+          </div>
+          {toggles?.map(([k, label]) => (
+            <div key={k} className="flex items-center justify-between">
+              <span className="text-xs">{label}</span>
+              <Switch checked={!!value[k]} onCheckedChange={(on) => onChange({ ...value, [k]: on })} />
+            </div>
+          ))}
+          {footer}
+        </>
+      )}
+    </div>
+  );
+}
+
 interface NodeProps {
   node: SystemNodeData;
+  /** Queue nodes of the design, for KEDA-style autoscaling. */
+  queues?: { id: string; label: string }[];
   /** Outgoing edges: routing only matters with more than one. */
   outDegree: number;
   /** Game mode: only the instance count is up to the player. */
@@ -228,7 +309,7 @@ function TechSection({ node, onTech }: { node: SystemNodeData; onTech: NonNullab
   );
 }
 
-export function NodeInspector({ node, outDegree, game, maxInstances, onChange, onToggleDown, onDelete, onTech }: NodeProps) {
+export function NodeInspector({ node, queues = [], outDegree, game, maxInstances, onChange, onToggleDown, onDelete, onTech }: NodeProps) {
   const [draft, setDraft] = useState(node.config);
   const [label, setLabel] = useState(node.label);
   useEffect(() => {
@@ -253,16 +334,40 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
   const fits = (f: Field) => !f.kinds || f.kinds.includes(node.kind) || f.kinds.includes(draft.model);
   const editable = !node.locked;
   const canRoute = outDegree > 1 && node.kind !== 'client' && node.kind !== 'loadBalancer';
+  const setRouting = (patch: Partial<NodeConfig>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    if (game) onChange(next, label);
+  };
   const routing = canRoute && (
-    <RoutingField
-      value={draft.routing ?? 'pick'}
-      onChange={(r) => {
-        const next = { ...draft, routing: r };
-        setDraft(next);
-        if (game) onChange(next, label);
-      }}
-    />
+    <div className="grid gap-2">
+      <RoutingField value={draft.routing ?? 'pick'} onChange={(r) => setRouting({ routing: r })} />
+      {draft.routing === 'hedge' && (
+        <div className="grid grid-cols-2 gap-x-3">
+          <NumberField
+            label="Gọi dự phòng sau (ms)"
+            icon={Timer}
+            step={5}
+            value={draft.hedgeAfterMs ?? 50}
+            hint="thường đặt ≈ p95 của nhánh"
+            onChange={(v) => setRouting({ hedgeAfterMs: Math.max(1, v) })}
+          />
+        </div>
+      )}
+      {draft.routing === 'quorum' && (
+        <div className="grid grid-cols-2 gap-x-3">
+          <NumberField
+            label={`Cần OK (trên ${outDegree} nhánh)`}
+            icon={Target}
+            value={draft.quorum ?? 0}
+            hint={`0 = đa số (${Math.floor(outDegree / 2) + 1})`}
+            onChange={(v) => setRouting({ quorum: Math.max(0, Math.min(outDegree, Math.round(v))) })}
+          />
+        </div>
+      )}
+    </div>
   );
+  const cache = draft.cache ?? null;
 
   return (
     <div className="grid gap-4">
@@ -367,11 +472,62 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
           </div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-2">
             {(draft.model === 'cpu' ? CPU_FIELDS : THREAD_FIELDS).map(field)}
-            {COMMON_FIELDS.filter(fits).map(field)}
+            {COMMON_FIELDS.filter(fits)
+              .filter((f) => !(f.key === 'hitRate' && cache))
+              .map(field)}
+          </div>
+          {node.kind === 'cache' && (
+            <OptionBlock<CacheModel>
+              title="Cache theo key (TTL, LRU, stampede)"
+              help="Thay hit rate cố định: request chọn key theo phân phối Zipf, key hết hạn sau TTL. Thấy được warm-up, eviction và thundering herd."
+              value={cache}
+              fallback={DEFAULT_CACHE}
+              fields={[
+                ['keys', 'Số key', 1000, Hash],
+                ['zipf', 'Độ lệch Zipf', 0.1, Percent, '0 = đều, 1 ≈ web thật'],
+                ['capacity', 'Sức chứa (key)', 1000, Layers, 'vượt thì bỏ key cũ (LRU)'],
+                ['ttlMs', 'TTL (ms, 0 = mãi)', 1000, Timer],
+              ]}
+              toggles={[
+                ['coalesce', 'Singleflight: miss cùng key chỉ 1 request đi lấy'],
+                ['staleWhileRevalidate', 'Stale-while-revalidate: trả bản cũ, làm mới nền'],
+                ['warm', 'Bắt đầu với cache đầy (warm)'],
+              ]}
+              onChange={(v) => setDraft({ ...draft, cache: v })}
+              footer={
+                <p className="text-[12px] leading-relaxed text-muted-foreground">
+                  Chaos &ldquo;flush&rdquo; trong kịch bản xoá sạch cache (Redis restart). Hit ratio thật hiện ở tab Số liệu.
+                </p>
+              }
+            />
+          )}
+          <OptionBlock<AdaptiveLimit>
+            title="Giới hạn concurrency tự động (AIMD)"
+            help="Như Netflix concurrency-limits: nhanh thì nới +1, chậm hơn mục tiêu thì siết lại. Vượt giới hạn bị từ chối ngay thay vì xếp hàng."
+            value={draft.adaptiveLimit}
+            fallback={DEFAULT_ADAPTIVE}
+            fields={[
+              ['min', 'Tối thiểu', 1, Layers],
+              ['max', 'Tối đa', 10, Layers],
+              ['initial', 'Ban đầu', 1, Layers],
+              ['targetMs', 'Mục tiêu xử lý (ms)', 5, Target],
+              ['backoff', 'Hệ số siết', 0.05, Percent, '0.9 = giảm 10%'],
+            ]}
+            onChange={(v) => setDraft({ ...draft, adaptiveLimit: v })}
+          />
+          <div className="grid grid-cols-2 gap-x-3">
+            <NumberField
+              label="Bỏ request chờ quá (ms)"
+              icon={Hourglass}
+              step={50}
+              value={draft.queueTimeoutMs ?? 0}
+              hint="0 = không; caller đã bỏ thì đừng làm"
+              onChange={(v) => setDraft({ ...draft, queueTimeoutMs: Math.max(0, v) })}
+            />
           </div>
           <div className="grid gap-2 rounded-md border p-2.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs">Autoscale (Kubernetes HPA)</Label>
+              <Label className="text-xs">Autoscale (Kubernetes HPA / KEDA)</Label>
               <Switch
                 checked={!!draft.autoscale}
                 onCheckedChange={(on) =>
@@ -384,30 +540,88 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
             </div>
             {draft.autoscale ? (
               <>
+                <Select
+                  value={draft.autoscale.metric ?? 'utilization'}
+                  onValueChange={(v) =>
+                    setDraft({
+                      ...draft,
+                      autoscale: {
+                        ...draft.autoscale!,
+                        metric: v as Autoscale['metric'],
+                        queueSource: v === 'queueLength' ? (draft.autoscale!.queueSource ?? queues[0]?.id ?? null) : null,
+                        targetQueuePerInstance: draft.autoscale!.targetQueuePerInstance ?? 100,
+                      },
+                    })
+                  }
+                >
+                  <SelectTrigger size="sm" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="utilization">Theo tải CPU / slot (HPA)</SelectItem>
+                    <SelectItem value="queueLength">Theo số message chờ trong queue (KEDA)</SelectItem>
+                  </SelectContent>
+                </Select>
+                {draft.autoscale.metric === 'queueLength' && (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    <div className={FIELD_CELL}>
+                      <Label className="self-end text-xs leading-snug text-muted-foreground">Queue theo dõi</Label>
+                      <Select
+                        value={draft.autoscale.queueSource ?? '__self'}
+                        onValueChange={(v) =>
+                          setDraft({ ...draft, autoscale: { ...draft.autoscale!, queueSource: v === '__self' ? null : v } })
+                        }
+                      >
+                        <SelectTrigger size="sm" className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__self">Hàng đợi của chính node này</SelectItem>
+                          {queues.map((q) => (
+                            <SelectItem key={q.id} value={q.id}>
+                              {q.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span />
+                    </div>
+                    <NumberField
+                      label="Message / replica"
+                      icon={Inbox}
+                      step={10}
+                      value={draft.autoscale.targetQueuePerInstance ?? 100}
+                      onChange={(v) => setDraft({ ...draft, autoscale: { ...draft.autoscale!, targetQueuePerInstance: Math.max(1, v) } })}
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-3 gap-2">
                   {(
                     [
                       ['min', 'Min replica', 1, Server],
                       ['max', 'Max replica', 1, Server],
-                      ['targetUtilization', 'Mục tiêu (0-1)', 0.05, Target],
+                      ...(draft.autoscale.metric === 'queueLength'
+                        ? []
+                        : ([['targetUtilization', 'Mục tiêu (0-1)', 0.05, Target]] as const)),
                       ['evalEveryMs', 'Xét mỗi (ms)', 1000, CalendarClock],
                       ['podStartMs', 'Pod khởi động (ms)', 1000, Rocket],
                       ['stabilizationMs', 'Ổn định giảm (ms)', 5000, Timer],
-                    ] as [keyof Autoscale, string, number, LucideIcon][]
+                    ] as [AutoscaleNum, string, number, LucideIcon][]
                   ).map(([k, l, step, icon]) => (
                     <NumberField
                       key={k}
                       label={l}
                       icon={icon}
                       step={step}
-                      value={draft.autoscale![k]}
+                      value={draft.autoscale![k] ?? 0}
                       onChange={(v) => setDraft({ ...draft, autoscale: { ...draft.autoscale!, [k]: v } })}
                     />
                   ))}
                 </div>
                 <p className="text-[12px] leading-relaxed text-muted-foreground">
-                  Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉.
-                  Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.
+                  {draft.autoscale.metric === 'queueLength'
+                    ? 'Replica = ⌈message đang chờ / message mỗi replica⌉. Min 0 = scale-to-zero: lúc rảnh không tốn tiền, message đầu tiên phải chờ pod khởi động.'
+                    : 'Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉. Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.'}
                 </p>
               </>
             ) : (
@@ -514,6 +728,13 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
             <div>{m.breaker}</div>
             <div className="text-muted-foreground">CB</div>
           </div>
+          {(m.rateLimited > 0 || m.budgetExhausted > 0 || m.partitioned) && (
+            <div className="col-span-4 flex flex-wrap justify-center gap-1 pt-1">
+              {m.partitioned && <Badge variant="destructive">mạng bị chia cắt</Badge>}
+              {m.rateLimited > 0 && <Badge variant="secondary">{m.rateLimited} bị rate limit</Badge>}
+              {m.budgetExhausted > 0 && <Badge variant="secondary">{m.budgetExhausted} retry bị chặn</Badge>}
+            </div>
+          )}
         </div>
       )}
 
@@ -525,6 +746,14 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
                 <b>{source}</b> gọi các nhánh <b>tuần tự</b>. Nhánh này là bước{' '}
                 <b className="font-mono">{edge.view?.step}</b>/{edge.view?.steps}.
               </>
+            ) : routing === 'hedge' ? (
+              <>
+                <b>{source}</b> <b>hedge</b>: thử các nhánh theo thứ tự, gọi nhánh sau khi nhánh trước chậm hoặc lỗi.
+              </>
+            ) : routing === 'quorum' ? (
+              <>
+                <b>{source}</b> gọi tất cả và chờ đủ <b>quorum</b> nhánh OK.
+              </>
             ) : (
               <>
                 <b>{source}</b> gọi các nhánh <b>song song</b> và chờ tất cả.
@@ -532,16 +761,16 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
             )}
           </div>
           <div className="grid grid-cols-2 gap-x-3">
-            {routing === 'sequence' && (
+            {(routing === 'sequence' || routing === 'hedge') && (
               <NumberField
-                label="Thứ tự (nhỏ chạy trước)"
+                label={routing === 'hedge' ? 'Thứ tự thử (nhỏ trước)' : 'Thứ tự (nhỏ chạy trước)'}
                 icon={ListOrdered}
                 value={p.order ?? 0}
                 onChange={(v) => setP({ ...p, order: Math.max(0, Math.round(v)) })}
                 hint="trùng số = chạy cùng lúc"
               />
             )}
-            {(!game || allowFireAndForget) && (
+            {(!game || allowFireAndForget) && (routing === 'sequence' || routing === 'parallel') && (
               <div className={FIELD_CELL}>
                 <Label className="self-end text-xs leading-snug text-muted-foreground">Không chờ trả lời</Label>
                 <div className="flex h-8 items-center gap-2">
@@ -639,6 +868,28 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
           />
         </div>
       )}
+      <OptionBlock
+        title="Retry budget"
+        help="Retry chỉ được phép khi tổng retry không vượt một tỉ lệ của traffic (Finagle, gRPC). Chặn retry storm mà vẫn giữ retry cho lỗi lẻ tẻ."
+        value={p.retryBudget}
+        fallback={DEFAULT_RETRY_BUDGET}
+        fields={[
+          ['ratio', 'Tỉ lệ retry tối đa', 0.05, Percent, '0.1 = thêm tối đa 10% tải'],
+          ['minPerSec', 'Tối thiểu / giây', 1, Repeat2],
+        ]}
+        onChange={(v) => setP({ ...p, retryBudget: v })}
+      />
+      <OptionBlock
+        title="Rate limit phía gọi"
+        help="Token bucket: vượt tốc độ thì trả lỗi 429 ngay, không gọi xuống, không retry."
+        value={p.rateLimit}
+        fallback={DEFAULT_RATE_LIMIT}
+        fields={[
+          ['rps', 'Request / giây', 50, Gauge],
+          ['burst', 'Burst', 10, Layers],
+        ]}
+        onChange={(v) => setP({ ...p, rateLimit: v })}
+      />
       {!game && (
         <>
           <Separator />

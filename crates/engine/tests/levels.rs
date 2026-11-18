@@ -91,3 +91,20 @@ fn players_cannot_edit_catalog_numbers() {
     design.nodes.retain(|n| n.id != "db");
     assert!(level.build_input(&design).is_err());
 }
+
+#[test]
+fn scalable_locked_nodes_keep_their_config_but_follow_the_instance_count() {
+    let root = root();
+    let mut level: Level = serde_json::from_str(&load(&root.join("01-first-sale.json"))).unwrap();
+    let mut design = level.design.clone();
+    let db = design.nodes.iter_mut().find(|n| n.id == "db").unwrap();
+    db.config.instances = 3;
+    db.config.concurrency = 999;
+    let fixed = level.build_input(&design).unwrap();
+    let node = |input: &pattern_engine::SimInput| input.design.nodes.iter().find(|n| n.id == "db").unwrap().config.clone();
+    assert_eq!(node(&fixed).instances, 1, "locked: the level's count");
+    level.scalable = vec!["db".into()];
+    let scaled = level.build_input(&design).unwrap();
+    assert_eq!(node(&scaled).instances, 3);
+    assert_eq!(node(&scaled).concurrency, node(&fixed).concurrency, "but not its performance");
+}

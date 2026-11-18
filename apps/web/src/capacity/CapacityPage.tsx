@@ -7,16 +7,21 @@ import { CalibratePanel, type DesignSource } from './CalibratePanel';
 
 type Props = {
   sandboxDesign: Design | null;
+  /** Controlled tab (router); internal state otherwise. */
+  tab?: 'sizing' | 'calibrate';
+  onTab?: (tab: 'sizing' | 'calibrate') => void;
   onOpenSizing: (report: SizingReport, title: string) => void;
   onOpenCalibrated: (design: Design, title: string, slo?: { p99Ms: number; errorRate: number }) => void;
 };
 
 /** Capacity planning: size servers from measured costs, or fit a design to k6 runs. */
-export function CapacityPage({ sandboxDesign, onOpenSizing, onOpenCalibrated }: Props) {
-  const [tab, setTab] = useState<'sizing' | 'calibrate'>('sizing');
+export function CapacityPage({ sandboxDesign, onOpenSizing, onOpenCalibrated, tab: tabProp, onTab }: Props) {
+  const [tabState, setTabState] = useState<'sizing' | 'calibrate'>('sizing');
+  const tab = tabProp ?? tabState;
+  const setTab = (t: 'sizing' | 'calibrate') => (onTab ? onTab(t) : setTabState(t));
   const [sizing, setSizing] = useState<SizingReport | null>(null);
   const sources: DesignSource[] = [];
-  if (sandboxDesign) sources.push({ key: 'sandbox', label: 'Design đang mở ở Sandbox', design: sandboxDesign });
+  if (sandboxDesign) sources.push({ key: 'sandbox', label: 'Design mở gần nhất ở Studio', design: sandboxDesign });
   if (sizing?.input) sources.push({ key: 'sizing', label: 'Đề xuất của Sizing wizard', design: sizing.input.design, slo: sizing.input.scenario.slo });
 
   return (

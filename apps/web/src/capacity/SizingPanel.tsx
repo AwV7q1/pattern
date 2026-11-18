@@ -247,7 +247,7 @@ function Result({ report, spec, onOpen }: { report: SizingReport; spec: SizingSp
               </div>
             </div>
             <Button variant="outline" onClick={() => onOpen(report, `Sizing: ${rec.appServers}× ${rec.appPlan.name}`)}>
-              Mở trong Sandbox
+              Mở trong Studio
             </Button>
           </div>
           {rule && rule !== rec && (

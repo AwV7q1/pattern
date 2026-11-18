@@ -3,8 +3,9 @@ import { Lightbulb, Loader2, Send, Star, Target, Trophy, Zap } from 'lucide-reac
 import { fmt } from '@/lib/meta';
 import type { Design, Level, Summary } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Link } from 'react-router';
+import { api, ApiError } from '@/app/api';
+import { useAuth } from '@/app/auth-store';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,9 @@ const CHAOS_LABEL: Record<string, string> = {
   up: 'hồi phục',
   latency: 'chậm ×',
   errors: 'lỗi ',
+  flush: 'mất cache',
+  partition: 'đứt mạng',
+  heal: 'nối lại',
 };
 
 interface Props {
@@ -44,7 +48,7 @@ interface Props {
 
 export function LevelPanel({ level, design, onVerify, verifying, best, online = true }: Props) {
   const [showHint, setShowHint] = useState(false);
-  const [player, setPlayer] = useState(() => localStorage.getItem('pattern.player') ?? '');
+  const auth = useAuth();
   const [board, setBoard] = useState<Entry[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -53,8 +57,7 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
   const loadBoard = useCallback(async () => {
     if (!online) return;
     try {
-      const res = await fetch(`/api/levels/${level.id}/leaderboard`);
-      setBoard(res.ok ? await res.json() : null);
+      setBoard(await api<Entry[]>(`/levels/${level.id}/leaderboard`));
     } catch {
       setBoard(null);
     }
@@ -67,25 +70,20 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
   }, [loadBoard]);
 
   const submit = async () => {
-    localStorage.setItem('pattern.player', player);
     setSending(true);
     setStatus(null);
     try {
       const d = design();
-      const res = await fetch(`/api/levels/${level.id}/submit`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ player, design: { nodes: d.nodes, edges: d.edges } }),
+      const body = await api<{ summary: Summary; rank: number; improved: boolean }>(`/levels/${level.id}/submit`, {
+        body: { design: { nodes: d.nodes, edges: d.edges } },
       });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.message ?? res.statusText);
       setStatus(
         `Server chấm ${body.summary.stars}★ (${fmt.money(body.summary.costPerHour)}/h, p99 ${fmt.ms(body.summary.p99Ms)}), hạng #${body.rank}${body.improved ? '' : ', chưa vượt kết quả cũ'}.`,
       );
       await loadBoard();
     } catch (err) {
       setStatus(
-        err instanceof TypeError
+        err instanceof ApiError && err.offline
           ? 'Không kết nối được server. Chạy `pnpm dev:server` để bật leaderboard.'
           : `Lỗi: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -123,7 +121,8 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
             {sc.events.map((e, i) => (
               <span key={i} className="flex items-center gap-1 rounded bg-destructive/15 px-1.5 py-0.5 text-[11px] text-destructive">
                 <Zap className="size-2.5" />
-                {e.atMs / 1000}s {e.node} {CHAOS_LABEL[e.action]}
+                {e.atMs / 1000}s {e.edge ? `${e.edge.source}→${e.edge.target}` : [e.node, ...(e.nodes ?? [])].filter(Boolean).join(', ')}{' '}
+                {CHAOS_LABEL[e.action]}
                 {e.action === 'latency' || e.action === 'errors' ? e.value : ''}
               </span>
             ))}
@@ -159,24 +158,23 @@ export function LevelPanel({ level, design, onVerify, verifying, best, online = 
             <div className="flex items-center gap-2 text-sm font-medium">
               <Trophy className="size-4 text-warning" /> Leaderboard
             </div>
-            <div className="flex gap-2">
-              <div className="grid flex-1 gap-1">
-                <Label htmlFor="player" className="sr-only">
-                  Tên người chơi
-                </Label>
-                <Input
-                  id="player"
-                  className="h-8"
-                  placeholder="Tên của bạn"
-                  value={player}
-                  maxLength={24}
-                  onChange={(e) => setPlayer(e.target.value)}
-                />
+            {auth.status === 'signed-in' ? (
+              <div className="flex items-center gap-2">
+                <span className="flex-1 truncate text-xs text-muted-foreground">
+                  Gửi điểm với tên <b className="text-foreground">{auth.user?.displayName}</b>
+                </span>
+                <Button size="sm" variant="secondary" disabled={sending} onClick={() => void submit()}>
+                  {sending ? <Loader2 className="animate-spin" /> : <Send />} Gửi điểm
+                </Button>
               </div>
-              <Button size="sm" variant="secondary" disabled={!player.trim() || sending} onClick={() => void submit()}>
-                {sending ? <Loader2 className="animate-spin" /> : <Send />} Gửi
-              </Button>
-            </div>
+            ) : auth.status === 'anonymous' ? (
+              <p className="text-xs text-muted-foreground">
+                <Link className="text-primary underline" to={`/login?next=${encodeURIComponent(location.pathname)}`}>
+                  Đăng nhập
+                </Link>{' '}
+                để gửi điểm lên leaderboard.
+              </p>
+            ) : null}
             {status && <p className="text-xs text-muted-foreground">{status}</p>}
             {board === null ? (
               <p className="text-xs text-muted-foreground">Leaderboard cần server NestJS (`pnpm dev:server`).</p>

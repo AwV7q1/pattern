@@ -1,3 +1,4 @@
+import type { InterviewPrompt } from '@pattern/design-lint';
 import type { Level, Preset } from './types';
 
 // The same files are used by the CLI (`pnpm sim examples/*.json`), the engine
@@ -5,6 +6,7 @@ import type { Level, Preset } from './types';
 const examples = import.meta.glob<Preset>('../../../examples/*.json', { eager: true, import: 'default' });
 const levels = import.meta.glob<Level>('../../../levels/*.json', { eager: true, import: 'default' });
 const learnLevels = import.meta.glob<Level>('../../../levels/learn/*.json', { eager: true, import: 'default' });
+const interviews = import.meta.glob<InterviewPrompt>('../../../interviews/*.json', { eager: true, import: 'default' });
 
 const byFile = <T,>(files: Record<string, T>) =>
   Object.keys(files)
@@ -13,6 +15,9 @@ const byFile = <T,>(files: Record<string, T>) =>
 
 export const PRESETS: Record<string, Preset> = Object.fromEntries(byFile(examples));
 export const LEVELS: Record<string, Level> = Object.fromEntries(byFile(levels));
+
+/** System design interview prompts (interviews/*.json), shared with the server's grader. */
+export const INTERVIEWS: InterviewPrompt[] = byFile(interviews).map(([, v]) => v);
 
 /** Practice levels of the learning path, keyed `learn/<file>` (not on the leaderboard). */
 export const LEARN_LEVELS: Record<string, Level> = Object.fromEntries(

@@ -6,6 +6,7 @@
 //! transcendental math goes through `libm`, so a given input always produces
 //! the same output on every platform.
 
+pub mod cache;
 pub mod calibrate;
 pub mod histogram;
 pub mod level;
@@ -16,7 +17,7 @@ pub mod sizing;
 
 pub use level::{default_catalog, level_input, play_level, Level};
 pub use model::{
-    Arrival, Autoscale, ChaosAction, ChaosEvent, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
+    AdaptiveLimit, Arrival, Autoscale, CacheModel, ChaosAction, ChaosEvent, ChaosMonkey, EdgeRef, RateLimit, RetryBudget, ScaleMetric, CircuitBreaker, Design, EdgeSpec, ExecModel, NodeConfig,
     NodeKind, NodeSpec, Routing, Scenario, SimInput, Slo, TrafficPhase,
 };
 pub use sim::{EdgeWindow, NodeWindow, Simulation, Summary, TraceEvent, WindowMetrics};
@@ -27,4 +28,12 @@ pub fn run_headless(input_json: &str) -> Result<Summary, String> {
     let mut sim = Simulation::new(&input, false)?;
     sim.run_to_end()?;
     Ok(sim.summary())
+}
+
+/// Like [`run_headless`] but also returns every metrics window (A/B charts).
+pub fn run_detailed(input_json: &str) -> Result<(Summary, Vec<WindowMetrics>), String> {
+    let input: SimInput = serde_json::from_str(input_json).map_err(|e| e.to_string())?;
+    let mut sim = Simulation::new(&input, false)?;
+    sim.run_to_end()?;
+    Ok((sim.summary(), sim.take_windows()))
 }
