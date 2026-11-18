@@ -29,3 +29,11 @@ pub fn run_headless(input_json: &str) -> Result<Summary, String> {
     sim.run_to_end()?;
     Ok(sim.summary())
 }
+
+/// Like [`run_headless`] but also returns every metrics window (A/B charts).
+pub fn run_detailed(input_json: &str) -> Result<(Summary, Vec<WindowMetrics>), String> {
+    let input: SimInput = serde_json::from_str(input_json).map_err(|e| e.to_string())?;
+    let mut sim = Simulation::new(&input, false)?;
+    sim.run_to_end()?;
+    Ok((sim.summary(), sim.take_windows()))
+}

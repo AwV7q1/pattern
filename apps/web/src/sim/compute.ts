@@ -1,4 +1,4 @@
-import type { CalibrationResult, Design, SizingReport, SizingSpec, Summary } from '@/types';
+import type { CalibrationResult, Design, SizingReport, SizingSpec, Summary, WindowMetrics } from '@/types';
 import type { ComputeRequest } from './compute.worker';
 
 type WithoutId<T> = T extends unknown ? Omit<T, 'id'> : never;
@@ -38,6 +38,16 @@ class Compute {
   /** Run `{ design, scenario }` (with `durationMs`) to the end. */
   run(input: object) {
     return this.call<Summary>({ op: 'run', input: JSON.stringify(input) });
+  }
+
+  /** Score a design against a level, exactly like the game and the server. */
+  playLevel(level: object, design: object) {
+    return this.call<Summary>({ op: 'playLevel', level: JSON.stringify(level), design: JSON.stringify(design) });
+  }
+
+  /** Run to the end and keep every metrics window (A/B charts). */
+  runDetailed(input: object) {
+    return this.call<{ summary: Summary; windows: WindowMetrics[] }>({ op: 'runDetailed', input: JSON.stringify(input) });
   }
 
   calibrate(design: Design, request: CalibrateRequest) {

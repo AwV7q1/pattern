@@ -42,7 +42,7 @@ export const NAV: NavGroup[] = [
     items: [
       { to: '/play', label: 'Game', icon: Gamepad2, keywords: 'level chơi game sao leaderboard' },
       { to: '/interview', label: 'Phỏng vấn', icon: MessagesSquare, keywords: 'interview system design đề bài', hidden: true },
-      { to: '/levels/new', label: 'Tạo level', icon: Wrench, keywords: 'level editor creator cộng đồng', hidden: true },
+      { to: '/levels/new', label: 'Tạo level', icon: Wrench, keywords: 'level editor creator cộng đồng' },
     ],
   },
   {

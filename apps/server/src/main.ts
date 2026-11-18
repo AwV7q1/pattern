@@ -31,6 +31,8 @@ async function bootstrap() {
   const config = configure(app);
   const port = config.get('PORT');
   await app.listen(port);
+  // longer than the reverse proxy's idle timeout, so it never reuses a socket we just closed
+  app.getHttpServer().keepAliveTimeout = 65_000;
   console.log(`pattern server on http://localhost:${port}/api`);
 }
 

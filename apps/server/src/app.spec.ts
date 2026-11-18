@@ -30,6 +30,8 @@ before(async () => {
   app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
   configure(app);
   await app.listen(0, '127.0.0.1');
+  // the native CLI test idles for seconds: keep sockets alive longer than fetch's pool
+  app.getHttpServer().keepAliveTimeout = 65_000;
   base = `${await app.getUrl()}/api`;
 });
 after(() => app.close());
@@ -266,4 +268,53 @@ test('deleting a project leaves a tombstone for other devices and revokes its li
   assert.equal((await browser().get(`/share/${snapLink}`)).status, 404);
   // saving it again (offline edit on another device) brings it back
   assert.equal((await put(alice, project({ force: true }))).status, 200);
+});
+
+// ------------------------------------------------------------ community levels
+
+test('community levels: engine-checked publishing, play, moderation', async () => {
+  const official = JSON.parse(readFileSync(join(root, 'levels/01-first-sale.json'), 'utf8'));
+  const level = { ...official, id: undefined, title: 'Đợt sale của tôi', brief: 'Giống level 1, do cộng đồng tạo.' };
+
+  // the reference solution must reach 3★ (here the losing start design is offered as the solution)
+  const bad = await bob.post('/levels', { level, solution: official.design });
+  assert.equal(bad.status, 400);
+
+  const created = await bob.post('/levels', { level, solution: solution('01-first-sale') });
+  assert.equal(created.status, 201);
+  const { id, check } = (await created.json()) as { id: string; check: { start: number; solution: number } };
+  assert.match(id, /^u-dot-sale-cua-toi-[0-9a-f]{6}$/);
+  assert.deepEqual(check, { start: 0, solution: 3 });
+
+  const anon = browser();
+  const list = await anon.json<{ id: string; author: string }[]>(await anon.get('/levels/community'));
+  assert.deepEqual(list.map((l) => [l.id, l.author]), [[id, 'bob']]);
+  const fetched = await anon.json<{ id: string; solution?: unknown; title: string }>(await anon.get(`/levels/${id}`));
+  assert.equal(fetched.title, 'Đợt sale của tôi');
+  assert.equal(fetched.solution, undefined, 'the reference solution is never sent to players');
+
+  const played = await alice.post(`/levels/${id}/submit`, { design: solution('01-first-sale') });
+  assert.equal(((await played.json()) as { summary: { stars: number } }).summary.stars, 3);
+  assert.equal((await anon.json<unknown[]>(await anon.get(`/levels/${id}/leaderboard`))).length, 1);
+
+  // only the author edits; admins (alice is admin) can hide
+  const del = await fetch(`${base}/levels/${id}`, { method: 'DELETE', headers: { 'x-requested-with': 'pattern', cookie: browser().cookie } });
+  assert.equal(del.status, 401);
+  const hide = await fetch(`${base}/levels/${id}/hidden`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'pattern', cookie: bob.cookie },
+    body: JSON.stringify({ hidden: true }),
+  });
+  assert.equal(hide.status, 403, 'bob is not an admin');
+  const hidden = await fetch(`${base}/levels/${id}/hidden`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-requested-with': 'pattern', cookie: alice.cookie },
+    body: JSON.stringify({ hidden: true }),
+  });
+  assert.equal(hidden.status, 204);
+  assert.equal((await anon.json<unknown[]>(await anon.get('/levels/community'))).length, 0);
+  assert.equal((await anon.get(`/levels/${id}`)).status, 404);
+  assert.equal((await bob.get(`/levels/${id}`)).status, 200, 'the author still sees it');
+  const edit = await bob.json<{ solution: { nodes: unknown[] } }>(await bob.get(`/levels/${id}/edit`));
+  assert.ok(edit.solution.nodes.length > 0);
 });

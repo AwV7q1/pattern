@@ -26,11 +26,13 @@ interface Props {
   cost: number;
   /** Autoscaled nodes: engine index and label, for the replica chart. */
   replicas?: { index: number; label: string }[];
+  /** Cache nodes, for the hit-ratio chart. */
+  caches?: { index: number; label: string }[];
 }
 
 const REPLICA_COLORS = ['#a78bfa', '#34d399', '#f472b6', '#60a5fa', '#fbbf24'];
 
-export function MetricsPanel({ windows, scenario, cost, replicas = [] }: Props) {
+export function MetricsPanel({ windows, scenario, cost, replicas = [], caches = [] }: Props) {
   const last = windows.at(-1);
   const count = last ? last.okCount + last.errorCount : 0;
   const errRate = last && count ? last.errorCount / count : 0;
@@ -96,6 +98,17 @@ export function MetricsPanel({ windows, scenario, cost, replicas = [] }: Props) 
               label: r.label,
               color: REPLICA_COLORS[i],
               values: windows.map((w) => w.nodes[r.index]?.instances ?? 0),
+            }))}
+          />
+        )}
+        {caches.length > 0 && windows.some((w) => caches.some((c) => w.nodes[c.index]?.hitRatio !== undefined)) && (
+          <Chart
+            title="Cache hit ratio"
+            unit="%"
+            series={caches.slice(0, 5).map((c, i) => ({
+              label: c.label,
+              color: REPLICA_COLORS[i],
+              values: windows.map((w) => (w.nodes[c.index]?.hitRatio ?? 0) * 100),
             }))}
           />
         )}

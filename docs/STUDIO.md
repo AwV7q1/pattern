@@ -99,3 +99,11 @@ Dự án luôn lưu vào IndexedDB trước (tức thì, chạy được offline
 - Dự án tạo **trước** lần đăng nhập đầu tiên trên máy này chỉ được đẩy lên khi bấm “Đẩy lên tài khoản” ở trang Dự án. Dự án tạo sau đó tự đồng bộ.
 
 **Chia sẻ**: nút *Chia sẻ* tạo link `/s/:slug` chỉ đọc, không cần tài khoản để xem. *Link trực tiếp* luôn hiện bản mới nhất, *Ảnh chụp* đóng băng bản hiện tại. Người xem chạy mô phỏng và sửa thử được nhưng không lưu, có nút *Nhân bản vào dự án của tôi*. Link đếm lượt xem, thu hồi được, và tự thu hồi khi xoá dự án.
+
+## So sánh A/B
+
+Nút ⇄ trên thanh công cụ mở `/studio/:projectId/compare`. Chọn A và B từ bản hiện tại, các phiên bản đã lưu hoặc dự án khác, chọn kịch bản (của dự án, spike ×3, mất 1 node, database chậm ×3) rồi bấm Chạy. Hai bên chạy **cùng kịch bản và cùng seed** (`run_detailed` trong compute worker), nên mọi khác biệt đến từ design. Trang hiện bảng số liệu có chênh lệch (xanh là tốt hơn), biểu đồ chồng p99 / lỗi / throughput / retry, số ghi chú lint, và danh sách thay đổi giữa hai design (node, edge, từng tham số).
+
+## Tạo level từ dự án
+
+Nút 🔧 mở `/levels/new?from=<projectId>`: design của dự án là đề bài, một phiên bản (hoặc dự án khác) là lời giải tham khảo. Chọn node bị khoá, thành phần người chơi được thêm (tự thêm các loại lời giải cần), giới hạn instance, kịch bản chấm (thời lượng, traffic, SLO, ngân sách, chaos). *Kiểm tra bằng engine* chạy đúng luật của game: design ban đầu phải dưới 3★, lời giải phải đạt 3★. Server kiểm lại khi đăng, cấp id `u-<tên>-<mã>`, không bao giờ gửi lời giải cho người chơi. Level cộng đồng có leaderboard riêng; tác giả sửa hoặc xoá được (sửa thì bảng điểm bị xoá), admin ẩn được.

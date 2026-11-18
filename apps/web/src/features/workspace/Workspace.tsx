@@ -24,7 +24,8 @@ import { LintPanel } from './LintPanel';
 import { CONFLICT_EVENT, setOpenProject, useSync } from '@/projects/sync';
 import { idbStore } from '@/projects/store';
 import { ShareDialog } from './ShareDialog';
-import { Copy, Eye, Share2 } from 'lucide-react';
+import { Copy, Eye, GitCompareArrows, Share2, Wrench } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { useUi } from '@/app/ui-store';
 import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
 import {
@@ -34,6 +35,7 @@ import {
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
+  type Level,
   type Preset,
   type Summary,
   type TraceEvent,
@@ -106,6 +108,8 @@ export type WorkspaceProps =
   | {
       mode: 'game';
       levelKey: string;
+      /** Community level fetched from the server (official ones come from the repo). */
+      level?: Level;
       /** Opened from a lesson of the learning path. */
       lessonId?: string | null;
       onBackToPath?: () => void;
@@ -138,6 +142,7 @@ export function Workspace(props: WorkspaceProps) {
   const { screenToFlowPosition } = useReactFlow();
   const mode: Mode = props.mode;
   const readOnly = props.mode === 'sandbox' ? props.readOnly : undefined;
+  const navigate = useNavigate();
   const [shareOpen, setShareOpen] = useState(false);
   const levelKey = props.mode === 'game' ? props.levelKey : Object.keys(LEVELS)[0];
   /** Practice level opened from a lesson of the learning path. */
@@ -158,7 +163,7 @@ export function Workspace(props: WorkspaceProps) {
     [project],
   );
   const preset: Preset = projectPreset ?? EMPTY_PRESET;
-  const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
+  const level = (props.mode === 'game' ? props.level : undefined) ?? ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<SystemNodeType>([]);
@@ -877,7 +882,7 @@ export function Workspace(props: WorkspaceProps) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(practice ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
+              {Object.entries(practice || !(levelKey in LEVELS) ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
                 <SelectItem key={key} value={key}>
                   {l.title}
                 </SelectItem>
@@ -988,6 +993,38 @@ export function Workspace(props: WorkspaceProps) {
               <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
                 <Share2 /> Chia sẻ
               </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Tạo level từ dự án"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/levels/new?from=${project.id}`);
+                    }}
+                  >
+                    <Wrench />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Tạo level game từ dự án này</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="So sánh A/B"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/studio/${project.id}/compare`);
+                    }}
+                  >
+                    <GitCompareArrows />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>So sánh A/B với phiên bản cũ hoặc dự án khác</TooltipContent>
+              </Tooltip>
               <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
                 <Sparkles /> Prompt
               </Button>
@@ -1186,6 +1223,9 @@ export function Workspace(props: WorkspaceProps) {
                     cost={cost}
                     replicas={nodes
                       .filter((n) => n.data.config.autoscale)
+                      .map((n) => ({ index: n.data.index, label: n.data.label }))}
+                    caches={nodes
+                      .filter((n) => n.data.kind === 'cache')
                       .map((n) => ({ index: n.data.index, label: n.data.label }))}
                   />
                 </TabsContent>
