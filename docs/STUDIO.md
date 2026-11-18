@@ -58,9 +58,15 @@ Các file `case-studies/*.json` là mô hình đơn giản hoá dựa trên bài
 
 Kiểm tra một giai đoạn bằng CLI: lấy `stages[i].design` và `stages[i].scenario` ra một file `{ design, scenario }`, rồi chạy `pnpm sim <file> --windows`.
 
-## 6. Giới hạn hiện tại
+## 6. Chia sẻ link
+
+Nút **Chia sẻ** (biểu tượng share trên header) gửi bản chụp hiện tại (design, group, scenario, ghi chú) lên NestJS (`POST /api/shares`). Server dựng thử bằng engine WASM trước khi lưu, nên link nào cũng mở được. Bản chụp được lưu thành `apps/server/data/shares/<id>.json` (đổi chỗ lưu bằng `SHARES_DIR`), id là 12 ký tự ngẫu nhiên.
+
+Mở `/?share=<id>` sẽ tải bản chụp (`GET /api/shares/:id`) và tạo một **dự án mới trong trình duyệt của người mở**. Link không bao giờ sửa bản gốc, và thay đổi sau đó của người chia sẻ cũng không đi vào link: muốn cập nhật thì tạo link mới. Chưa có tài khoản, nên chưa có xoá link hay đồng bộ dự án giữa các máy.
+
+## 7. Giới hạn hiện tại
 
 - Mỗi design chỉ có một client, nên traffic chia đều giữa các nhánh đi ra từ client.
 - Chưa có fallback (trả dữ liệu dự phòng khi lỗi), DLQ, ordering hay idempotency trong engine. Prompt có yêu cầu những thứ này, nhưng mô phỏng chưa đo được.
 - HPA chỉ scale theo utilization, chưa scale theo độ dài queue (KEDA).
-- Dự án chỉ lưu trong trình duyệt. Chưa có đồng bộ server hay chia sẻ link.
+- Dự án chỉ lưu trong trình duyệt. Chia sẻ link là bản chụp một chiều, chưa có đồng bộ hai chiều giữa các máy.

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 // Same Rust engine as the browser, compiled with `wasm-pack --target nodejs`.
-import { play_level, level_input } from 'pattern-engine-wasm';
+import { play_level, level_input, Sim } from 'pattern-engine-wasm';
 
 export interface Summary {
   durationMs: number;
@@ -38,5 +38,17 @@ export class EngineService {
 
   levelInput(levelJson: string, design: unknown): unknown {
     return JSON.parse(level_input(levelJson, JSON.stringify(design)));
+  }
+
+  /** Throws InvalidDesignError unless the engine can build this design + scenario. */
+  validate(design: unknown, scenario: unknown) {
+    let sim: Sim | undefined;
+    try {
+      sim = new Sim(JSON.stringify({ design, scenario }));
+    } catch (err) {
+      throw new InvalidDesignError(err instanceof Error ? err.message : String(err));
+    } finally {
+      sim?.free();
+    }
   }
 }

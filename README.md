@@ -60,7 +60,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `case-studies/*.json` | Case study: bối cảnh, quyết định, các giai đoạn design + scenario |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
 | `apps/web` | React 19 + shadcn/ui (Tailwind v4, Radix) + React Flow + WebGPU |
-| `apps/server` | NestJS 11: `GET /api/levels`, `POST /api/levels/:id/submit`, `GET /api/levels/:id/leaderboard` |
+| `apps/server` | NestJS 11: `GET /api/levels`, `POST /api/levels/:id/submit`, `GET /api/levels/:id/leaderboard`, `POST/GET /api/shares` (link chia sẻ dự án) |
 
 ## Chạy
 

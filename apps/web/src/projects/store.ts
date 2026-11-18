@@ -254,3 +254,37 @@ export function timeAgo(t: number, now = Date.now()) {
   if (d < 30) return `${d} ngày trước`;
   return new Date(t).toLocaleDateString('vi-VN');
 }
+
+/** Upload an immutable snapshot (NestJS `/api/shares`); returns the link to open it. */
+export async function shareProject(p: Project): Promise<string> {
+  const res = await fetch('/api/shares', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: p.name, description: p.description, notes: p.notes, design: p.design, scenario: p.scenario }),
+  });
+  if (!res.ok) throw new Error(await errorText(res));
+  const { id } = (await res.json()) as { id: string };
+  return shareUrl(id);
+}
+
+export const shareUrl = (id: string) => `${location.origin}${location.pathname}?share=${encodeURIComponent(id)}`;
+
+/** A shared snapshot as a new local project (the link never edits the original). */
+export async function fetchShare(id: string): Promise<Project> {
+  const res = await fetch(`/api/shares/${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(res.status === 404 ? 'Link chia sẻ không tồn tại hoặc đã bị xoá.' : await errorText(res));
+  const s = (await res.json()) as { name: string; description: string; notes: string; design: StudioDesign; scenario: Scenario };
+  const p = projectFromPreset({ title: s.name, description: s.description, design: s.design, scenario: s.scenario }, s.name, 'share');
+  p.notes = s.notes;
+  return p;
+}
+
+async function errorText(res: Response) {
+  if (res.status >= 500 && res.status !== 501) return `Không kết nối được server (HTTP ${res.status}). Chạy \`pnpm dev:server\`?`;
+  try {
+    const body = (await res.json()) as { message?: string | string[] };
+    return Array.isArray(body.message) ? body.message.join(', ') : (body.message ?? `HTTP ${res.status}`);
+  } catch {
+    return `HTTP ${res.status}`;
+  }
+}

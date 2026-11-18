@@ -2,7 +2,7 @@
 // prediction, practice level round-trip), then plays level 1 through the
 // real UI (drag & drop, wiring, scoring, leaderboard), the sandbox
 // (particles, request trace), the capacity tools and Studio projects
-// (autosave, reload, version history).
+// (autosave, reload, version history, share links).
 // Needs `pnpm dev` (5173) and, for the leaderboard step, `pnpm dev:server`.
 // Usage: node apps/web/scripts/e2e.cjs [screenshot-dir]
 const { chromium } = require('playwright');
@@ -367,6 +367,43 @@ const check = (name, ok, detail = '') => {
   const restoredX = await flowX();
   check('restoring the first version puts the node back', Math.abs(restoredX - movedX) > 50 && Math.abs((await storedX()) - restoredX) < 1, `${movedX} -> ${restoredX}`);
   await shot('11-studio');
+
+  // 13. share link: snapshot on the server, opened as a separate local project
+  await page.getByLabel('Chia sẻ').click();
+  const link = page.getByLabel('Link chia sẻ');
+  await link.waitFor();
+  const shareLink = await link.inputValue();
+  check('share dialog shows a link', /\?share=[A-Za-z0-9_-]{12}$/.test(shareLink), shareLink);
+  await page.keyboard.press('Escape');
+  const countProjects = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const req = indexedDB.open('pattern-studio');
+          req.onsuccess = () => {
+            const c = req.result.transaction('projects').objectStore('projects').count();
+            c.onsuccess = () => resolve(c.result);
+          };
+        }),
+    );
+  const projectsBefore = await countProjects();
+  await page.goto(shareLink);
+  await page.getByText('Đã mở bản chia sẻ thành dự án mới').waitFor();
+  await page.waitForSelector('.react-flow__node');
+  check(
+    'opening the link creates a new project with the shared design',
+    (await countProjects()) === projectsBefore + 1 &&
+      !page.url().includes('share=') &&
+      (await page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).count()) === 1,
+    page.url(),
+  );
+  const missing = page.waitForResponse((r) => r.url().includes('/api/shares/') && r.status() === 404);
+  await page.goto(`${URL}/?share=AAAAAAAAAAAA`);
+  await missing;
+  await page.getByRole('alert').getByText('Link chia sẻ không tồn tại').waitFor();
+  check('a dead link shows an error on the projects page', true);
+  // the 404 itself is logged by the browser as a console error
+  errors.splice(0, errors.length, ...errors.filter((e) => !e.includes('404')));
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await browser.close();

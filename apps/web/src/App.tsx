@@ -14,7 +14,7 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Share2, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { CaseLibrary } from './cases/CaseLibrary';
 import { LearnPage } from './learn/LearnPage';
@@ -67,12 +67,14 @@ import { techOf } from './tech/catalog';
 import { ProjectsHome } from './projects/ProjectsHome';
 import { SaveStatus, type SaveState } from './projects/SaveStatus';
 import { VersionHistory } from './projects/VersionHistory';
+import { ShareDialog } from './projects/ShareDialog';
 import { Textarea } from './components/ui/textarea';
 import { PromptDialog } from './prompt/PromptDialog';
 import { Input } from './components/ui/input';
 import {
   download,
   exportJson,
+  fetchShare,
   projectFromPreset,
   slug,
   snapshotOf,
@@ -268,6 +270,8 @@ export function App() {
   const [flash, setFlash] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const saved = useRef({ design: '', notes: '' });
   const lastVersionAt = useRef(0);
   const flushSave = useRef<(() => void) | null>(null);
@@ -294,6 +298,27 @@ export function App() {
       if (vs.length) lastVersionAt.current = vs[0].at;
       else store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
     });
+  }, []);
+
+  // /?share=<id>: copy the shared snapshot into a new local project and open it
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get('share');
+    if (!id) return;
+    const url = new URL(location.href);
+    url.searchParams.delete('share');
+    history.replaceState(null, '', url);
+    fetchShare(id)
+      .then(async (p) => {
+        await store.put(p);
+        openProject(p);
+        setMode('sandbox');
+        showFlash('Đã mở bản chia sẻ thành dự án mới');
+      })
+      .catch((e: Error) => {
+        setMode('sandbox');
+        setShareError(e.message);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const closeProject = () => {
@@ -967,6 +992,14 @@ export function App() {
               </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={() => setShareOpen(true)} aria-label="Chia sẻ">
+                    <Share2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Tạo link chia sẻ (bản chụp chỉ đọc)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button size="icon-sm" variant="ghost" onClick={saveNamedVersion} aria-label="Lưu phiên bản">
                     <Bookmark />
                   </Button>
@@ -999,6 +1032,15 @@ export function App() {
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : mode === 'sandbox' && !project ? (
+        <>
+        {shareError && (
+          <div role="alert" className="flex items-center gap-3 border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
+            Không mở được link chia sẻ: {shareError}
+            <Button size="sm" variant="ghost" className="ml-auto h-7" onClick={() => setShareError(null)}>
+              Đóng
+            </Button>
+          </div>
+        )}
         <ProjectsHome
           presets={PRESETS}
           onOpen={openProject}
@@ -1008,6 +1050,7 @@ export function App() {
             { value: 'cases', label: `Case study · ${CASES.length}`, content: <CaseLibrary cases={CASES} onOpen={openProject} /> },
           ]}
         />
+        </>
       ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
@@ -1327,6 +1370,13 @@ export function App() {
           project && promptOpen
             ? { ...project, design: withGroups(toDesign(nodes, edges), groups), notes }
             : null
+        }
+      />
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        project={
+          project && shareOpen ? { ...project, design: withGroups(toDesign(nodes, edges), groups), notes } : null
         }
       />
       {project && (
