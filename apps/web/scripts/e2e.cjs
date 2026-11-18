@@ -21,6 +21,17 @@ const check = (name, ok, detail = '') => {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   const shot = (name) => shots && page.screenshot({ path: `${shots}/${name}.png` });
+  /** Routing of the selected node (inspector select). */
+  const setRouting = async (label) => {
+    await page.getByRole('combobox').filter({ hasText: /Chọn 1|Tuần tự|Song song|Hedge|Quorum/ }).first().click();
+    await page.getByRole('option', { name: label }).click();
+  };
+  /** Open a template as a new studio project. */
+  const openTemplate = async (key) => {
+    await page.goto(`${URL}/studio?template=${key}`);
+    await page.waitForURL(/\/studio\/[0-9a-f-]{36}/);
+    await page.waitForSelector('.react-flow__node');
+  };
 
   await page.goto(URL);
 
@@ -51,7 +62,7 @@ const check = (name, ok, detail = '') => {
   await page.getByRole('button', { name: 'Mở bài thực hành' }).click();
   await page.waitForSelector('.react-flow__node');
   await page.locator('.react-flow__node', { hasText: 'Product page' }).click();
-  await page.getByRole('radio', { name: /Song song/ }).click();
+  await setRouting(/Song song/);
   await page.getByRole('tab', { name: 'Level' }).click();
   await page.getByRole('button', { name: /Chấm điểm/ }).click();
   await page.getByRole('button', { name: /Về lộ trình/ }).click({ timeout: 20000 });
@@ -59,7 +70,8 @@ const check = (name, ok, detail = '') => {
   const xpAfter = await xp();
   check('practice level completes the lesson', xpAfter >= xpBefore + 20, `${xpBefore} -> ${xpAfter} XP`);
 
-  await page.getByRole('tab', { name: /Game/ }).click();
+  await page.getByRole('link', { name: 'Game' }).click();
+  await page.getByRole('link', { name: /1\. / }).first().click();
   await page.waitForSelector('.react-flow__node', { hasText: 'PostgreSQL' });
   await page.waitForTimeout(800);
   await shot('1-level-start');
@@ -140,9 +152,7 @@ const check = (name, ok, detail = '') => {
   await shot('5-leaderboard');
 
   // 7. sandbox: retry storm preset with scripted traffic and chaos
-  await page.getByRole('tab', { name: 'Sandbox' }).click();
-  await page.getByRole('combobox').first().click();
-  await page.getByRole('option', { name: 'Retry storm' }).click();
+  await openTemplate('05-retry-storm');
   await page.getByRole('switch').first().click(); // scripted traffic
   await page.getByRole('button', { name: 'Chạy' }).click();
   await page.waitForTimeout(4500);
@@ -151,8 +161,7 @@ const check = (name, ok, detail = '') => {
   await shot('6-sandbox-retry-storm');
 
   // 7b. sandbox: follow one request of the checkout fan-out
-  await page.getByRole('combobox').first().click();
-  await page.getByRole('option', { name: /Checkout/ }).click();
+  await openTemplate('08-checkout-fan-out');
   await page.waitForTimeout(500);
   check('sequence steps are numbered on the edges', (await page.locator('text=②').count()) >= 2);
   await page.getByRole('button', { name: 'Chạy' }).click();
@@ -185,7 +194,7 @@ const check = (name, ok, detail = '') => {
   await page.getByRole('separator').dblclick(); // reset for later screenshots
 
   // 8. capacity: sizing wizard, open the recommendation in the sandbox
-  await page.getByRole('tab', { name: 'Công suất' }).click();
+  await page.getByRole('link', { name: 'Chọn server' }).click();
   await page.getByText('Biết rps cao điểm').click();
   await page.locator('label:has-text("RPS cao điểm") + div input').fill('700');
   await page.getByRole('button', { name: 'Tính và mô phỏng' }).click();
@@ -193,15 +202,14 @@ const check = (name, ok, detail = '') => {
   const passing = await page.locator('table tr:has-text("✔ Cao điểm")').count();
   check('sizing recommends a plan that passes the peak check', passing > 0);
   await shot('7-sizing');
-  await page.getByRole('button', { name: 'Mở trong Sandbox' }).click();
+  await page.getByRole('button', { name: 'Mở trong Studio' }).click();
   await page.getByRole('button', { name: 'Chạy' }).click();
   await page.waitForTimeout(3000);
   const poolBadge = await page.locator('text=/^pool \\d+/').count();
   check('sizing design opens in the sandbox with a pooled DB edge', (await node('app').count()) === 1 && poolBadge > 0);
 
   // 9. capacity: calibrate the bundled real measurements
-  await page.getByRole('tab', { name: 'Công suất' }).click();
-  await page.getByRole('tab', { name: 'Hiệu chỉnh từ k6' }).click();
+  await page.getByRole('link', { name: 'Hiệu chỉnh k6' }).click();
   await page.getByRole('button', { name: 'Hiệu chỉnh', exact: true }).click();
   await page.getByText('Tham số đã fit').waitFor({ timeout: 120000 });
   const cap = Number(((await page.getByText(/^~\d+ rps$/).first().textContent()) ?? '').replace(/\D/g, ''));
@@ -212,7 +220,7 @@ const check = (name, ok, detail = '') => {
   await page.evaluate(() =>
     localStorage.setItem('pattern.learn.v1', JSON.stringify({ done: {}, xp: 0, days: {}, unlockAll: true, review: {} })),
   );
-  await page.reload();
+  await page.goto(`${URL}/learn`);
   await page.getByRole('button', { name: 'Gọi song song' }).click();
   await page.getByRole('button', { name: 'Bắt đầu', exact: true }).click();
   let missed = false;
@@ -261,16 +269,14 @@ const check = (name, ok, detail = '') => {
   check('a right answer in review moves the card up a box', after['u2-parallel#1']?.box === 1, JSON.stringify(after));
 
   // 10. trace: pin a request, switch Checkout to parallel, compare before/after
-  await page.getByRole('tab', { name: 'Sandbox' }).click();
-  await page.getByRole('combobox').first().click();
-  await page.getByRole('option', { name: /Checkout/ }).click();
+  await openTemplate('08-checkout-fan-out');
   await page.getByRole('button', { name: 'Chạy' }).click();
   await page.getByRole('tab', { name: 'Trace' }).click();
   await page.getByRole('button', { name: /Theo dõi 1 request/ }).click();
   await page.getByText('Diễn biến').waitFor({ timeout: 10000 });
   await page.getByRole('button', { name: 'Ghim làm mốc' }).click();
   await page.locator('.react-flow__node', { hasText: 'Checkout' }).first().click();
-  await page.getByRole('radio', { name: '∥ Song song' }).click();
+  await setRouting(/Song song/);
   await page.getByRole('button', { name: 'Áp dụng và chạy lại' }).first().click();
   await page.getByRole('tab', { name: 'Trace' }).click();
   await page.getByRole('button', { name: /Theo dõi 1 request/ }).click();

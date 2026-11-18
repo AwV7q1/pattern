@@ -14,29 +14,25 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
-import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
-import { CaseLibrary } from './cases/CaseLibrary';
-import { LearnPage } from './learn/LearnPage';
-import { useProgress } from './learn/progress';
-import { LESSONS } from './learn/curriculum';
-import { SimClient } from './sim/client';
-import { clearEdgeGeometry } from './gpu/edgeGeometry';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw } from 'lucide-react';
+import { LEARN_LEVELS, LEVELS } from '@/presets';
+import { useProgress } from '@/learn/progress';
+import { LESSONS } from '@/learn/curriculum';
+import { useSimClient } from '@/app/sim-context';
+import { useUi } from '@/app/ui-store';
+import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
 import {
   BUILDABLE,
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
-  type Design,
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
   type Preset,
-  type SizingReport,
   type Summary,
   type TraceEvent,
   type WindowMetrics,
-} from './types';
-import { CapacityPage } from './capacity/CapacityPage';
+} from '@/types';
 import {
   autoLayout,
   decorateEdges,
@@ -47,33 +43,30 @@ import {
   wouldCycle,
   type FlowEdgeType,
   type SystemNodeType,
-} from './model/flow';
-import { KIND_META, fmt } from './lib/meta';
-import { ParticleLegend } from './components/ParticleLegend';
-import { TracePanel, type PinnedTrace } from './components/TracePanel';
-import { SystemNode } from './components/SystemNode';
-import { FlowEdge } from './components/FlowEdge';
-import { ParticleLayer } from './components/ParticleLayer';
-import { MetricsPanel } from './components/MetricsPanel';
-import { EdgeInspector, NodeInspector } from './components/Inspector';
-import { LevelPanel } from './components/LevelPanel';
-import { ResultDialog } from './components/ResultDialog';
-import { DRAG_MIME, Palette } from './components/Palette';
-import { GROUP_MIME, TECH_MIME, TechLibrary } from './tech/TechLibrary';
-import { FrameNode, type FrameNodeType } from './components/FrameNode';
-import { GROUP_KINDS, childGroups, memberIds, withGroups } from './projects/groups';
-import { TechDialogs } from './tech/TechDialogs';
-import { techOf } from './tech/catalog';
-import { ProjectsHome } from './projects/ProjectsHome';
-import { SaveStatus, type SaveState } from './projects/SaveStatus';
-import { VersionHistory } from './projects/VersionHistory';
-import { Textarea } from './components/ui/textarea';
-import { PromptDialog } from './prompt/PromptDialog';
-import { Input } from './components/ui/input';
+} from '@/model/flow';
+import { KIND_META, fmt } from '@/lib/meta';
+import { ParticleLegend } from '@/components/ParticleLegend';
+import { TracePanel, type PinnedTrace } from '@/components/TracePanel';
+import { SystemNode } from '@/components/SystemNode';
+import { FlowEdge } from '@/components/FlowEdge';
+import { ParticleLayer } from '@/components/ParticleLayer';
+import { MetricsPanel } from '@/components/MetricsPanel';
+import { EdgeInspector, NodeInspector } from '@/components/Inspector';
+import { LevelPanel } from '@/components/LevelPanel';
+import { ResultDialog } from '@/components/ResultDialog';
+import { DRAG_MIME, Palette } from '@/components/Palette';
+import { GROUP_MIME, TECH_MIME, TechLibrary } from '@/tech/TechLibrary';
+import { FrameNode, type FrameNodeType } from '@/components/FrameNode';
+import { GROUP_KINDS, childGroups, memberIds, withGroups } from '@/projects/groups';
+import { techOf } from '@/tech/catalog';
+import { SaveStatus, type SaveState } from '@/projects/SaveStatus';
+import { VersionHistory } from '@/projects/VersionHistory';
+import { Textarea } from '@/components/ui/textarea';
+import { PromptDialog } from '@/prompt/PromptDialog';
+import { Input } from '@/components/ui/input';
 import {
   download,
   exportJson,
-  projectFromPreset,
   slug,
   snapshotOf,
   store,
@@ -82,18 +75,18 @@ import {
   type Project,
   type RunSnapshot,
   type Version,
-} from './projects/store';
-import { Button } from './components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { SidePanel } from './components/SidePanel';
-import { cn } from './lib/utils';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
-import { Slider } from './components/ui/slider';
-import { Switch } from './components/ui/switch';
-import { Label } from './components/ui/label';
-import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
-import { ScrollArea } from './components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+} from '@/projects/store';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SidePanel } from '@/components/SidePanel';
+import { cn } from '@/lib/utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const nodeTypes: NodeTypes = { system: SystemNode, frame: FrameNode };
 const edgeTypes: EdgeTypes = { flow: FlowEdge };
@@ -101,25 +94,49 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'learn' | 'sandbox' | 'game' | 'capacity';
+type Mode = 'sandbox' | 'game';
+
+export type WorkspaceProps =
+  | {
+      mode: 'game';
+      levelKey: string;
+      /** Opened from a lesson of the learning path. */
+      lessonId?: string | null;
+      onBackToPath?: () => void;
+      onLevelChange: (key: string) => void;
+    }
+  | {
+      mode: 'sandbox';
+      project: Project;
+      onClose: () => void;
+    };
 type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
 const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
 
 const bestKey = (id: string) => `pattern.best.${id}`;
+const EMPTY_PRESET: Preset = {
+  title: '',
+  description: '',
+  design: { nodes: [], edges: [] },
+  scenario: { seed: 1, timeoutMs: 2000, traffic: [{ atMs: 0, rps: 0 }], slo: { p99Ms: 200, errorRate: 0.01 }, windowMs: 1000 },
+};
 const ALL_LEVELS = { ...LEVELS, ...LEARN_LEVELS };
 
-export function App() {
-  const client = useMemo(() => new SimClient(), []);
+/** Canvas + simulation + side panel, for a game level or a studio project. */
+export function Workspace(props: WorkspaceProps) {
+  const client = useSimClient();
   const { screenToFlowPosition } = useReactFlow();
-  const [mode, setMode] = useState<Mode>('learn');
+  const mode: Mode = props.mode;
+  const levelKey = props.mode === 'game' ? props.levelKey : Object.keys(LEVELS)[0];
   /** Practice level opened from a lesson of the learning path. */
-  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(null);
+  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(
+    props.mode === 'game' && props.lessonId ? { lessonId: props.lessonId, level: props.levelKey } : null,
+  );
   const { complete } = useProgress();
-  const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
-  const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
-  /** Studio project open on the sandbox canvas (null = projects home). */
+  const [presetKey, setPresetKey] = useState('');
+  /** Studio project open on the sandbox canvas. */
   const [project, setProject] = useState<Project | null>(null);
   const projectRef = useRef(project);
   const [reloadTick, setReloadTick] = useState(0);
@@ -130,11 +147,7 @@ export function App() {
         : null,
     [project],
   );
-  const preset =
-    project && presetKey === projectKey(project.id) && projectPreset
-      ? projectPreset
-      : (PRESETS[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]]);
-  const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
+  const preset: Preset = projectPreset ?? EMPTY_PRESET;
   const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
@@ -223,42 +236,18 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (mode === 'capacity' || mode === 'learn') {
-      client.pause();
-      setRunning(false);
-      return;
-    }
+    if (mode === 'sandbox' && !presetKey) return; // project not opened yet
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
   }, [client, mode, presetKey, levelKey, load, reloadTick]);
 
-  const switchMode = (next: Mode) => {
-    if (mode === 'sandbox') {
-      setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
-      flushSave.current?.();
-    }
-    if (next !== 'game') setPractice(null);
-    // learning-path levels are only reachable from their lesson
-    if (next === 'game' && !practice && levelKey.startsWith('learn/')) setLevelKey(Object.keys(LEVELS)[0]);
-    setMode(next);
-  };
-
-  /** A lesson asks for its practice level on the canvas. */
-  const openPractice = (levelId: string, lessonId: string) => {
-    if (!ALL_LEVELS[levelId]) return;
-    setPractice({ lessonId, level: levelId });
-    setLevelKey(levelId);
-    setMode('game');
-  };
   const backToPath = () => {
     setPractice(null);
-    setLevelKey(Object.keys(LEVELS)[0]);
-    setMode('learn');
+    if (props.mode === 'game') props.onBackToPath?.();
   };
 
   // ------------------------------------------------------------------ studio projects
 
-  const [homeTab, setHomeTab] = useState('mine');
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
   const [notes, setNotes] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -298,9 +287,26 @@ export function App() {
     flushSave.current?.();
     client.pause();
     setRunning(false);
-    setProject(null);
-    setPresetKey(Object.keys(PRESETS)[0]);
+    if (props.mode === 'sandbox') props.onClose();
   };
+
+  // open the project given by the route
+  const initialProject = props.mode === 'sandbox' ? props.project : null;
+  useEffect(() => {
+    if (initialProject) openProject(initialProject);
+  }, [initialProject, openProject]);
+
+  // leaving the page: stop the engine, save, remember the design for the capacity tools
+  const setLastDesign = useUi((s) => s.setLastDesign);
+  useEffect(
+    () => () => {
+      flushSave.current?.();
+      client.pause();
+      const p = projectRef.current;
+      if (p) setLastDesign({ title: p.name, design: toDesign(nodesRef.current, edgesRef.current) });
+    },
+    [client, setLastDesign],
+  );
 
   /** Write the canvas + notes to IndexedDB now. */
   const persist = useCallback(async (design: string, nextNotes: string) => {
@@ -412,38 +418,6 @@ export function App() {
     setProject(p);
     await store.put(p);
   };
-
-  /** Load a generated design (sizing, calibration) into the sandbox as a new project. */
-  const openInSandbox = (key: string, p: Preset) => {
-    const created = projectFromPreset({ ...p, design: autoLayout(p.design) }, p.title, key);
-    store.put(created).then(() => {
-      openProject(created);
-      setMode('sandbox');
-    });
-  };
-  const openSizing = (r: SizingReport, title: string) => {
-    if (!r.input) return;
-    const t = r.input.scenario.traffic;
-    openInSandbox('custom-sizing', {
-      title,
-      description: `Đề xuất của Sizing wizard: Node cluster (1 process/vCPU) + Postgres, pool mỗi process. Cao điểm ${Math.round(t[0].rps)} rps; bật "Traffic theo kịch bản" để có đột biến ${Math.round(t[1]?.rps ?? 0)} rps ở giây 30–40. Thử tắt app server hoặc làm chậm DB.`,
-      design: r.input.design,
-      scenario: r.input.scenario,
-    });
-  };
-  const openCalibrated = (design: Design, title: string, slo?: { p99Ms: number; errorRate: number }) =>
-    openInSandbox('custom-calibrated', {
-      title,
-      description: 'Design đã hiệu chỉnh từ số đo k6. Kéo RPS để xem hệ thống phản ứng thế nào quanh giới hạn dự đoán.',
-      design,
-      scenario: {
-        seed: 1,
-        timeoutMs: 60000,
-        traffic: [{ atMs: 0, rps: 500 }],
-        slo: slo ?? { p99Ms: 200, errorRate: 0.01 },
-        windowMs: 1000,
-      },
-    });
 
   // worker events
   useEffect(() => {
@@ -815,36 +789,14 @@ export function App() {
   const paletteKinds = mode === 'game' ? level.palette : BUILDABLE;
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <div className="flex items-center gap-2 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Shapes className="size-4" />
-          </span>
-          Pattern
-        </div>
-        <Tabs value={mode} onValueChange={(v) => switchMode(v as Mode)}>
-          <TabsList>
-            <TabsTrigger value="learn">
-              <GraduationCap /> Học
-            </TabsTrigger>
-            <TabsTrigger value="game">
-              <Gamepad2 /> Game
-            </TabsTrigger>
-            <TabsTrigger value="sandbox">
-              <Shapes /> Sandbox
-            </TabsTrigger>
-            <TabsTrigger value="capacity">
-              <Gauge /> Công suất
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {mode === 'capacity' || mode === 'learn' ? null : mode === 'game' ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+        {mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
               setPractice(null);
-              setLevelKey(v);
+              if (props.mode === 'game') props.onLevelChange(v);
             }}
           >
             <SelectTrigger className="w-64">
@@ -890,11 +842,7 @@ export function App() {
           </div>
         ) : null}
 
-        <div
-          className={
-            mode === 'capacity' || mode === 'learn' || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
-          }
-        >
+        <div className={mode === 'sandbox' && !project ? 'hidden' : 'ml-auto flex items-center gap-2'}>
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -977,21 +925,6 @@ export function App() {
         </div>
       </header>
 
-      {mode === 'learn' ? (
-        <LearnPage onBuild={openPractice} />
-      ) : mode === 'capacity' ? (
-        <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
-      ) : mode === 'sandbox' && !project ? (
-        <ProjectsHome
-          presets={PRESETS}
-          onOpen={openProject}
-          tab={homeTab}
-          onTab={setHomeTab}
-          extraTabs={[
-            { value: 'cases', label: `Case study · ${CASES.length}`, content: <CaseLibrary cases={CASES} onOpen={openProject} /> },
-          ]}
-        />
-      ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
           <aside className="flex w-60 shrink-0 flex-col gap-3 border-r p-3">
@@ -1304,8 +1237,6 @@ export function App() {
           </div>
         </SidePanel>
       </div>
-      )}
-      <TechDialogs />
       <PromptDialog
         open={promptOpen}
         onOpenChange={setPromptOpen}

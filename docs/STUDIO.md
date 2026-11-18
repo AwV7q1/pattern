@@ -1,6 +1,6 @@
 # Studio: thiết kế hệ thống bằng công nghệ thật
 
-Studio nằm trong tab **Sandbox**. Thay vì một canvas dùng một lần, mỗi thiết kế là một **dự án** được lưu lại. Dự án dựng từ các công nghệ thật, mô phỏng được tải và sự cố, và xuất được thành prompt cho agent triển khai.
+Studio nằm ở mục **Thiết kế → Dự án** (`/studio`), mỗi dự án có URL riêng `/studio/:projectId`. Thay vì một canvas dùng một lần, mỗi thiết kế là một **dự án** được lưu lại. Dự án dựng từ các công nghệ thật, mô phỏng được tải và sự cố, và xuất được thành prompt cho agent triển khai.
 
 ## 1. Thư viện công nghệ
 
