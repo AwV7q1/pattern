@@ -4,7 +4,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { timeAgo } from './store';
 import { useSync } from './sync';
 
-export type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'saved'; at: number } | { status: 'error'; message: string };
+export type SaveState = { status: 'idle' } | { status: 'saving' } | { status: 'saved'; at: number } | { status: 'error'; message: string }
+  | { status: 'conflict' };
 
 /** Figma-style quiet indicator: a dot and one grey word. */
 export function SaveStatus({ state, owned = false }: { state: SaveState; /** Project synced to the account. */ owned?: boolean }) {
@@ -21,17 +22,19 @@ export function SaveStatus({ state, owned = false }: { state: SaveState; /** Pro
       ? 'Đang lưu…'
       : state.status === 'error'
         ? 'Lỗi lưu'
-        : state.status !== 'saved'
-          ? 'Chưa sửa'
-          : !synced
-            ? 'Đã lưu'
-            : sync.state === 'offline'
-              ? 'Đã lưu · offline'
-              : sync.state === 'error'
-                ? 'Đã lưu · lỗi đồng bộ'
-                : waiting
-                  ? 'Đang đồng bộ…'
-                  : 'Đã đồng bộ';
+        : state.status === 'conflict'
+          ? 'Chưa lưu: xung đột'
+          : state.status !== 'saved'
+            ? 'Chưa sửa'
+            : !synced
+              ? 'Đã lưu'
+              : sync.state === 'offline'
+                ? 'Đã lưu · offline'
+                : sync.state === 'error'
+                  ? 'Đã lưu · lỗi đồng bộ'
+                  : waiting
+                    ? 'Đang đồng bộ…'
+                    : 'Đã đồng bộ';
   const tip =
     state.status === 'saved'
       ? synced
@@ -43,6 +46,8 @@ export function SaveStatus({ state, owned = false }: { state: SaveState; /** Pro
         : `Tự động lưu vào trình duyệt (IndexedDB) · ${timeAgo(state.at)}`
       : state.status === 'error'
         ? state.message
+        : state.status === 'conflict'
+          ? 'Dự án vừa được sửa ở tab khác. Chọn giữ bản nào ở thanh cảnh báo.'
         : 'Mọi thay đổi được lưu tự động · ⌘/Ctrl+S để tạo phiên bản có tên';
   return (
     <Tooltip>
@@ -55,7 +60,7 @@ export function SaveStatus({ state, owned = false }: { state: SaveState; /** Pro
               state.status === 'saved' && !waiting && 'bg-success/70',
               state.status === 'saved' && waiting && 'animate-pulse bg-primary',
               state.status === 'saved' && synced && (sync.state === 'offline' || sync.state === 'error') && 'bg-warning',
-              state.status === 'error' && 'bg-destructive',
+              (state.status === 'error' || state.status === 'conflict') && 'bg-destructive',
               state.status === 'idle' && 'bg-muted-foreground/40',
             )}
           />

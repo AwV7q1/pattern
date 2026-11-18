@@ -58,7 +58,16 @@ Các file `case-studies/*.json` là mô hình đơn giản hoá dựa trên bài
 
 Kiểm tra một giai đoạn bằng CLI: lấy `stages[i].design` và `stages[i].scenario` ra một file `{ design, scenario }`, rồi chạy `pnpm sim <file> --windows`.
 
-## 6. Giới hạn hiện tại
+## 6. Mở cùng dự án ở nhiều tab
+
+Mỗi lần lưu là một lần ghi có điều kiện (`putIfUnchanged`): trong cùng một transaction IndexedDB, chỉ ghi nếu `updatedAt` trong DB vẫn là bản mà tab này đang giữ. Khi tab khác lưu, tab này hiện cảnh báo ngay (qua `BroadcastChannel`) và ngừng autosave để không đè lên:
+
+- **Tải bản mới nhất**: bỏ thay đổi chưa lưu ở tab này, mở bản tab kia vừa lưu.
+- **Giữ bản của tab này**: ghi đè, và bản của tab kia được lưu thành một phiên bản trong lịch sử, không mất.
+
+Snapshot `lastRun` cũng ghi có điều kiện, nên một tab đang chạy mô phỏng không đè design mới hơn của tab khác. Adapter HTTP sau này ánh xạ đúng cách này sang `If-Match` / 412.
+
+## 7. Giới hạn hiện tại
 
 - Mỗi design chỉ có một client, nên traffic chia đều giữa các nhánh đi ra từ client.
 - Chưa có fallback (trả dữ liệu dự phòng khi lỗi), DLQ, ordering hay idempotency trong engine. Prompt có yêu cầu những thứ này, nhưng mô phỏng chưa đo được.

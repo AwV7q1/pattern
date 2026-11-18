@@ -83,11 +83,19 @@ export interface ProjectStore {
   list(): Promise<Project[]>;
   get(id: string): Promise<Project | undefined>;
   put(p: Project): Promise<void>;
+  /**
+   * Write only if the stored copy is still the one this tab started from
+   * (`updatedAt === expected`): another tab may have saved in between.
+   * An HTTP adapter maps this to `If-Match` / 412.
+   */
+  putIfUnchanged(p: Project, expected: number): Promise<PutResult>;
   remove(id: string): Promise<void>;
   versions(projectId: string): Promise<Version[]>;
   addVersion(v: Version): Promise<void>;
   updateVersion(v: Version): Promise<void>;
 }
+
+export type PutResult = { ok: true } | { ok: false; current: Project | undefined };
 
 const MAX_AUTO_VERSIONS = 50;
 const CHANGED = 'pattern:projects-changed';
@@ -143,6 +151,12 @@ const notify = () => {
 };
 channel?.addEventListener('message', () => window.dispatchEvent(new Event(CHANGED)));
 
+/** Called after any write to the projects store, from this tab or another one. */
+export function onProjectsChanged(cb: () => void) {
+  window.addEventListener(CHANGED, cb);
+  return () => window.removeEventListener(CHANGED, cb);
+}
+
 export const idbStore: ProjectStore = {
   async list() {
     const all = await (await db()).getAllFromIndex('projects', 'updatedAt');
@@ -154,6 +168,20 @@ export const idbStore: ProjectStore = {
   async put(p) {
     await (await db()).put('projects', p);
     notify();
+  },
+  async putIfUnchanged(p, expected) {
+    // one readwrite transaction: no other tab can write between the check and the put
+    const tx = (await db()).transaction('projects', 'readwrite');
+    const current = await tx.store.get(p.id);
+    if (current?.updatedAt !== expected) {
+      await tx.done;
+      return { ok: false, current };
+    }
+    // `rev` and `owner` belong to the sync engine (see `store.put`)
+    await tx.store.put({ ...p, rev: current?.rev ?? p.rev, owner: current?.owner ?? p.owner });
+    await tx.done;
+    notify();
+    return { ok: true };
   },
   async remove(id) {
     const d = await db();
@@ -199,6 +227,14 @@ export const store: ProjectStore = {
     const next = { ...p, rev: prev?.rev ?? p.rev, owner: prev?.owner ?? p.owner };
     await idbStore.put(next);
     await syncHooks.enqueue({ kind: 'project', id: p.id }, next);
+  },
+  async putIfUnchanged(p, expected) {
+    const res = await idbStore.putIfUnchanged(p, expected);
+    if (res.ok) {
+      const next = await idbStore.get(p.id);
+      if (next) await syncHooks.enqueue({ kind: 'project', id: p.id }, next);
+    }
+    return res;
   },
   async remove(id) {
     const prev = await idbStore.get(id);
