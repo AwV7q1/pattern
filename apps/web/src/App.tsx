@@ -69,6 +69,7 @@ import { SaveStatus, type SaveState } from './projects/SaveStatus';
 import { VersionHistory } from './projects/VersionHistory';
 import { ShareDialog } from './projects/ShareDialog';
 import { useUndo } from './projects/useUndo';
+import { CompareDialog } from './projects/CompareDialog';
 import { Textarea } from './components/ui/textarea';
 import { PromptDialog } from './prompt/PromptDialog';
 import { Input } from './components/ui/input';
@@ -275,6 +276,8 @@ export function App() {
   const [renaming, setRenaming] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  /** Version vs. canvas, both frozen when the comparison was asked for. */
+  const [compare, setCompare] = useState<{ label: string; design: Design; current: Design } | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   /** Another tab saved (or deleted) the open project since this tab loaded it. */
   const [conflict, setConflict] = useState<{ theirs: Project | undefined } | null>(null);
@@ -1517,6 +1520,15 @@ export function App() {
             : null
         }
       />
+      {project && (
+        <CompareDialog
+          open={!!compare}
+          onOpenChange={(o) => !o && setCompare(null)}
+          base={compare}
+          current={compare?.current ?? { nodes: [], edges: [] }}
+          scenario={project.scenario}
+        />
+      )}
       <ShareDialog
         open={shareOpen}
         onOpenChange={setShareOpen}
@@ -1531,6 +1543,14 @@ export function App() {
           onOpenChange={setHistoryOpen}
           onRestore={restoreVersion}
           onSaveNamed={saveNamedVersion}
+          onCompare={(v) => {
+            setHistoryOpen(false);
+            setCompare({
+              label: v.label ?? `Tự động lưu ${new Date(v.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`,
+              design: v.design,
+              current: toDesign(nodesRef.current, edgesRef.current),
+            });
+          }}
           revision={versionRev}
         />
       )}

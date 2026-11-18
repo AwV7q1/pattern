@@ -450,6 +450,32 @@ const check = (name, ok, detail = '') => {
   await page.waitForTimeout(1200);
   check('the undone design is autosaved', Math.abs((await storedX()) - r1) < 1, `${await storedX()} vs ${r1}`);
 
+  // 12d. compare: scale the DB, simulate the first version next to the canvas
+  await page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first().click();
+  await page.getByRole('tab', { name: 'Thuộc tính' }).click();
+  const instancesInput = page.getByText('Instances (server)', { exact: true }).locator('xpath=..').locator('input');
+  const dbInstances = Number(await instancesInput.inputValue());
+  await instancesInput.fill(String(dbInstances + 2));
+  const apply = page.getByRole('button', { name: 'Áp dụng và chạy lại' }).first();
+  if (await apply.isVisible().catch(() => false)) await apply.click();
+  await page.waitForTimeout(500);
+  await page.getByLabel('Lịch sử phiên bản').click();
+  await page.getByRole('dialog').getByText('Tạo dự án').first().click();
+  await page.getByRole('button', { name: /So sánh với bản hiện tại/ }).click();
+  const table = page.getByRole('table', { name: 'Kết quả so sánh' });
+  await table.waitFor({ timeout: 30000 });
+  const cmp = page.getByRole('dialog');
+  const p99Row = await table.locator('tr[data-metric="p99"] td').allInnerTexts();
+  const costRow = await table.locator('tr[data-metric="Chi phí"] td').allInnerTexts();
+  check(
+    'comparison runs both versions and lists the design change',
+    (await cmp.getByText(`instances: ${dbInstances} → ${dbInstances + 2}`).count()) === 1 &&
+      /^-\d+%$/.test(p99Row[3]) &&
+      /^\+\d+%$/.test(costRow[3]),
+    `p99 ${p99Row.join(' | ')} · cost ${costRow.join(' | ')}`,
+  );
+  await page.keyboard.press('Escape');
+
   // 13. share link: snapshot on the server, opened as a separate local project
   await page.getByLabel('Chia sẻ').click();
   const link = page.getByLabel('Link chia sẻ');

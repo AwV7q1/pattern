@@ -30,6 +30,7 @@ Logo thương hiệu thuộc về chủ sở hữu tương ứng và chỉ đư�
   - Tự chụp mỗi 5 phút khi có sửa, giữ 50 bản.
   - ⌘/Ctrl+S tạo bản có tên, được giữ vĩnh viễn.
   - Khôi phục luôn chụp lại trạng thái hiện tại trước, nên không mất gì.
+- So sánh phiên bản: trong Lịch sử, chọn một bản rồi bấm **So sánh với bản hiện tại**. Cả hai design chạy headless (worker riêng, không chặn canvas) với cùng kịch bản và seed của dự án; độ dài là `durationMs` nếu có, nếu không thì hết kịch bản traffic/chaos cộng 30s (tối thiểu 60s). Engine tất định nên mọi chênh lệch (p50, p99, lỗi, thông lượng, % cửa sổ đạt SLO, timeout, drop, tồn đọng, chi phí) đến từ thiết kế. Kèm danh sách thay đổi: node/edge thêm, bớt và từng field cấu hình đã đổi (bỏ qua vị trí).
 - Hoàn tác / làm lại: ⌘/Ctrl+Z và ⌘/Ctrl+Shift+Z (hoặc Ctrl+Y), hay 2 nút trên header. Mỗi bước là một bản chụp cả design (node, edge, khung) sau khi canvas đứng yên 400ms, nên một lần kéo là một bước. Giữ 100 bước, chỉ trong phiên đang mở; mở lại dự án, tải bản từ tab khác hay khôi phục phiên bản thì lịch sử bắt đầu lại. Phím tắt không bắt khi đang gõ trong ô nhập.
 - Dự án còn lưu `lastRun`: số liệu mô phỏng gần nhất và các node nóng, để đưa vào prompt.
 
