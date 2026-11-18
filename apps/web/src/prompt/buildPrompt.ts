@@ -170,7 +170,12 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
     if (n.kind === 'cache') keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
     if (t) keys.push(...t.deploy.keySettings.slice(0, 3));
     const hpa = n.cfg.autoscale;
-    if (hpa) {
+    if (hpa?.metric === 'queueLength') {
+      const q = hpa.queue ? byId.get(hpa.queue)?.label ?? hpa.queue : 'hàng đợi của chính service';
+      keys.push(
+        `KEDA ScaledObject ${hpa.min}–${hpa.max} replica theo backlog của ${q}, ${hpa.targetQueueLength ?? 100} message mỗi replica, polling ${ms(hpa.evalEveryMs)}, pod ready trong ≤ ${ms(hpa.podStartMs)}, cooldown ${ms(hpa.stabilizationMs)}`,
+      );
+    } else if (hpa) {
       keys.push(
         `HPA ${hpa.min}–${hpa.max} replica, ${n.cfg.model === 'cpu' ? 'CPU' : 'utilization'} mục tiêu ${pct(hpa.targetUtilization)}, pod ready trong ≤ ${ms(hpa.podStartMs)}, scale-down stabilization ${ms(hpa.stabilizationMs)}`,
       );

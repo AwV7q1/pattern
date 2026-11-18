@@ -34,7 +34,7 @@ use serde::Serialize;
 
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Autoscale, Balance, ChaosAction, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
+    Arrival, Autoscale, Balance, ChaosAction, ScaleMetric, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
     Slo,
 };
 use crate::rng::Rng;
@@ -187,6 +187,8 @@ struct Inst {
 /// Autoscaler state of one node.
 struct HpaRt {
     cfg: Autoscale,
+    /// `queueLength`: node whose backlog drives the scaling.
+    queue_node: usize,
     /// Busy and capacity areas since the last evaluation.
     busy: f64,
     cap: f64,
@@ -669,16 +671,25 @@ impl Simulation {
         }
         let client = clients[0];
 
+        for n in &design.nodes {
+            if let Some(q) = n.config.autoscale.as_ref().and_then(|a| a.queue.as_deref()) {
+                if !index.contains_key(q) {
+                    return Err(format!("node '{}': autoscale.queue '{}' is not a node", n.id, q));
+                }
+            }
+        }
+
         let mut cost_per_hour = 0.0;
         let mut nodes: Vec<NodeRt> = design
             .nodes
             .iter()
-            .map(|n| {
+            .enumerate()
+            .map(|(i, n)| {
                 let c = &n.config;
                 let (mu, sigma) = lognormal_params(c.latency_p50_ms, c.latency_p99_ms);
                 let (cpu_mu, cpu_sigma) = lognormal_params(c.cpu_p50_ms, c.cpu_p99_ms);
                 let io = (c.io_p50_ms > 0.0).then(|| lognormal_params(c.io_p50_ms, c.io_p99_ms));
-                let hpa = c.autoscale.filter(|_| n.kind != NodeKind::Client).map(|a| {
+                let hpa = c.autoscale.clone().filter(|_| n.kind != NodeKind::Client).map(|a| {
                     let min = a.min.max(1);
                     Autoscale {
                         min,
@@ -686,11 +697,11 @@ impl Simulation {
                         ..a
                     }
                 });
-                let instances = match hpa {
+                let instances = match &hpa {
                     Some(a) => c.instances.clamp(a.min, a.max),
                     None => c.instances.max(1),
                 };
-                let allocated = hpa.map_or(instances, |a| a.max.max(instances));
+                let allocated = hpa.as_ref().map_or(instances, |a| a.max.max(instances));
                 if n.kind != NodeKind::Client {
                     cost_per_hour += c.cost_per_hour * instances as f64;
                 }
@@ -718,6 +729,11 @@ impl Simulation {
                     pending: VecDeque::new(),
                     active: instances as usize,
                     hpa: hpa.map(|cfg| HpaRt {
+                        queue_node: cfg
+                            .queue
+                            .as_deref()
+                            .and_then(|q| index.get(q).copied())
+                            .map_or(i, |q| q as usize),
                         cfg,
                         busy: 0.0,
                         cap: 0.0,
@@ -1088,15 +1104,27 @@ impl Simulation {
         let util = if h.cap > 0.0 { h.busy / h.cap } else { 0.0 };
         h.busy = 0.0;
         h.cap = 0.0;
-        let cfg = h.cfg;
-        let target = cfg.target_utilization.clamp(0.01, 1.0);
-        let ratio = util * ready as f64 / active.max(1) as f64 / target;
-        let desired = if (ratio - 1.0).abs() <= 0.1 {
-            active
-        } else {
-            (ready as f64 * util / target).ceil() as usize
-        }
-        .clamp(cfg.min as usize, cfg.max as usize);
+        let cfg = h.cfg.clone();
+        let queue_node = h.queue_node;
+        // (current ratio to target, replicas wanted)
+        let (ratio, wanted) = match cfg.metric {
+            ScaleMetric::Utilization => {
+                let target = cfg.target_utilization.clamp(0.01, 1.0);
+                (
+                    util * ready as f64 / active.max(1) as f64 / target,
+                    (ready as f64 * util / target).ceil(),
+                )
+            }
+            ScaleMetric::QueueLength => {
+                // KEDA polls the broker: the backlog right now, not an average
+                let backlog = self.nodes[queue_node].queued() as f64;
+                let target = cfg.target_queue_length.max(1.0);
+                (backlog / (active.max(1) as f64 * target), (backlog / target).ceil())
+            }
+        };
+        let desired = if (ratio - 1.0).abs() <= 0.1 { active } else { wanted as usize }
+            .clamp(cfg.min as usize, cfg.max as usize);
+        let Some(h) = self.nodes[node].hpa.as_mut() else { return };
         let stab = ms_to_us(cfg.stabilization_ms.max(0.0));
         h.history.push_back((now, desired));
         while h.history.front().is_some_and(|(t, _)| now.saturating_sub(*t) > stab) {
@@ -2416,6 +2444,7 @@ mod tests {
             eval_every_ms: 5_000.0,
             stabilization_ms: 30_000.0,
             pod_start_ms: 8_000.0,
+            ..Autoscale::default()
         };
         let (ws, summary) = instance_series(&autoscaled(hpa));
         let at = |s: usize| ws[s].nodes[1].instances;
@@ -2445,12 +2474,100 @@ mod tests {
             eval_every_ms: 2_000.0,
             stabilization_ms: 0.0,
             pod_start_ms: 3_000.0,
+            ..Autoscale::default()
         };
         let (ws, _) = instance_series(&autoscaled(hpa));
         assert!(ws.iter().all(|w| w.nodes[1].instances >= 3 && w.nodes[1].instances <= 4));
         // the start count is clamped into [min, max]
         assert_eq!(ws[0].nodes[1].instances, 3);
         assert!(ws.iter().any(|w| w.nodes[1].starting > 0), "starting pods are reported");
+    }
+
+    /// Producers push 1000 msg/s for 30 s into a queue drained by workers of
+    /// 200 msg/s each (10 slots × 50 ms), then stop.
+    fn queue_workers(autoscale: Option<Autoscale>) -> SimInput {
+        let mut input = SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "q",
+                        NodeKind::Queue,
+                        NodeConfig {
+                            concurrency: 200,
+                            queue_size: 1_000_000,
+                            latency_p50_ms: 0.3,
+                            latency_p99_ms: 1.0,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                    node(
+                        "worker",
+                        NodeKind::Service,
+                        NodeConfig {
+                            concurrency: 10,
+                            queue_size: 200,
+                            latency_p50_ms: 50.0,
+                            latency_p99_ms: 50.0,
+                            cost_per_hour: 1.0,
+                            autoscale,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                ],
+                edges: vec![edge("c", "q"), edge("q", "worker")],
+            },
+            scenario: scenario(1000.0, 90_000.0),
+        };
+        input.scenario.timeout_ms = 600_000.0;
+        input.scenario.traffic.push(TrafficPhase { at_ms: 30_000.0, rps: 0.0 });
+        input
+    }
+
+    #[test]
+    fn keda_scales_workers_on_the_queue_backlog_and_drains_it() {
+        let keda = Autoscale {
+            min: 1,
+            max: 10,
+            eval_every_ms: 2_000.0,
+            stabilization_ms: 10_000.0,
+            pod_start_ms: 3_000.0,
+            metric: ScaleMetric::QueueLength,
+            queue: Some("q".into()),
+            target_queue_length: 500.0,
+            ..Autoscale::default()
+        };
+        let (ws, summary) = instance_series(&queue_workers(Some(keda)));
+        let workers = |s: usize| ws[s].nodes[2].instances;
+        let backlog = |s: usize| ws[s].nodes[1].queue;
+        assert_eq!(workers(1), 1);
+        // 800 msg/s pile up; the first poll (2 s) sees ~1600 → 4 replicas, ready at 5 s
+        assert!(backlog(1) > 500, "backlog builds: {}", backlog(1));
+        assert!(workers(4) == 1 && workers(8) >= 5, "scaled on the backlog after the pod start: {} {}", workers(4), workers(8));
+        assert_eq!(backlog(15), 0, "drained while traffic continues");
+        // an empty queue reads as "no work": after the stabilization window the
+        // fleet shrinks below the 5 workers 1000 msg/s needs and the backlog
+        // comes back (the classic flapping of pure queue-length scaling)
+        assert!((16..30).any(|s| workers(s) < 5 && backlog(s) > 0), "flaps under steady load");
+        // once producers stop, the backlog drains and the fleet goes back to min
+        assert_eq!(summary.backlog, 0, "drained by the end");
+        assert_eq!(workers(85), 1, "back to min once the queue is empty");
+        assert!(ws.iter().all(|w| w.nodes[2].instances <= 10));
+
+        // the same workers without autoscaling never catch up
+        let fixed = run(&queue_workers(None));
+        assert!(fixed.backlog > 5_000, "1 worker leaves a backlog: {}", fixed.backlog);
+    }
+
+    #[test]
+    fn keda_queue_must_be_a_node() {
+        let keda = Autoscale {
+            metric: ScaleMetric::QueueLength,
+            queue: Some("nope".into()),
+            ..Autoscale::default()
+        };
+        let err = Simulation::new(&queue_workers(Some(keda)), false).err().unwrap();
+        assert!(err.contains("autoscale.queue 'nope'"), "{err}");
     }
 
     #[test]
@@ -2462,6 +2579,7 @@ mod tests {
             eval_every_ms: 1_000.0,
             stabilization_ms: 0.0,
             pod_start_ms: 5_000.0,
+            ..Autoscale::default()
         };
         let mut input = autoscaled(hpa);
         input.design.nodes[1].config.instances = 1;

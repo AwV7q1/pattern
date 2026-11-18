@@ -1,0 +1,147 @@
+{
+  "title": "KEDA: worker scale theo độ dài queue",
+  "description": "API nhận đơn rồi đẩy vào RabbitMQ (ack ngay, nên người dùng không thấy lỗi). Worker xử lý khoảng 200 msg/s mỗi pod, prefetch 400, và được KEDA scale theo backlog của RabbitMQ: 400 message mỗi replica, 1–12 pod, polling 5s, pod mới cần 8s, cooldown 30s. Traffic 600 rps, giây 20–60 tăng lên 2000 rps. Để ý: khi backlog về 0, KEDA hiểu là \"hết việc\" và thu worker về sau cooldown, dù tải vẫn đều, nên backlog lại dồn và worker dao động. Thử: tăng min replica lên 4, giảm backlog/replica, hoặc kéo dài cooldown. Xem biểu đồ Replica và Hàng đợi ở tab Số liệu.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 220
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Order API",
+        "tech": "nestjs",
+        "position": {
+          "x": 300,
+          "y": 220
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 100,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 15,
+          "costPerHour": 0.05
+        }
+      },
+      {
+        "id": "queue",
+        "kind": "queue",
+        "label": "RabbitMQ",
+        "tech": "rabbitmq",
+        "position": {
+          "x": 620,
+          "y": 220
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 400,
+          "queueSize": 1000000,
+          "latencyP50Ms": 0.3,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "worker",
+        "kind": "service",
+        "label": "Order worker",
+        "tech": "nestjs",
+        "position": {
+          "x": 940,
+          "y": 220
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 10,
+          "queueSize": 390,
+          "latencyP50Ms": 40,
+          "latencyP99Ms": 120,
+          "costPerHour": 0.05,
+          "autoscale": {
+            "min": 1,
+            "max": 12,
+            "targetUtilization": 0.6,
+            "evalEveryMs": 5000,
+            "stabilizationMs": 30000,
+            "podStartMs": 8000,
+            "metric": "queueLength",
+            "queue": "queue",
+            "targetQueueLength": 400
+          }
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "tech": "postgresql",
+        "position": {
+          "x": 1260,
+          "y": 220
+        },
+        "config": {
+          "concurrency": 100,
+          "queueSize": 500,
+          "latencyP50Ms": 3,
+          "latencyP99Ms": 12,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api",
+        "latencyMs": 10
+      },
+      {
+        "source": "api",
+        "target": "queue",
+        "latencyMs": 1,
+        "timeoutMs": 200
+      },
+      {
+        "source": "queue",
+        "target": "worker",
+        "latencyMs": 1
+      },
+      {
+        "source": "worker",
+        "target": "db",
+        "latencyMs": 0.5,
+        "timeoutMs": 1000
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 11,
+    "durationMs": 120000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 600
+      },
+      {
+        "atMs": 20000,
+        "rps": 2000
+      },
+      {
+        "atMs": 60000,
+        "rps": 600
+      }
+    ],
+    "slo": {
+      "p99Ms": 100,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000
+  }
+}

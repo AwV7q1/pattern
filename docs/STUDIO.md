@@ -52,7 +52,7 @@ Code ở `apps/web/src/prompt/buildPrompt.ts`, là hàm thuần với đầu và
   - Khung được lưu trong `design.groups`, mỗi node có `group` là khung nhỏ nhất chứa nó.
   - Chọn khung có thể giả lập mất cả khung (mọi node bên trong down).
 - **HPA** nằm trong engine (`config.autoscale`), xem [SIMULATION.md](SIMULATION.md) mục 2.7. Node card hiện số replica, tab Số liệu có biểu đồ Replica.
-- Mẫu `10-k8s-hpa-spike` cho thấy HPA phản ứng chậm hơn spike.
+- Mẫu `10-k8s-hpa-spike` cho thấy HPA phản ứng chậm hơn spike. Mẫu `11-keda-queue-workers` cho thấy worker scale theo backlog RabbitMQ (Inspector → Autoscale → "Theo queue (KEDA)") và dao động khi queue rỗng.
 
 ## 5. Case study
 
@@ -79,5 +79,5 @@ Snapshot `lastRun` cũng ghi có điều kiện, nên một tab đang chạy mô
 
 - Mỗi design chỉ có một client, nên traffic chia đều giữa các nhánh đi ra từ client.
 - Chưa có fallback (trả dữ liệu dự phòng khi lỗi), DLQ, ordering hay idempotency trong engine. Prompt có yêu cầu những thứ này, nhưng mô phỏng chưa đo được.
-- HPA chỉ scale theo utilization, chưa scale theo độ dài queue (KEDA).
+- Autoscale chưa scale về 0 replica (KEDA `minReplicaCount: 0`) và chưa có custom metric như RPS hay latency.
 - Dự án chỉ lưu trong trình duyệt. Chia sẻ link là bản chụp một chiều, chưa có đồng bộ hai chiều giữa các máy.

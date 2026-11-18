@@ -200,7 +200,7 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       kind: n.data.kind,
       label: n.data.label,
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
-      config: n.data.config,
+      config: withoutDanglingQueue(n.data.config, ns),
       ...(n.data.tech ? { tech: n.data.tech } : {}),
     })),
     edges: es.map((e) => {
@@ -225,6 +225,13 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       return out;
     }),
   };
+}
+
+/** A deleted queue node must not leave a KEDA scaler pointing at nothing (the engine rejects it). */
+function withoutDanglingQueue(config: NodeConfig, nodes: SystemNodeType[]): NodeConfig {
+  const q = config.autoscale?.queue;
+  if (!q || nodes.some((n) => n.id === q)) return config;
+  return { ...config, autoscale: { ...config.autoscale!, queue: null } };
 }
 
 /** Would adding source -> target create a cycle (target already reaches source)? */

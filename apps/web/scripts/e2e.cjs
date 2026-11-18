@@ -476,6 +476,29 @@ const check = (name, ok, detail = '') => {
   );
   await page.keyboard.press('Escape');
 
+  // 12e. KEDA template: the worker scales on the RabbitMQ backlog
+  await openTemplate('KEDA: worker scale theo độ dài queue');
+  await setSpeed('8×');
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  const workerCard = page.locator('.react-flow__node', { hasText: 'Order worker' }).first();
+  let kedaReplicas = 0;
+  for (let i = 0; i < 60 && kedaReplicas < 4; i++) {
+    await page.waitForTimeout(500);
+    kedaReplicas = Number(((await workerCard.innerText()).match(/KEDA (\d+)/) ?? [])[1] ?? 0);
+  }
+  await page.getByRole('button', { name: 'Dừng' }).click();
+  await workerCard.click();
+  await page.getByRole('tab', { name: 'Thuộc tính' }).click();
+  check(
+    'KEDA worker scales out on the queue backlog',
+    kedaReplicas >= 4 &&
+      (await page.getByRole('radio', { name: 'Theo queue (KEDA)' }).getAttribute('aria-checked')) === 'true' &&
+      /RabbitMQ/.test(await page.getByLabel('Queue theo dõi').innerText()),
+    `${kedaReplicas} replicas`,
+  );
+  await setSpeed('1×');
+  await openTemplate('Không cache: DB là nút thắt');
+
   // 13. share link: snapshot on the server, opened as a separate local project
   await page.getByLabel('Chia sẻ').click();
   const link = page.getByLabel('Link chia sẻ');

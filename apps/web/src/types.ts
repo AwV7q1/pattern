@@ -44,6 +44,12 @@ export interface Autoscale {
   evalEveryMs: number;
   stabilizationMs: number;
   podStartMs: number;
+  /** `queueLength`: KEDA-style, replicas = ⌈backlog / targetQueueLength⌉. */
+  metric?: 'utilization' | 'queueLength';
+  /** Queue node whose backlog is watched; the node's own waiting requests when absent. */
+  queue?: string | null;
+  /** Backlog one replica should absorb. */
+  targetQueueLength?: number;
 }
 
 export const DEFAULT_AUTOSCALE: Autoscale = {
@@ -54,6 +60,8 @@ export const DEFAULT_AUTOSCALE: Autoscale = {
   stabilizationMs: 60000,
   podStartMs: 10000,
 };
+
+export const DEFAULT_TARGET_QUEUE_LENGTH = 100;
 
 export interface CircuitBreaker {
   failureThreshold: number;

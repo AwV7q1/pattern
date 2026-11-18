@@ -1412,6 +1412,7 @@ export function App() {
                       outDegree={edges.filter((e) => e.source === selectedNode.id).length}
                       game={mode === 'game'}
                       maxInstances={level.maxInstances ?? 10}
+                      queues={nodes.filter((n) => n.data.kind === 'queue' && n.id !== selectedNode.id).map((n) => ({ id: n.id, label: n.data.label }))}
                       onChange={(config, label) => updateNode(selectedNode.id, config, label)}
                       onToggleDown={() => toggleDown(selectedNode)}
                       onDelete={() => onDelete({ nodes: [selectedNode], edges: [] })}

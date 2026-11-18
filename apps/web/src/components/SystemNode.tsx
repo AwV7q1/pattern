@@ -87,8 +87,15 @@ export const SystemNode = memo(function SystemNode({ data }: NodeProps<SystemNod
             )}
             {rejected > 0 && <span className="text-destructive">drop {fmt.rps(rejected)}/s</span>}
             {c.autoscale && (
-              <span className="ml-auto text-primary" title={`HPA ${c.autoscale.min}–${c.autoscale.max}, mục tiêu ${Math.round(c.autoscale.targetUtilization * 100)}%`}>
-                HPA {replicas}
+              <span
+                className="ml-auto text-primary"
+                title={
+                  c.autoscale.metric === 'queueLength'
+                    ? `KEDA ${c.autoscale.min}–${c.autoscale.max}, ${c.autoscale.targetQueueLength ?? 100} message mỗi replica`
+                    : `HPA ${c.autoscale.min}–${c.autoscale.max}, mục tiêu ${Math.round(c.autoscale.targetUtilization * 100)}%`
+                }
+              >
+                {c.autoscale.metric === 'queueLength' ? 'KEDA' : 'HPA'} {replicas}
                 {(m?.starting ?? 0) > 0 && `+${m!.starting}`}
               </span>
             )}

@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
+import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, DEFAULT_TARGET_QUEUE_LENGTH, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -168,6 +168,8 @@ interface NodeProps {
   /** Game mode: only the instance count is up to the player. */
   game: boolean;
   maxInstances: number;
+  /** Queue nodes of the design, for KEDA-style autoscaling. */
+  queues?: { id: string; label: string }[];
   onChange: (config: NodeConfig, label: string) => void;
   onToggleDown: () => void;
   onDelete: () => void;
@@ -228,7 +230,7 @@ function TechSection({ node, onTech }: { node: SystemNodeData; onTech: NonNullab
   );
 }
 
-export function NodeInspector({ node, outDegree, game, maxInstances, onChange, onToggleDown, onDelete, onTech }: NodeProps) {
+export function NodeInspector({ node, outDegree, game, maxInstances, queues = [], onChange, onToggleDown, onDelete, onTech }: NodeProps) {
   const [draft, setDraft] = useState(node.config);
   const [label, setLabel] = useState(node.label);
   useEffect(() => {
@@ -371,7 +373,7 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
           </div>
           <div className="grid gap-2 rounded-md border p-2.5">
             <div className="flex items-center justify-between">
-              <Label className="text-xs">Autoscale (Kubernetes HPA)</Label>
+              <Label className="text-xs">Autoscale (Kubernetes HPA / KEDA)</Label>
               <Switch
                 checked={!!draft.autoscale}
                 onCheckedChange={(on) =>
@@ -383,33 +385,11 @@ export function NodeInspector({ node, outDegree, game, maxInstances, onChange, o
               />
             </div>
             {draft.autoscale ? (
-              <>
-                <div className="grid grid-cols-3 gap-2">
-                  {(
-                    [
-                      ['min', 'Min replica', 1, Server],
-                      ['max', 'Max replica', 1, Server],
-                      ['targetUtilization', 'Mục tiêu (0-1)', 0.05, Target],
-                      ['evalEveryMs', 'Xét mỗi (ms)', 1000, CalendarClock],
-                      ['podStartMs', 'Pod khởi động (ms)', 1000, Rocket],
-                      ['stabilizationMs', 'Ổn định giảm (ms)', 5000, Timer],
-                    ] as [keyof Autoscale, string, number, LucideIcon][]
-                  ).map(([k, l, step, icon]) => (
-                    <NumberField
-                      key={k}
-                      label={l}
-                      icon={icon}
-                      step={step}
-                      value={draft.autoscale![k]}
-                      onChange={(v) => setDraft({ ...draft, autoscale: { ...draft.autoscale!, [k]: v } })}
-                    />
-                  ))}
-                </div>
-                <p className="text-[12px] leading-relaxed text-muted-foreground">
-                  Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉.
-                  Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.
-                </p>
-              </>
+              <AutoscaleFields
+                value={draft.autoscale}
+                queues={queues}
+                onChange={(autoscale) => setDraft({ ...draft, autoscale })}
+              />
             ) : (
               <p className="text-[12px] text-muted-foreground">Số instance cố định. Bật để thấy độ trễ của autoscale khi có spike.</p>
             )}
@@ -733,5 +713,94 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
         </Button>
       </div>
     </div>
+  );
+}
+
+const SELF_QUEUE = '__self';
+
+/** HPA on utilization, or KEDA on a queue backlog. */
+function AutoscaleFields({
+  value,
+  queues,
+  onChange,
+}: {
+  value: Autoscale;
+  queues: { id: string; label: string }[];
+  onChange: (a: Autoscale) => void;
+}) {
+  const onQueue = value.metric === 'queueLength';
+  const set = (patch: Partial<Autoscale>) => onChange({ ...value, ...patch });
+  const fields: [keyof Autoscale, string, number, LucideIcon][] = [
+    ['min', 'Min replica', 1, Server],
+    ['max', 'Max replica', 1, Server],
+    onQueue ? ['targetQueueLength', 'Backlog / replica', 10, ListOrdered] : ['targetUtilization', 'Mục tiêu (0-1)', 0.05, Target],
+    ['evalEveryMs', 'Xét mỗi (ms)', 1000, CalendarClock],
+    ['podStartMs', 'Pod khởi động (ms)', 1000, Rocket],
+    ['stabilizationMs', 'Ổn định giảm (ms)', 5000, Timer],
+  ];
+  return (
+    <>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        className="w-full"
+        value={onQueue ? 'queueLength' : 'utilization'}
+        onValueChange={(v) =>
+          v &&
+          set(
+            v === 'queueLength'
+              ? {
+                  metric: 'queueLength',
+                  queue: value.queue ?? queues[0]?.id ?? null,
+                  targetQueueLength: value.targetQueueLength ?? DEFAULT_TARGET_QUEUE_LENGTH,
+                }
+              : { metric: undefined, queue: undefined, targetQueueLength: undefined },
+          )
+        }
+      >
+        <ToggleGroupItem value="utilization" className="text-xs">
+          Theo tải (HPA)
+        </ToggleGroupItem>
+        <ToggleGroupItem value="queueLength" className="text-xs">
+          Theo queue (KEDA)
+        </ToggleGroupItem>
+      </ToggleGroup>
+      {onQueue && (
+        <div className="grid gap-1.5">
+          <Label className="text-xs text-muted-foreground">Queue theo dõi</Label>
+          <Select value={value.queue ?? SELF_QUEUE} onValueChange={(v) => set({ queue: v === SELF_QUEUE ? null : v })}>
+            <SelectTrigger size="sm" aria-label="Queue theo dõi">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {queues.map((q) => (
+                <SelectItem key={q.id} value={q.id}>
+                  {q.label}
+                </SelectItem>
+              ))}
+              <SelectItem value={SELF_QUEUE}>Hàng đợi của chính node này</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="grid grid-cols-3 gap-2">
+        {fields.map(([k, l, step, icon]) => (
+          <NumberField
+            key={k}
+            label={l}
+            icon={icon}
+            step={step}
+            value={Number(value[k] ?? (k === 'targetQueueLength' ? DEFAULT_TARGET_QUEUE_LENGTH : 0))}
+            onChange={(v) => set({ [k]: v })}
+          />
+        ))}
+      </div>
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
+        {onQueue
+          ? 'Instances ở trên là số replica lúc bắt đầu. Mỗi chu kỳ đọc backlog của queue lúc đó: replica = ⌈backlog / backlog mỗi replica⌉. Queue rỗng nghĩa là "không có việc", nên tải đều nhưng queue luôn rỗng sẽ bị thu nhỏ rồi lại dồn: tăng cửa sổ ổn định để bớt dao động.'
+          : 'Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉. Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.'}
+      </p>
+    </>
   );
 }

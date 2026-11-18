@@ -64,6 +64,14 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
 
    Bài học điển hình: HPA phản ứng chậm hơn spike (thời gian chờ lần xét kế tiếp cộng thời gian khởi động pod), nên vài chục giây đầu vẫn có lỗi. Khắc phục bằng cách giữ `min` cao hơn, đặt target thấp, hoặc đặt queue phía trước.
 
+   **Scale theo độ dài queue (giống KEDA):** đặt `"metric": "queueLength"`. Mỗi lần xét, engine đọc backlog *tại thời điểm đó* của node `queue` (hoặc hàng đợi của chính node nếu bỏ trống), rồi tính số instance = `ceil(backlog / targetQueueLength)`. Giới hạn `[min, max]`, ngưỡng ±10%, thời gian khởi động và cửa sổ ổn định hoạt động như trên. `evalEveryMs` đóng vai trò `pollingInterval`, `stabilizationMs` đóng vai trò `cooldownPeriod`.
+
+   ```json
+   "autoscale": { "min": 1, "max": 12, "metric": "queueLength", "queue": "rabbit", "targetQueueLength": 400, "evalEveryMs": 5000, "stabilizationMs": 30000, "podStartMs": 8000 }
+   ```
+
+   Bài học (`examples/11-keda-queue-workers.json`): queue rỗng được hiểu là "hết việc". Vì vậy dù tải vẫn đều, worker vẫn bị thu nhỏ sau cooldown, backlog dồn lại rồi worker lại scale lên, tức là dao động. Đặt `min` đủ cho tải nền, hoặc cooldown dài hơn chu kỳ dồn. Concurrency của node queue là số message đang được giao cho consumer (tổng prefetch), và con số này cố định. Hàng đợi của worker cần chứa được phần đó, nếu không message bị từ chối thay vì nằm lại trong queue.
+
 Mô phỏng này chạy nhanh hơn thời gian thực rất nhiều. Ví dụ native chạy 20k rps × 60s (1.2 triệu request) mất khoảng 1.3s.
 
 ## 3. Đầu ra: các con số được đo thế nào
@@ -91,7 +99,7 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- Cold start của từng request (JIT, cache nguội). Autoscaling đã có (mục 2.7), nhưng chỉ dựa trên utilization, chưa có scale theo độ dài queue (KEDA) hay theo custom metric. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Cold start của từng request (JIT, cache nguội). Autoscaling đã có (mục 2.7), theo utilization hoặc độ dài queue (KEDA), chưa có custom metric khác (RPS, latency) hay scale về 0. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
 - Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
 - Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.

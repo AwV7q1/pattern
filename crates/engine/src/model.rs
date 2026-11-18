@@ -122,12 +122,25 @@ pub struct NodeConfig {
     pub autoscale: Option<Autoscale>,
 }
 
+/// What the autoscaler scales on.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum ScaleMetric {
+    /// Kubernetes HPA on CPU / slots: `ceil(ready × utilization / target)`.
+    #[default]
+    Utilization,
+    /// KEDA-style on a backlog (RabbitMQ, Kafka lag, SQS):
+    /// `ceil(backlog / target_queue_length)` messages per replica.
+    QueueLength,
+}
+
 /// HPA-like autoscaler: every `eval_every_ms`, desired replicas =
-/// `ceil(current × utilization / target)` within `[min, max]`, ignoring
+/// `ceil(current × utilization / target)` (or `ceil(backlog / target per
+/// replica)` with `metric: queueLength`) within `[min, max]`, ignoring
 /// changes within ±10 %. Scale-up is immediate but new instances take
 /// `pod_start_ms` before receiving traffic; scale-down uses the highest
 /// recommendation of the last `stabilization_ms`.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Autoscale {
     pub min: u32,
@@ -137,6 +150,18 @@ pub struct Autoscale {
     pub eval_every_ms: f64,
     pub stabilization_ms: f64,
     pub pod_start_ms: f64,
+    #[serde(skip_serializing_if = "is_default_metric")]
+    pub metric: ScaleMetric,
+    /// `queueLength`: id of the queue node whose backlog is watched; the
+    /// node's own waiting requests when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue: Option<String>,
+    /// `queueLength`: backlog one replica is expected to absorb.
+    pub target_queue_length: f64,
+}
+
+fn is_default_metric(m: &ScaleMetric) -> bool {
+    *m == ScaleMetric::Utilization
 }
 
 impl Default for Autoscale {
@@ -148,6 +173,9 @@ impl Default for Autoscale {
             eval_every_ms: 15_000.0,
             stabilization_ms: 60_000.0,
             pod_start_ms: 10_000.0,
+            metric: ScaleMetric::Utilization,
+            queue: None,
+            target_queue_length: 100.0,
         }
     }
 }
