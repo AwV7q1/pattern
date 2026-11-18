@@ -37,6 +37,7 @@ import {
   type WindowMetrics,
 } from './types';
 import { CapacityPage } from './capacity/CapacityPage';
+import { CardBattle } from './cards/CardBattle';
 import {
   autoLayout,
   decorateEdges,
@@ -114,6 +115,9 @@ export function App() {
   const client = useMemo(() => new SimClient(), []);
   const { screenToFlowPosition } = useReactFlow();
   const [mode, setMode] = useState<Mode>('learn');
+  /** Game tab: classic levels on the canvas, or the card battle prototype. */
+  const [gameView, setGameView] = useState<'levels' | 'cards'>('levels');
+  const cardsOpen = mode === 'game' && gameView === 'cards';
   /** Practice level opened from a lesson of the learning path. */
   const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(null);
   const { complete } = useProgress();
@@ -223,14 +227,14 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (mode === 'capacity' || mode === 'learn') {
+    if (mode === 'capacity' || mode === 'learn' || cardsOpen) {
       client.pause();
       setRunning(false);
       return;
     }
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
-  }, [client, mode, presetKey, levelKey, load, reloadTick]);
+  }, [client, mode, cardsOpen, presetKey, levelKey, load, reloadTick]);
 
   const switchMode = (next: Mode) => {
     if (mode === 'sandbox') {
@@ -248,6 +252,7 @@ export function App() {
     if (!ALL_LEVELS[levelId]) return;
     setPractice({ lessonId, level: levelId });
     setLevelKey(levelId);
+    setGameView('levels');
     setMode('game');
   };
   const backToPath = () => {
@@ -839,7 +844,23 @@ export function App() {
             </TabsTrigger>
           </TabsList>
         </Tabs>
-        {mode === 'capacity' || mode === 'learn' ? null : mode === 'game' ? (
+        {mode === 'game' && !practice && (
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={gameView}
+            onValueChange={(v) => v && setGameView(v as 'levels' | 'cards')}
+          >
+            <ToggleGroupItem value="levels" className="px-3">
+              Level
+            </ToggleGroupItem>
+            <ToggleGroupItem value="cards" className="px-3">
+              Thẻ bài <span className="text-[10px] text-amber-300">beta</span>
+            </ToggleGroupItem>
+          </ToggleGroup>
+        )}
+        {mode === 'capacity' || mode === 'learn' || cardsOpen ? null : mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
@@ -892,7 +913,7 @@ export function App() {
 
         <div
           className={
-            mode === 'capacity' || mode === 'learn' || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
+            mode === 'capacity' || mode === 'learn' || cardsOpen || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
           }
         >
           {mode === 'game' && (
@@ -979,6 +1000,8 @@ export function App() {
 
       {mode === 'learn' ? (
         <LearnPage onBuild={openPractice} />
+      ) : cardsOpen ? (
+        <CardBattle />
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : mode === 'sandbox' && !project ? (

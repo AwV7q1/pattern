@@ -1,0 +1,65 @@
+[
+  {
+    "id": "swarm",
+    "name": "Botnet Bầy Kiến",
+    "description": "Vài nghìn thiết bị IoT bị chiếm quyền, spam API của bạn theo đợt. Botnet càng yếu thì càng ít traffic.",
+    "hp": 55,
+    "escalation": 0.35,
+    "intents": [
+      {
+        "id": "probe",
+        "label": "Thăm dò",
+        "icon": "probe",
+        "text": "Bot ~600 rps để dò điểm yếu.",
+        "botRps": 600
+      },
+      {
+        "id": "spike",
+        "label": "Spike",
+        "icon": "spike",
+        "text": "Bot ~2600 rps cùng lúc.",
+        "botRps": 2600
+      },
+      {
+        "id": "retry_flood",
+        "label": "Retry flood",
+        "icon": "retry",
+        "text": "Bot ~1400 rps, mọi client retry 3 lần ngay khi lỗi.",
+        "botRps": 1400,
+        "clientRetries": 3
+      },
+      {
+        "id": "heavy_query",
+        "label": "Truy vấn nặng",
+        "icon": "slow",
+        "text": "Bot ~900 rps gọi query đắt không cache được: DB chậm ×3, cache hit chỉ còn 30% so với bình thường.",
+        "botRps": 900,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        },
+        "cacheHitScale": 0.3
+      },
+      {
+        "id": "big_spike",
+        "label": "Spike lớn + nợ",
+        "icon": "debt",
+        "text": "Bot ~3600 rps. Sau lượt này nhét 2 Tech Debt vào bộ bài.",
+        "botRps": 3600,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 2
+        }
+      },
+      {
+        "id": "regroup",
+        "label": "Tập hợp lại",
+        "icon": "heal",
+        "text": "Bot ~400 rps, botnet hồi 10 máu.",
+        "botRps": 400,
+        "heal": 10
+      }
+    ]
+  }
+]
