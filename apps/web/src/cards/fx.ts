@@ -156,3 +156,114 @@ export function pulse(el: Element | null, scale = 1.12, ms = 380) {
 }
 
 export { wait };
+
+// ---------------------------------------------------------------- card → system
+
+function spark(layer: HTMLElement, color: string, size: number) {
+  const el = document.createElement('span');
+  Object.assign(el.style, {
+    position: 'absolute',
+    left: `${-size / 2}px`,
+    top: `${-size / 2}px`,
+    width: `${size}px`,
+    height: `${size}px`,
+    borderRadius: '9999px',
+    background: color,
+    boxShadow: `0 0 12px 3px ${color}`,
+    pointerEvents: 'none',
+    opacity: '0',
+    willChange: 'transform, opacity',
+  });
+  layer.appendChild(el);
+  return el;
+}
+
+/** A played card's energy streams from `from` into `to`. Resolves on arrival. */
+export async function infuse(layer: HTMLElement, from: Pt, to: Pt, color: string, n = 12) {
+  if (reduced()) return;
+  const flight = 560;
+  const bend = (to.x - from.x) * 0.15;
+  for (let i = 0; i < n; i++) {
+    const el = spark(layer, color, rand(4, 8));
+    const sx = from.x + rand(-40, 40);
+    const sy = from.y + rand(-50, 50);
+    const mx = (sx + to.x) / 2 + rand(-1, 1) * 50 - bend;
+    const my = Math.min(sy, to.y) - rand(40, 110);
+    const anim = el.animate(
+      [
+        { transform: `translate(${sx}px, ${sy}px) scale(0.4)`, opacity: 0 },
+        { transform: `translate(${sx}px, ${sy - 10}px) scale(1.2)`, opacity: 1, offset: 0.15 },
+        { transform: `translate(${mx}px, ${my}px) scale(1)`, opacity: 1, offset: 0.55 },
+        { transform: `translate(${to.x + rand(-8, 8)}px, ${to.y + rand(-6, 6)}px) scale(0.5)`, opacity: 0.9, offset: 0.95 },
+        { transform: `translate(${to.x}px, ${to.y}px) scale(0.2)`, opacity: 0 },
+      ],
+      { duration: flight * rand(0.9, 1.1), delay: i * 28, easing: 'cubic-bezier(0.45, 0, 0.4, 1)', fill: 'forwards' },
+    );
+    anim.onfinish = () => el.remove();
+  }
+  await wait(flight * 0.95 + (n - 1) * 28 * 0.6);
+}
+
+/** The target takes the effect in: a bounce and a colored glow. */
+export function absorb(el: Element | null, color: string, scale = 1.1) {
+  if (!el || reduced()) return;
+  el.animate(
+    [
+      { transform: 'scale(1)', boxShadow: `0 0 0 0 ${color}`, filter: 'brightness(1)' },
+      { transform: `scale(${scale})`, boxShadow: `0 0 26px 8px ${color}`, filter: 'brightness(1.35)', offset: 0.3 },
+      { transform: 'scale(1)', boxShadow: '0 0 0 0 transparent', filter: 'brightness(1)' },
+    ],
+    { duration: 620, easing: 'cubic-bezier(0.3, 0, 0.3, 1)' },
+  );
+}
+
+/** An expanding ring at `at`. */
+export function ring(layer: HTMLElement, at: Pt, color: string, size = 70) {
+  if (reduced()) return;
+  const el = document.createElement('span');
+  Object.assign(el.style, {
+    position: 'absolute',
+    left: `${at.x - size / 2}px`,
+    top: `${at.y - size / 2}px`,
+    width: `${size}px`,
+    height: `${size}px`,
+    borderRadius: '9999px',
+    border: `2px solid ${color}`,
+    pointerEvents: 'none',
+  });
+  layer.appendChild(el);
+  el.animate(
+    [
+      { transform: 'scale(0.3)', opacity: 1 },
+      { transform: 'scale(1.8)', opacity: 0 },
+    ],
+    { duration: 600, easing: 'ease-out', fill: 'forwards' },
+  ).onfinish = () => el.remove();
+}
+
+/** A label that floats up from `at` and fades ("+1 instance"). */
+export function floatText(layer: HTMLElement, at: Pt, text: string, color: string) {
+  const el = document.createElement('span');
+  el.textContent = text;
+  Object.assign(el.style, {
+    position: 'absolute',
+    left: `${at.x}px`,
+    top: `${at.y}px`,
+    transform: 'translate(-50%, -100%)',
+    whiteSpace: 'nowrap',
+    font: '700 13px ui-sans-serif, system-ui, sans-serif',
+    color,
+    textShadow: '0 2px 6px rgba(0,0,0,0.9)',
+    pointerEvents: 'none',
+  });
+  layer.appendChild(el);
+  el.animate(
+    [
+      { transform: 'translate(-50%, -60%) scale(0.8)', opacity: 0 },
+      { transform: 'translate(-50%, -110%) scale(1.05)', opacity: 1, offset: 0.2 },
+      { transform: 'translate(-50%, -150%) scale(1)', opacity: 1, offset: 0.7 },
+      { transform: 'translate(-50%, -190%) scale(1)', opacity: 0 },
+    ],
+    { duration: reduced() ? 1 : 1300, easing: 'ease-out', fill: 'forwards' },
+  ).onfinish = () => el.remove();
+}

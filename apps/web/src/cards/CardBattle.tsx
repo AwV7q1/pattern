@@ -36,7 +36,7 @@ import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattl
 import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand } from './Hand';
-import { anchor, bolts, glow, pulse, shake, wait, wave } from './fx';
+import { absorb, anchor, bolts, floatText, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
 const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData } as unknown as Content;
 
@@ -47,6 +47,15 @@ const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
   slow: Turtle,
   debt: Bug,
   heal: HeartPulse,
+};
+
+/** Spark color of each card type, matching the card frames. */
+const TYPE_FX: Record<CardDef['type'], string> = {
+  infra: '#38bdf8',
+  policy: '#a78bfa',
+  action: '#34d399',
+  attack: '#fb7185',
+  curse: '#a1a1aa',
 };
 
 const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
@@ -88,6 +97,8 @@ export function CardBattle() {
   const infraRef = useRef<HTMLDivElement>(null);
   const gateRef = useRef<HTMLDivElement>(null);
   const shieldRef = useRef<HTMLDivElement>(null);
+  const opsRef = useRef<HTMLDivElement>(null);
+  const deckRef = useRef<HTMLSpanElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
 
   // a game screen: the app's tab bar steps aside
@@ -116,17 +127,91 @@ export function CardBattle() {
     });
   }, []);
 
+  /** What a card touches in your system, and the label shown there. */
+  const targetsOf = (def: CardDef, next: BattleState) => {
+    const nodes = nodeEls.current;
+    const hits: { el: HTMLElement | null; label?: string }[] = [];
+    for (const e of def.effects) {
+      switch (e.op) {
+        case 'scale':
+          hits.push({ el: nodes[e.node], label: `+${e.n} instance${e.temp ? ' (lượt này)' : ''}` });
+          break;
+        case 'cache': {
+          const rate = nodeOf(next.design, 'cache')?.config?.hitRate ?? e.hitRate;
+          hits.push({ el: nodes.cache, label: `cache hit ${Math.round(rate * 100)}%` });
+          break;
+        }
+        case 'edge': {
+          const p = e.patch;
+          const label = p.timeoutMs ? `timeout ${p.timeoutMs}ms` : p.retries ? `retry ×${p.retries} + backoff` : p.circuitBreaker ? 'circuit breaker' : 'policy';
+          hits.push({ el: nodes.policy, label });
+          break;
+        }
+        case 'rateLimit':
+          hits.push({ el: shieldRef.current, label: `rate limit −${Math.round(e.cut * 100)}% bot` });
+          break;
+        case 'waf':
+          hits.push({ el: shieldRef.current, label: `WAF ${Math.round(next.waf * 100)}%` });
+          break;
+        case 'attack':
+          hits.push({ el: shieldRef.current ?? gateRef.current });
+          break;
+        case 'headroom':
+          hits.push({ el: infraRef.current, label: `+${e.n} headroom` });
+          break;
+        case 'hotfix':
+          hits.push({ el: nodes.api, label: 'hotfix' }, { el: nodes.db });
+          break;
+        case 'draw':
+          hits.push({ el: deckRef.current, label: `+${e.n} lá` });
+          break;
+        case 'ops':
+          hits.push({ el: opsRef.current, label: `+${e.n} Ops` });
+          break;
+      }
+    }
+    return hits.filter((h, i): h is { el: HTMLElement; label?: string } => !!h.el && hits.findIndex((k) => k.el === h.el) === i);
+  };
+
+  /** The played card's energy flies into the parts of the system it changes. */
+  const cardFx = async (def: CardDef, at: { x: number; y: number }, next: BattleState) => {
+    // wait for the new state to be laid out: a cache or shield may have just appeared
+    await wait(150);
+    const layer = fxRef.current;
+    if (!layer) return;
+    const l = layer.getBoundingClientRect();
+    const from = { x: at.x - l.left, y: at.y - l.top };
+    const color = TYPE_FX[def.type];
+    await Promise.all(
+      targetsOf(def, next).map(async (h, i) => {
+        await wait(i * 110);
+        const to = anchor(h.el, layer);
+        await infuse(layer, from, to, color);
+        absorb(h.el, color, h.el === infraRef.current ? 1.03 : 1.12);
+        ring(layer, to, color, h.el === infraRef.current ? 160 : 70);
+        if (h.label) floatText(layer, anchor(h.el, layer, 0.5, 0), h.label, color);
+      }),
+    );
+  };
+
   const play = (uid: number, at?: { x: number; y: number }) => {
     if (resolving || state.phase !== 'player') return;
     const inst = state.hand.find((c) => c.uid === uid);
     const next = playCard(CONTENT, state, uid);
     if (!inst || next === state) return;
+    const def = cardDef(CONTENT, inst.id);
     const arena = arenaRef.current?.getBoundingClientRect();
     const pos = at ?? (arena ? { x: arena.left + arena.width / 2, y: arena.bottom - 320 } : { x: 0, y: 0 });
-    setSplash({ key: Date.now(), def: cardDef(CONTENT, inst.id), x: pos.x, y: pos.y });
+    setSplash({ key: Date.now(), def, x: pos.x, y: pos.y });
     setState(next);
     const dmg = state.enemy.hp - next.enemy.hp;
-    if (dmg > 0) void counterFx(dmg).then(() => setFlash({ key: Date.now(), player: 0, enemy: dmg }));
+    // the system takes the card in first; an attack card then fires from it
+    void cardFx(def, pos, next).then(async () => {
+      if (dmg > 0) {
+        await counterFx(dmg);
+        setFlash({ key: Date.now(), player: 0, enemy: dmg });
+      }
+    });
   };
 
   /** The bot winds up and its requests (and your users') stream into the gateway. */
@@ -266,10 +351,7 @@ export function CardBattle() {
         {/* the two sides face each other across the arena */}
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1.5fr)_minmax(140px,0.55fr)_minmax(260px,0.75fr)] gap-6 overflow-y-auto px-6 pb-[200px] pt-2">
           <div className="flex min-w-0 flex-col justify-center gap-4">
-            <PlayerHeader state={state} flash={flash} />
-            <div ref={infraRef}>
-              <InfraLine state={state} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} />
-            </div>
+            <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
             {lastReport ? <ReportCard report={lastReport} /> : <FirstTurnHint />}
             {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
           </div>
@@ -314,9 +396,11 @@ export function CardBattle() {
 
         {/* bottom corners: resources and the end-turn button, either side of the hand */}
         <div className="absolute bottom-4 left-6 z-30 flex flex-col gap-1.5 text-xs text-muted-foreground">
-          <OpsPips ops={state.ops} max={CONTENT.battle.opsPerTurn} />
+          <div ref={opsRef} className="w-fit rounded-full">
+            <OpsPips ops={state.ops} max={CONTENT.battle.opsPerTurn} />
+          </div>
           <div className="flex gap-3">
-            <span>
+            <span ref={deckRef} className="inline-block rounded">
               <Layers className="mr-1 inline size-3.5" />
               Bộ rút {state.drawPile.length}
             </span>
@@ -406,27 +490,101 @@ function DamagePop({ flash, value, side }: { flash: { key: number } | null; valu
   );
 }
 
-function PlayerHeader({ state, flash }: { state: BattleState; flash: Flash | null }) {
+/**
+ * Your whole system as one object facing the bot: a framed unit with its
+ * Error Budget on top and the request path inside. Headroom wraps it in a
+ * blue barrier, the WAF / rate-limit shield stands in front of its gateway.
+ */
+function SystemPanel({
+  state,
+  flash,
+  panelRef,
+  gateRef,
+  shieldRef,
+  nodeEls,
+  hit,
+}: {
+  state: BattleState;
+  flash: Flash | null;
+  panelRef: React.RefObject<HTMLDivElement | null>;
+  gateRef: React.RefObject<HTMLDivElement | null>;
+  shieldRef: React.RefObject<HTMLDivElement | null>;
+  nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
+  hit: boolean;
+}) {
   const cost = costOf(state.design, state.temp);
   const budget = CONTENT.battle.budgetPerHour;
+  const ratio = state.hp / state.maxHp;
+  const status = ratio > 0.5 ? 'ok' : ratio > 0.25 ? 'warn' : 'crit';
+  const shields = [state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null, state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null].filter(
+    Boolean,
+  ) as string[];
   return (
-    <div className="relative max-w-md">
-      <DamagePop flash={flash} value={flash?.player ?? 0} side="player" />
-      <div className="mb-1.5 flex items-center gap-2 text-sm font-medium">
-        <Heart className="size-4 text-rose-400" /> Error Budget
-        <span className="font-mono">
-          {state.hp}/{state.maxHp}
-        </span>
-        {state.headroom > 0 && (
-          <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300">
-            <Shield className="size-3.5" /> {state.headroom}
-          </span>
+    <div className="flex items-stretch gap-3">
+      <div
+        ref={panelRef}
+        className={cn(
+          'relative min-w-0 flex-1 rounded-3xl border-2 bg-[linear-gradient(160deg,rgba(14,165,233,0.10),rgba(9,9,11,0.55)_55%)] p-4 shadow-2xl shadow-black/50 backdrop-blur transition-[border-color,box-shadow] duration-300',
+          status === 'ok' ? 'border-sky-500/35' : status === 'warn' ? 'border-amber-500/45' : 'animate-pulse border-rose-500/60',
+          state.headroom > 0 && 'shadow-[0_0_0_4px_rgba(56,189,248,0.25),0_0_36px_6px_rgba(56,189,248,0.3)]',
+          hit && 'border-sky-400/60',
         )}
-        <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
-          <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
-        </span>
+      >
+        {/* faint grid: a rack, not a card */}
+        <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:18px_18px]" />
+
+        <div className="relative">
+          <DamagePop flash={flash} value={flash?.player ?? 0} side="player" />
+          <div className="mb-1.5 flex items-center gap-2 text-sm font-medium">
+            <span className="flex gap-1">
+              {(['ok', 'warn', 'crit'] as const).map((s) => (
+                <span
+                  key={s}
+                  className={cn(
+                    'size-2 rounded-full',
+                    s !== status
+                      ? 'bg-muted-foreground/25'
+                      : s === 'ok'
+                        ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.9)]'
+                        : s === 'warn'
+                          ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.9)]'
+                          : 'animate-pulse bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.9)]',
+                  )}
+                />
+              ))}
+            </span>
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">Hệ thống của bạn</span>
+            {state.headroom > 0 && (
+              <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300">
+                <Shield className="size-3.5" /> {state.headroom}
+              </span>
+            )}
+            <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
+              <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
+            </span>
+          </div>
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-medium">
+            <Heart className="size-4 text-rose-400" /> Error Budget
+            <span className="font-mono">
+              {state.hp}/{state.maxHp}
+            </span>
+          </div>
+          <Bar value={state.hp} max={state.maxHp} className="bg-gradient-to-r from-rose-600 to-rose-400" />
+          <InfraLine state={state} gateRef={gateRef} nodeEls={nodeEls} />
+        </div>
       </div>
-      <Bar value={state.hp} max={state.maxHp} className="bg-gradient-to-r from-rose-600 to-rose-400" />
+
+      {/* the shield stands outside the system, between it and the bot */}
+      <div className="relative flex w-6 shrink-0 items-center justify-center">
+        {shields.length > 0 && (
+          <>
+            <div ref={shieldRef} className="h-3/4 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_16px_4px_rgba(52,211,153,0.45)]" />
+            <span className="absolute left-[calc(50%+7px)] top-1/2 -translate-y-1/2 rotate-180 whitespace-nowrap rounded [writing-mode:vertical-rl] bg-emerald-500/15 px-1 text-[10px] text-emerald-300">
+              {shields.join(' · ')}
+            </span>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -525,12 +683,10 @@ function Row({ label, value, good }: { label: string; value: string; good?: bool
 function InfraLine({
   state,
   gateRef,
-  shieldRef,
   nodeEls,
 }: {
   state: BattleState;
   gateRef: React.RefObject<HTMLDivElement | null>;
-  shieldRef: React.RefObject<HTMLDivElement | null>;
   nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
 }) {
   const d = state.design;
@@ -541,15 +697,12 @@ function InfraLine({
   const policies = [out.timeoutMs ? `timeout ${out.timeoutMs}ms` : null, out.retries ? `retry ×${out.retries}` : null, out.circuitBreaker ? 'breaker' : null].filter(
     Boolean,
   ) as string[];
-  const shields = [state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null, state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null].filter(
-    Boolean,
-  ) as string[];
   const set = (id: string) => (el: HTMLDivElement | null) => {
     nodeEls.current[id] = el;
   };
 
   return (
-    <div className="flex items-center gap-1 pt-6">
+    <div className="flex items-center gap-1 pt-8">
       <InfraNode nodeRef={set('db')} icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} connection`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
       {cache && (
         <>
@@ -557,18 +710,10 @@ function InfraLine({
           <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
         </>
       )}
-      <Pipe label={policies.join(' · ')} policy={policies.length > 0} />
+      <Pipe label={policies.join(' · ')} policy={policies.length > 0} pipeRef={set('policy')} />
       <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot/instance`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" />
       <Pipe />
       <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" />
-      <div className="relative ml-3 flex w-6 shrink-0 justify-center self-stretch">
-        {shields.length > 0 ? (
-          <>
-            <div ref={shieldRef} className="h-full min-h-20 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_16px_4px_rgba(52,211,153,0.45)]" />
-            <span className="absolute -top-6 whitespace-nowrap rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-300">{shields.join(' · ')}</span>
-          </>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -616,9 +761,9 @@ function InfraNode({
 }
 
 /** A connection; requests flow right to left, from the gateway inwards. */
-function Pipe({ label, policy }: { label?: string; policy?: boolean }) {
+function Pipe({ label, policy, pipeRef }: { label?: string; policy?: boolean; pipeRef?: (el: HTMLDivElement | null) => void }) {
   return (
-    <div className="relative flex min-w-6 flex-1 flex-col items-center">
+    <div ref={pipeRef} className="relative flex min-w-6 flex-1 flex-col items-center rounded-full">
       {label ? (
         <span className={cn('absolute -top-5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded px-1 text-[10px]', policy && 'bg-violet-500/15 text-violet-300')}>
           {label}
