@@ -144,22 +144,32 @@ export function TermLink({ term, children }: { term: Term; children: ReactNode }
   );
 }
 
-// ---------------------------------------------------------------- dialog
+// ---------------------------------------------------------------- list (dialog and page)
 
-function GlossaryDialog({ open, focus, onOpenChange }: { open: boolean; focus?: string; onOpenChange: (open: boolean) => void }) {
+/** Search box plus every term grouped by unit; scrolls to `focus` on mount. */
+function GlossaryList({
+  focus,
+  stickyClass,
+  scrollClass,
+  headTop = 'top-0',
+}: {
+  focus?: string;
+  stickyClass?: string;
+  scrollClass?: string;
+  /** Sticky offset of unit headings (below a sticky search box). */
+  headTop?: string;
+}) {
   const [query, setQuery] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    setQuery('');
     if (!focus) return;
-    // wait for the dialog content to mount
+    // wait for the content to mount
     const id = requestAnimationFrame(() =>
       listRef.current?.querySelector(`[data-term="${focus}"]`)?.scrollIntoView({ block: 'center' }),
     );
     return () => cancelAnimationFrame(id);
-  }, [open, focus]);
+  }, [focus]);
 
   const groups = useMemo(() => {
     const q = fold(query.trim());
@@ -172,6 +182,62 @@ function GlossaryDialog({ open, focus, onOpenChange }: { open: boolean; focus?: 
   const count = groups.reduce((n, g) => n + g.terms.length, 0);
 
   return (
+    <>
+      <div className={stickyClass}>
+        <div className="relative">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Tìm: p99, hang doi, cache…"
+            className="pl-8"
+            autoFocus={!focus}
+          />
+        </div>
+      </div>
+      <div ref={listRef} className={scrollClass}>
+        {count === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Không tìm thấy thuật ngữ nào.</p>}
+        {groups.map(({ unit, index, terms }) => (
+          <section key={unit.id} className="mb-5">
+            <h3 className={cn('sticky z-10 bg-background py-1.5 text-xs font-bold tracking-wide uppercase', headTop)} style={{ color: unit.color }}>
+              Phần {index + 1} · {unit.title}
+            </h3>
+            <dl className="grid gap-2">
+              {terms.map((t) => (
+                <div
+                  key={t.id}
+                  data-term={t.id}
+                  className={cn('rounded-lg border p-3', focus === t.id && 'border-sky-400 bg-sky-400/5 ring-2 ring-sky-400/30')}
+                >
+                  <dt className="flex flex-wrap items-baseline gap-x-2 font-semibold">
+                    {t.term}
+                    {t.aliases && t.aliases.length > 0 && (
+                      <span className="text-xs font-normal text-muted-foreground">còn gọi: {t.aliases.join(', ')}</span>
+                    )}
+                  </dt>
+                  <dd className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                    <Plain text={t.short} />
+                    {t.example && (
+                      <span className="mt-1 block text-xs">
+                        <span className="font-semibold text-foreground">Ví dụ: </span>
+                        <Plain text={t.example} />
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------- dialog
+
+function GlossaryDialog({ open, focus, onOpenChange }: { open: boolean; focus?: string; onOpenChange: (open: boolean) => void }) {
+  return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] flex-col gap-3 sm:max-w-2xl">
         <DialogHeader>
@@ -183,52 +249,31 @@ function GlossaryDialog({ open, focus, onOpenChange }: { open: boolean; focus?: 
             xem nghĩa.
           </DialogDescription>
         </DialogHeader>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm: p99, hang doi, cache…"
-            className="pl-8"
-            autoFocus={!focus}
-          />
-        </div>
-        <div ref={listRef} className="-mx-6 min-h-0 flex-1 overflow-y-auto px-6">
-          {count === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Không tìm thấy thuật ngữ nào.</p>}
-          {groups.map(({ unit, index, terms }) => (
-            <section key={unit.id} className="mb-5">
-              <h3 className="sticky top-0 z-10 bg-background py-1.5 text-xs font-bold tracking-wide uppercase" style={{ color: unit.color }}>
-                Phần {index + 1} · {unit.title}
-              </h3>
-              <dl className="grid gap-2">
-                {terms.map((t) => (
-                  <div
-                    key={t.id}
-                    data-term={t.id}
-                    className={cn('rounded-lg border p-3', focus === t.id && 'border-sky-400 bg-sky-400/5 ring-2 ring-sky-400/30')}
-                  >
-                    <dt className="flex flex-wrap items-baseline gap-x-2 font-semibold">
-                      {t.term}
-                      {t.aliases && t.aliases.length > 0 && (
-                        <span className="text-xs font-normal text-muted-foreground">còn gọi: {t.aliases.join(', ')}</span>
-                      )}
-                    </dt>
-                    <dd className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                      <Plain text={t.short} />
-                      {t.example && (
-                        <span className="mt-1 block text-xs">
-                          <span className="font-semibold text-foreground">Ví dụ: </span>
-                          <Plain text={t.example} />
-                        </span>
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
-          ))}
-        </div>
+        {/* remounts on every open, so the query resets and `focus` scrolls into view */}
+        {open && <GlossaryList focus={focus} scrollClass="-mx-6 min-h-0 flex-1 overflow-y-auto px-6" />}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------- page (bottom tab)
+
+/** Full-page glossary for the "Từ điển" tab. */
+export function GlossaryPage() {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-2xl px-6 pb-8">
+        <header className="pt-8 pb-3">
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            <BookA className="size-6 text-sky-400" /> Từ điển thuật ngữ
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {GLOSSARY.length} thuật ngữ, xếp theo phần học. Trong bài, từ có gạch chân chấm là thuật ngữ: di chuột hoặc chạm vào để xem
+            nghĩa.
+          </p>
+        </header>
+        <GlossaryList stickyClass="sticky top-0 z-20 -mx-6 h-13 bg-background px-6 py-2" headTop="top-13" />
+      </div>
+    </div>
   );
 }

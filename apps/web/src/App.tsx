@@ -14,10 +14,12 @@ import {
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
+import { ArrowLeft, BookA, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
 import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
 import { CaseLibrary } from './cases/CaseLibrary';
 import { LearnPage } from './learn/LearnPage';
+import { GlossaryPage } from './learn/Glossary';
+import { BottomTabBar, type TabItem } from './components/BottomTabBar';
 import { useProgress } from './learn/progress';
 import { LESSONS } from './learn/curriculum';
 import { SimClient } from './sim/client';
@@ -101,7 +103,18 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'learn' | 'sandbox' | 'game' | 'capacity';
+type Mode = 'learn' | 'sandbox' | 'game' | 'capacity' | 'glossary';
+
+/** Modes without a live simulation on the canvas. */
+const PAGE_MODES: Mode[] = ['learn', 'capacity', 'glossary'];
+
+const TABS: TabItem<Mode>[] = [
+  { value: 'learn', label: 'Học', icon: GraduationCap },
+  { value: 'game', label: 'Game', icon: Gamepad2 },
+  { value: 'sandbox', label: 'Sandbox', icon: Shapes },
+  { value: 'capacity', label: 'Công suất', icon: Gauge },
+  { value: 'glossary', label: 'Từ điển', icon: BookA },
+];
 type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
 const projectKey = (id: string) => `project:${id}`;
@@ -223,7 +236,7 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (mode === 'capacity' || mode === 'learn') {
+    if (PAGE_MODES.includes(mode)) {
       client.pause();
       setRunning(false);
       return;
@@ -259,6 +272,8 @@ export function App() {
   // ------------------------------------------------------------------ studio projects
 
   const [homeTab, setHomeTab] = useState('mine');
+  /** A lesson is open full screen: hide the tab bar. */
+  const [immersive, setImmersive] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
   const [notes, setNotes] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -823,23 +838,7 @@ export function App() {
           </span>
           Pattern
         </div>
-        <Tabs value={mode} onValueChange={(v) => switchMode(v as Mode)}>
-          <TabsList>
-            <TabsTrigger value="learn">
-              <GraduationCap /> Học
-            </TabsTrigger>
-            <TabsTrigger value="game">
-              <Gamepad2 /> Game
-            </TabsTrigger>
-            <TabsTrigger value="sandbox">
-              <Shapes /> Sandbox
-            </TabsTrigger>
-            <TabsTrigger value="capacity">
-              <Gauge /> Công suất
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {mode === 'capacity' || mode === 'learn' ? null : mode === 'game' ? (
+        {PAGE_MODES.includes(mode) ? null : mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
@@ -892,7 +891,7 @@ export function App() {
 
         <div
           className={
-            mode === 'capacity' || mode === 'learn' || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
+            PAGE_MODES.includes(mode) || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
           }
         >
           {mode === 'game' && (
@@ -978,7 +977,9 @@ export function App() {
       </header>
 
       {mode === 'learn' ? (
-        <LearnPage onBuild={openPractice} />
+        <LearnPage onBuild={openPractice} onImmersiveChange={setImmersive} />
+      ) : mode === 'glossary' ? (
+        <GlossaryPage />
       ) : mode === 'capacity' ? (
         <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
       ) : mode === 'sandbox' && !project ? (
@@ -1302,6 +1303,7 @@ export function App() {
         </SidePanel>
       </div>
       )}
+      {!(mode === 'learn' && immersive) && <BottomTabBar items={TABS} value={mode} onChange={switchMode} />}
       <TechDialogs />
       <PromptDialog
         open={promptOpen}

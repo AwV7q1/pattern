@@ -23,6 +23,8 @@ interface Props {
   /** Lesson to open right away (coming back from a practice). */
   openLesson?: string | null;
   onOpened?: () => void;
+  /** A lesson or review is open full screen (the host hides its navigation). */
+  onImmersiveChange?: (on: boolean) => void;
 }
 
 /**
@@ -39,7 +41,7 @@ export function LearnPage(props: Props) {
   );
 }
 
-function LearnPageInner({ onBuild, openLesson, onOpened }: Props) {
+function LearnPageInner({ onBuild, openLesson, onOpened, onImmersiveChange }: Props) {
   const { progress, complete, recordAnswer, addXp, setUnlockAll, reset } = useProgress();
   const [review, setReview] = useState<{ id: number; keys: string[] } | null>(null);
   const [active, setActive] = useState<string | null>(null);
@@ -55,6 +57,11 @@ function LearnPageInner({ onBuild, openLesson, onOpened }: Props) {
       onOpened?.();
     }
   }, [openLesson, onOpened]);
+  const immersive = review !== null || active !== null;
+  useEffect(() => {
+    onImmersiveChange?.(immersive);
+  }, [immersive, onImmersiveChange]);
+  useEffect(() => () => onImmersiveChange?.(false), [onImmersiveChange]);
   useEffect(() => {
     if (!active) currentRef.current?.scrollIntoView({ block: 'center' });
   }, [active]);
