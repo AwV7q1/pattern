@@ -53,16 +53,18 @@ export function Hand({
   cards: HandCard[];
   dropRef: RefObject<HTMLElement | null>;
   onPlay: (uid: number, at: { x: number; y: number }) => void;
-  onDragChange?: (state: 'idle' | 'dragging' | 'over') => void;
+  /** The drag state and, while dragging, the dragged card. */
+  onDragChange?: (state: 'idle' | 'dragging' | 'over', card: CardDef | null) => void;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const handRef = useRef<HTMLDivElement>(null);
   const n = cards.length;
 
+  const dragDef = drag?.active ? (cards.find((c) => c.uid === drag.uid)?.def ?? null) : null;
   useEffect(() => {
-    onDragChange?.(!drag?.active ? 'idle' : drag.over ? 'over' : 'dragging');
-  }, [drag?.active, drag?.over, onDragChange]);
+    onDragChange?.(!drag?.active ? 'idle' : drag.over ? 'over' : 'dragging', dragDef);
+  }, [drag?.active, drag?.over, dragDef, onDragChange]);
 
   // the hovered card can be played away (keyboard) or leave the hand
   useEffect(() => {

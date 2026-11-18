@@ -23,6 +23,7 @@ import {
   Repeat,
   RotateCcw,
   Server,
+  Swords,
   Shield,
   ShieldAlert,
   Skull,
@@ -120,6 +121,11 @@ export function CardBattle() {
   /** How many turn reports the player has looked at (the rest light the badge). */
   const [seenReports, setSeenReports] = useState(0);
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
+  const [dragDef, setDragDef] = useState<CardDef | null>(null);
+  const onDragChange = useCallback((s: 'idle' | 'dragging' | 'over', def: CardDef | null) => {
+    setDragState(s);
+    setDragDef(def);
+  }, []);
   const [splash, setSplash] = useState<{ key: number; def: CardDef; x: number; y: number } | null>(null);
   const busy = useRef(false);
   const [live, setLive] = useState<Live | null>(null);
@@ -447,6 +453,22 @@ export function CardBattle() {
   const unseen = showLog ? 0 : state.reports.length - seenReports;
 
   const intent = currentIntent(CONTENT, state);
+
+  // while a card is dragged, light up the side it acts on and dim the other
+  const sides = dragState === 'idle' || !dragDef ? { system: false, bot: false } : sidesOf(dragDef);
+  const anyTarget = sides.system || sides.bot;
+  const targetRing = (on: boolean, side: 'system' | 'bot') =>
+    !anyTarget
+      ? ''
+      : !on
+        ? 'opacity-40'
+        : side === 'bot'
+          ? dragState === 'over'
+            ? 'shadow-[0_0_0_2px_rgba(251,113,133,0.9),0_0_40px_rgba(251,113,133,0.35)]'
+            : 'shadow-[0_0_0_2px_rgba(251,113,133,0.45)]'
+          : dragState === 'over'
+            ? 'shadow-[0_0_0_2px_rgba(56,189,248,0.9),0_0_40px_rgba(56,189,248,0.35)]'
+            : 'shadow-[0_0_0_2px_rgba(56,189,248,0.45)]';
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
   const over = state.phase === 'won' || state.phase === 'lost';
   const hand = state.hand.map((inst) => ({
@@ -496,7 +518,8 @@ export function CardBattle() {
             (200 minus the 48px top bar) puts the row on the screen's vertical center. */}
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-[152px] [align-content:safe_center]">
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
-            <div className="flex w-full max-w-[460px] flex-col items-center gap-3">
+            <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 rounded-3xl transition-[opacity,box-shadow] duration-200', targetRing(sides.system, 'system'))}>
+              {sides.system && <TargetTag side="system" over={dragState === 'over'} />}
               <div className="w-full">
                 <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
               </div>
@@ -523,7 +546,8 @@ export function CardBattle() {
           </div>
 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
-            <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
+            <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 rounded-3xl transition-[opacity,box-shadow] duration-200', targetRing(sides.bot, 'bot'))}>
+              {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
               <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
                 <HpBar
                   icon={<Skull />}
@@ -545,21 +569,7 @@ export function CardBattle() {
           )}
         </div>
 
-        {hintOpen && state.reports.length === 0 && !live && <FirstTurnHint onClose={() => setHintOpen(false)} />}
-
-        {/* drop target while a card is dragged */}
-        {dragState !== 'idle' && (
-          <div
-            className={cn(
-              'pointer-events-none absolute inset-x-6 bottom-[150px] top-2 z-10 flex items-center justify-center rounded-3xl border-2 border-dashed transition-colors',
-              dragState === 'over' ? 'border-amber-300/70 bg-amber-300/5' : 'border-foreground/15',
-            )}
-          >
-            <span className={cn('rounded-full bg-background/80 px-3 py-1 text-sm', dragState === 'over' ? 'text-amber-200' : 'text-muted-foreground')}>
-              {dragState === 'over' ? 'Thả để đánh lá này' : 'Kéo lên vùng chơi'}
-            </span>
-          </div>
-        )}
+        {hintOpen && state.reports.length === 0 && !live && dragState === 'idle' && <FirstTurnHint onClose={() => setHintOpen(false)} />}
 
         <div ref={fxRef} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden" />
 
@@ -587,7 +597,7 @@ export function CardBattle() {
 
         <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
 
-        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={setDragState} />
+        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} />
         {hand.length === 0 && !over && (
           <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
         )}
@@ -607,6 +617,28 @@ function Legend({ color, label }: { color: string; label: string }) {
     <span className="flex items-center gap-1">
       <span className={cn('size-2 rounded-full', color)} />
       {label}
+    </span>
+  );
+}
+
+/** Which side a card acts on: attacks hit the bot, everything else changes your system. */
+function sidesOf(def: CardDef) {
+  if (def.unplayable) return { system: false, bot: false };
+  return { bot: def.effects.some((e) => e.op === 'attack'), system: def.effects.some((e) => e.op !== 'attack') };
+}
+
+/** The label over a side while a card that acts on it is dragged. */
+function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
+  const bot = side === 'bot';
+  return (
+    <span
+      className={cn(
+        'pointer-events-none absolute -top-9 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
+        bot ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
+      )}
+    >
+      {bot ? <Swords /> : <Server />}
+      {over ? (bot ? 'Thả để tấn công bot' : 'Thả để áp dụng lên hệ thống') : bot ? 'Tác dụng lên bot' : 'Tác dụng lên hệ thống'}
     </span>
   );
 }
