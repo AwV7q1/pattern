@@ -42,6 +42,7 @@ import enemiesData from './data/enemies.json';
 import battleData from './data/battle.json';
 import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn } from './rules';
 import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
+import { NetBackdrop } from './NetBackdrop';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
@@ -467,7 +468,8 @@ export function CardBattle() {
   }));
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-clip bg-[radial-gradient(ellipse_at_80%_45%,rgba(244,63,94,0.10),transparent_45%),radial-gradient(ellipse_at_22%_45%,rgba(56,189,248,0.09),transparent_50%)]">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-clip">
+      <NetBackdrop />
       {/* top bar */}
       <div className="relative z-30 flex items-center gap-3 px-4 py-2 text-sm">
         <Button size="sm" variant="ghost" asChild>
