@@ -30,7 +30,7 @@ export function BottomTabBar({
       aria-label="Điều hướng chính"
       className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center pb-[max(16px,env(safe-area-inset-bottom))]"
     >
-      <div className="pointer-events-auto flex rounded-full border border-white/10 bg-background/70 p-1.5 shadow-lg shadow-black/40 backdrop-blur-xl">
+      <div className="pointer-events-auto flex rounded-full bg-background/70 p-1.5 shadow-lg shadow-black/40 backdrop-blur-xl">
         {items.map(({ to, label, icon: Icon, match }) => {
           const active = (match ?? [to]).some((m) => isUnder(pathname, m));
           return (
