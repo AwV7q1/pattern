@@ -113,6 +113,8 @@ export function CardBattle() {
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [showRules, setShowRules] = useState(false);
+  /** The first-turn guide popover, closed with "Đã hiểu". */
+  const [hintOpen, setHintOpen] = useState(true);
   const [showLog, setShowLog] = useState(false);
   /** How many turn reports the player has looked at (the rest light the badge). */
   const [seenReports, setSeenReports] = useState(0);
@@ -147,6 +149,7 @@ export function CardBattle() {
     setError(null);
     setFlash(null);
     setSeenReports(0);
+    setHintOpen(true);
   };
 
   /** Green bolts from your gateway into the bot. */
@@ -487,35 +490,17 @@ export function CardBattle() {
 
       <div ref={arenaRef} className="relative min-h-0 flex-1">
         {/* the two sides face each other across the arena; equal side columns
-            keep the middle on the exact center. Row 1 holds both health bars on
-            one line, row 2 the system and the bot. */}
-        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto] gap-x-4 gap-y-3 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
-          <div className="col-start-1 row-start-1 flex min-w-0 justify-start">
-            <HpBar
-              hpRef={hpRef}
-              className="max-w-[400px]"
-              icon={<Heart />}
-              label="Error Budget"
-              hp={live?.hp ?? state.hp}
-              max={state.maxHp}
-              headroom={live?.headroom ?? state.headroom}
-              flash={flash}
-              pop={flash?.player ?? 0}
-              barClass="from-rose-600 to-rose-400"
-            />
+            keep the middle on the exact center. Row 1 holds the system and the
+            bot (bottom-aligned), row 2 both health bars on one line under them. */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto_auto] gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
+          <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start self-end">
+            <div className="w-full max-w-[400px]">
+              <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+            </div>
           </div>
-          <div className="col-start-3 row-start-1 flex min-w-0 justify-end">
-            <HpBar
-              className="max-w-[300px]"
-              icon={<Skull />}
-              label={enemy.name}
-              title={enemy.description}
-              hp={live?.enemyHp ?? state.enemy.hp}
-              max={state.enemy.maxHp}
-              flash={flash}
-              pop={flash?.enemy ?? 0}
-              barClass="from-rose-600 to-orange-500"
-            />
+
+          <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end self-end">
+            <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
           </div>
 
           <div className="col-start-2 row-span-2 row-start-1 flex min-w-0 flex-col items-center justify-center">
@@ -526,18 +511,44 @@ export function CardBattle() {
             )}
           </div>
 
-          <div className="col-start-1 row-start-2 flex min-w-0 flex-col items-start">
-            <div className="flex w-full max-w-[400px] flex-col gap-4">
-              <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
-              {state.reports.length === 0 && !live && <FirstTurnHint />}
-              {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
+          <div className="col-start-1 row-start-2 flex min-w-0 justify-start">
+            <div className="flex w-full max-w-[400px] justify-center">
+              <HpBar
+                hpRef={hpRef}
+                icon={<Heart />}
+                label="Error Budget"
+                hp={live?.hp ?? state.hp}
+                max={state.maxHp}
+                headroom={live?.headroom ?? state.headroom}
+                flash={flash}
+                pop={flash?.player ?? 0}
+                barClass="from-rose-600 to-rose-400"
+              />
+            </div>
+          </div>
+          <div className="col-start-3 row-start-2 flex min-w-0 justify-end">
+            <div className="flex w-full max-w-[300px] justify-center">
+              <HpBar
+                icon={<Skull />}
+                label={enemy.name}
+                title={enemy.description}
+                hp={live?.enemyHp ?? state.enemy.hp}
+                max={state.enemy.maxHp}
+                flash={flash}
+                pop={flash?.enemy ?? 0}
+                barClass="from-rose-600 to-orange-500"
+              />
             </div>
           </div>
 
-          <div className="col-start-3 row-start-2 flex min-w-0 flex-col items-end">
-            <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
-          </div>
+          {error && (
+            <div className="col-start-1 row-start-3 flex min-w-0 flex-col items-start">
+              <div className="w-full max-w-[400px] rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>
+            </div>
+          )}
         </div>
+
+        {hintOpen && state.reports.length === 0 && !live && <FirstTurnHint onClose={() => setHintOpen(false)} />}
 
         {/* drop target while a card is dragged */}
         {dragState !== 'idle' && (
@@ -633,17 +644,9 @@ function PlayedSplash({ def, x, y, onDone }: { def: CardDef; x: number; y: numbe
   );
 }
 
-function Bar({ value, max, className }: { value: number; max: number; className: string }) {
-  return (
-    <div className="h-2.5 overflow-hidden rounded-full bg-muted">
-      <div className={cn('h-full rounded-full transition-all duration-500', className)} style={{ width: `${(value / max) * 100}%` }} />
-    </div>
-  );
-}
-
 /**
- * A side's health on one line: icon, name, numbers and the bar. Both sides
- * use it, side by side above the arena, so the two bars always line up.
+ * A side's health, compact: the bar with its numbers in the middle and the
+ * name centered under it. Both sides use it on one row under the arena.
  */
 function HpBar({
   hpRef,
@@ -671,23 +674,25 @@ function HpBar({
   barClass: string;
 }) {
   return (
-    <div ref={hpRef} className={cn('relative w-full', className)}>
+    <div ref={hpRef} className={cn('relative w-full max-w-[220px]', className)}>
       <DamagePop flash={flash} value={pop} side={label} />
-      <div className="mb-1 flex items-center gap-1.5 text-sm font-medium [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-rose-400">
+      <div className={cn('relative h-4 overflow-hidden rounded-full bg-muted', headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')}>
+        <div className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', barClass)} style={{ width: `${Math.max(0, hp / max) * 100}%` }} />
+        <span className="absolute inset-0 flex items-center justify-center font-mono text-[11px] font-semibold tabular-nums text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
+          {hp}/{max}
+        </span>
+      </div>
+      <div className="mt-1 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-rose-400">
         {icon}
         <span className="truncate" title={title}>
           {label}
         </span>
         {headroom > 0 && (
-          <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300" title="Headroom: hấp thụ sát thương trước khi trừ máu">
-            <Shield className="size-3.5" /> {headroom}
+          <span className="flex items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-300" title="Headroom: hấp thụ sát thương trước khi trừ máu">
+            <Shield className="size-3" /> {headroom}
           </span>
         )}
-        <span className="ml-auto font-mono tabular-nums">
-          {hp}/{max}
-        </span>
       </div>
-      <Bar value={hp} max={max} className={cn('bg-gradient-to-r', barClass, headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')} />
     </div>
   );
 }
@@ -741,7 +746,7 @@ function DamagePop({ flash, value, side }: { flash: { key: number } | null; valu
   return (
     <span
       key={`${flash.key}-${side}`}
-      className="pointer-events-none absolute -top-2 right-2 animate-out fade-out slide-out-to-top-6 fill-mode-forwards text-3xl font-black text-rose-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] duration-[1400ms]"
+      className="pointer-events-none absolute -top-8 left-1/2 -translate-x-1/2 animate-out fade-out slide-out-to-top-6 fill-mode-forwards text-3xl font-black text-rose-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] duration-[1400ms]"
     >
       −{value}
     </span>
@@ -1111,12 +1116,24 @@ function Pipe({ policy, pipeRef }: { policy?: boolean; pipeRef?: (el: HTMLDivEle
 
 // ---------------------------------------------------------------- reports
 
-function FirstTurnHint() {
+/** A guide over the arena before the first turn; "Đã hiểu" closes it. */
+function FirstTurnHint({ onClose }: { onClose: () => void }) {
   return (
-    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-      <p className="mb-1 font-medium text-foreground">Lượt đầu tiên</p>
-      Đánh bài để chuẩn bị (mỗi lá tốn Ops), rồi bấm <b>Kết thúc lượt</b>. Engine sẽ chạy 10 giây traffic thật lên hệ thống: người dùng thật lỗi thì
-      bạn mất máu, bot bị lọc thì botnet mất máu. Nhìn <b>Ý định</b> bên phải để biết lượt này địch định làm gì.
+    <div className="pointer-events-none absolute inset-x-0 bottom-[160px] top-0 z-30 flex items-center justify-center p-4">
+      <div role="dialog" aria-label="Hướng dẫn lượt đầu tiên" className="pointer-events-auto w-full max-w-sm rounded-xl border bg-card/95 p-4 text-sm text-muted-foreground shadow-2xl shadow-black/60 backdrop-blur animate-in fade-in zoom-in-95">
+        <p className="mb-2 flex items-center gap-2 font-semibold text-foreground">
+          <Info className="size-4 text-sky-400" /> Lượt đầu tiên
+        </p>
+        <p>
+          Đánh bài để chuẩn bị (mỗi lá tốn Ops), rồi bấm <b>Kết thúc lượt</b>. Engine sẽ chạy 10 giây traffic thật lên hệ thống: người dùng thật lỗi thì bạn
+          mất máu, bot bị lọc thì botnet mất máu. Nhìn <b>Ý định</b> bên phải để biết lượt này địch định làm gì.
+        </p>
+        <div className="mt-3 flex justify-end">
+          <Button size="sm" onClick={onClose} autoFocus>
+            Đã hiểu
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }
