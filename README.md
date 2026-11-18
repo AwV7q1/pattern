@@ -155,4 +155,4 @@ Gọi nhiều nhánh, payload và băng thông:
 { "source": "client", "target": "checkout", "requestKb": 2, "responseKb": 60, "bandwidthMbps": 100 }
 ```
 
-Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`.
+Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`, hoặc `cache` để mô phỏng keyspace: TTL, warm-up, stampede), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`, `flush` (cache keyspace).

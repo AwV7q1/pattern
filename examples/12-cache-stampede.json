@@ -1,0 +1,112 @@
+{
+  "title": "Cache stampede: key cùng hết hạn",
+  "description": "API đọc qua Redis (cache-aside) trước PostgreSQL. Redis mô phỏng keyspace: 50.000 key với độ phổ biến Zipf, TTL 30 giây không jitter, bắt đầu đầy. Vì mọi key được nạp cùng lúc, ở giây 30 chúng cùng hết hạn: request đồng loạt miss rồi dồn xuống DB, DB quá tải và lỗi lan ngược lên. Các key nạp lại rải rác trong vài giây sau đó, nên đợt hết hạn ở giây 60 nhẹ hơn. Thử: đặt jitter TTL 0.3, bật \"Gộp miss cùng key\" (singleflight), tăng instance DB, hoặc tắt \"Bắt đầu với cache đầy\" để xem warm-up. Nút Flush trong Thuộc tính của Redis tạo stampede bất cứ lúc nào.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "tech": "nestjs",
+        "position": {
+          "x": 300,
+          "y": 200
+        },
+        "config": {
+          "instances": 3,
+          "concurrency": 300,
+          "queueSize": 200,
+          "latencyP50Ms": 2,
+          "latencyP99Ms": 8,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "redis",
+        "kind": "cache",
+        "label": "Redis",
+        "tech": "redis",
+        "position": {
+          "x": 620,
+          "y": 200
+        },
+        "config": {
+          "concurrency": 5000,
+          "queueSize": 1000,
+          "latencyP50Ms": 0.3,
+          "latencyP99Ms": 1.5,
+          "costPerHour": 0.15,
+          "cache": {
+            "keys": 50000,
+            "skew": 0.9,
+            "ttlMs": 30000,
+            "ttlJitter": 0,
+            "coalesce": false,
+            "warm": true
+          }
+        }
+      },
+      {
+        "id": "pg",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "tech": "postgresql",
+        "position": {
+          "x": 940,
+          "y": 200
+        },
+        "config": {
+          "concurrency": 15,
+          "queueSize": 300,
+          "latencyP50Ms": 8,
+          "latencyP99Ms": 30,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api",
+        "latencyMs": 10
+      },
+      {
+        "source": "api",
+        "target": "redis",
+        "latencyMs": 0.5,
+        "timeoutMs": 300
+      },
+      {
+        "source": "redis",
+        "target": "pg",
+        "latencyMs": 0.5,
+        "timeoutMs": 1000
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 12,
+    "durationMs": 75000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 3000
+      }
+    ],
+    "slo": {
+      "p99Ms": 150,
+      "errorRate": 0.01
+    },
+    "windowMs": 1000
+  }
+}

@@ -167,7 +167,13 @@ export function buildPrompt(project: Project, opts: PromptOptions): string {
       keys.push(`tổng connection từ app ≈ ${total} (max_connections phải lớn hơn)`);
     }
     if (n.kind === 'queue') keys.push(`consumer concurrency/prefetch tổng = ${n.cfg.concurrency}`, `độ sâu tối đa ${n.cfg.queueSize.toLocaleString('en')}`);
-    if (n.kind === 'cache') keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
+    if (n.kind === 'cache' && n.cfg.cache) {
+      const c = n.cfg.cache;
+      keys.push(
+        c.ttlMs ? `TTL ${ms(c.ttlMs)}${c.ttlJitter ? ` ± ${pct(c.ttlJitter)} (jitter, tránh hết hạn đồng loạt)` : ' (cân nhắc thêm jitter: key nạp cùng lúc sẽ hết hạn cùng lúc)'}` : 'không TTL (cần chiến lược invalidation)',
+        c.coalesce ? 'gộp miss cùng key (singleflight / lock khi nạp lại) để chống stampede' : 'chưa chống stampede khi key nóng hết hạn',
+      );
+    } else if (n.kind === 'cache') keys.push(`hit rate ${pct(n.cfg.hitRate)}`);
     if (t) keys.push(...t.deploy.keySettings.slice(0, 3));
     const hpa = n.cfg.autoscale;
     if (hpa?.metric === 'queueLength') {

@@ -497,6 +497,25 @@ const check = (name, ok, detail = '') => {
     `${kedaReplicas} replicas`,
   );
   await setSpeed('1×');
+
+  // 12f. keyspace cache: the measured hit rate is on the card, Flush empties it
+  await openTemplate('Cache stampede: key cùng hết hạn');
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  const redis = page.locator('.react-flow__node', { hasText: 'Redis' }).first();
+  const hitOf = async () => Number(((await redis.innerText()).match(/hit (\d+)%/) ?? [])[1] ?? -1);
+  await page.waitForTimeout(2500);
+  const warmHit = await hitOf();
+  await redis.click();
+  await page.getByRole('tab', { name: 'Thuộc tính' }).click();
+  const keyspaceOn = (await page.getByLabel('Mô phỏng keyspace').getAttribute('aria-checked')) === 'true';
+  await page.getByRole('button', { name: 'Flush' }).click();
+  let coldHit = warmHit;
+  for (let i = 0; i < 20 && coldHit >= warmHit - 10; i++) {
+    await page.waitForTimeout(300);
+    coldHit = await hitOf();
+  }
+  await page.getByRole('button', { name: 'Dừng' }).click();
+  check('keyspace cache: hit rate measured, Flush makes it cold', keyspaceOn && warmHit >= 90 && coldHit >= 0 && coldHit < warmHit - 10, `${warmHit}% -> ${coldHit}%`);
   await openTemplate('Không cache: DB là nút thắt');
 
   // 13. share link: snapshot on the server, opened as a separate local project

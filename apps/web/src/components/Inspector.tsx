@@ -17,6 +17,10 @@ import {
   Info,
   Layers,
   ListOrdered,
+  Eraser,
+  KeyRound,
+  Shuffle,
+  TrendingDown,
   Lock,
   Network,
   Percent,
@@ -37,7 +41,7 @@ import {
 } from 'lucide-react';
 import { KIND_META, fmt } from '@/lib/meta';
 import type { FlowEdgeData, SystemNodeData } from '@/model/flow';
-import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, DEFAULT_TARGET_QUEUE_LENGTH, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
+import { DEFAULT_AUTOSCALE, DEFAULT_BREAKER, DEFAULT_CACHE_MODEL, DEFAULT_TARGET_QUEUE_LENGTH, type CacheModel, type Autoscale, type Balance, type EdgePolicy, type ExecModel, type NodeConfig, type Routing } from '@/types';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -172,6 +176,8 @@ interface NodeProps {
   queues?: { id: string; label: string }[];
   onChange: (config: NodeConfig, label: string) => void;
   onToggleDown: () => void;
+  /** Keyspace caches: evict every key now (sandbox chaos). */
+  onFlush?: () => void;
   onDelete: () => void;
   /** Sandbox: switch the real-world technology (optionally taking its default numbers). */
   onTech?: (tech: string | undefined, applyDefaults: boolean) => void;
@@ -230,7 +236,7 @@ function TechSection({ node, onTech }: { node: SystemNodeData; onTech: NonNullab
   );
 }
 
-export function NodeInspector({ node, outDegree, game, maxInstances, queues = [], onChange, onToggleDown, onDelete, onTech }: NodeProps) {
+export function NodeInspector({ node, outDegree, game, maxInstances, queues = [], onChange, onToggleDown, onFlush, onDelete, onTech }: NodeProps) {
   const [draft, setDraft] = useState(node.config);
   const [label, setLabel] = useState(node.label);
   useEffect(() => {
@@ -252,7 +258,8 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
       onChange={(v) => setDraft({ ...draft, [f.key]: v })}
     />
   );
-  const fits = (f: Field) => !f.kinds || f.kinds.includes(node.kind) || f.kinds.includes(draft.model);
+  const fits = (f: Field) =>
+    (!f.kinds || f.kinds.includes(node.kind) || f.kinds.includes(draft.model)) && !(f.key === 'hitRate' && draft.cache);
   const editable = !node.locked;
   const canRoute = outDegree > 1 && node.kind !== 'client' && node.kind !== 'loadBalancer';
   const routing = canRoute && (
@@ -371,6 +378,9 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
             {(draft.model === 'cpu' ? CPU_FIELDS : THREAD_FIELDS).map(field)}
             {COMMON_FIELDS.filter(fits).map(field)}
           </div>
+          {node.kind === 'cache' && (
+            <CacheFields value={draft.cache ?? null} onChange={(cache) => setDraft({ ...draft, cache })} />
+          )}
           <div className="grid gap-2 rounded-md border p-2.5">
             <div className="flex items-center justify-between">
               <Label className="text-xs">Autoscale (Kubernetes HPA / KEDA)</Label>
@@ -437,6 +447,11 @@ export function NodeInspector({ node, outDegree, game, maxInstances, queues = []
               {node.down ? <Power /> : <PowerOff />}
               {node.down ? 'Khôi phục' : 'Chaos: tắt node'}
             </Button>
+            {onFlush && node.config.cache && !node.down && (
+              <Button size="sm" variant="outline" onClick={onFlush} title="FLUSHALL: xoá mọi key, cache nguội lại">
+                <Eraser /> Flush
+              </Button>
+            )}
             {editable && (
               <Button size="sm" variant="ghost" className="text-destructive" onClick={onDelete}>
                 <Trash2 />
@@ -802,5 +817,42 @@ function AutoscaleFields({
           : 'Instances ở trên là số replica lúc bắt đầu. HPA tính lại mỗi chu kỳ: replica = ⌈ready × tải / mục tiêu⌉. Pod mới chỉ nhận traffic sau thời gian khởi động; giảm replica chờ hết cửa sổ ổn định.'}
       </p>
     </>
+  );
+}
+
+/** Keyspace cache: hit rate emerges from popularity, TTL and warm-up. */
+function CacheFields({ value, onChange }: { value: CacheModel | null; onChange: (c: CacheModel | null) => void }) {
+  const set = (patch: Partial<CacheModel>) => onChange({ ...value!, ...patch });
+  return (
+    <div className="grid gap-2 rounded-md border p-2.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-xs">Mô phỏng keyspace (TTL, warm-up, stampede)</Label>
+        <Switch checked={!!value} onCheckedChange={(on) => onChange(on ? { ...DEFAULT_CACHE_MODEL } : null)} aria-label="Mô phỏng keyspace" />
+      </div>
+      {value ? (
+        <>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+            <NumberField label="Số key" icon={KeyRound} step={1000} value={value.keys} onChange={(keys) => set({ keys })} />
+            <NumberField label="Độ lệch Zipf (0 = đều)" icon={TrendingDown} step={0.1} value={value.skew} onChange={(skew) => set({ skew })} />
+            <NumberField label="TTL (ms, 0 = không hết hạn)" icon={Hourglass} step={5000} value={value.ttlMs} onChange={(ttlMs) => set({ ttlMs })} />
+            <NumberField label="Jitter TTL (0-1)" icon={Shuffle} step={0.1} value={value.ttlJitter} onChange={(ttlJitter) => set({ ttlJitter })} />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Gộp miss cùng key (singleflight)</Label>
+            <Switch checked={value.coalesce} onCheckedChange={(coalesce) => set({ coalesce })} aria-label="Gộp miss cùng key" />
+          </div>
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Bắt đầu với cache đầy</Label>
+            <Switch checked={value.warm} onCheckedChange={(warm) => set({ warm })} aria-label="Bắt đầu với cache đầy" />
+          </div>
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            Mỗi request đọc một key (key nóng được đọc nhiều hơn). Miss thì gọi xuống dưới rồi ghi lại key; key hết hạn sau TTL. Hit rate vì vậy tự
+            hình thành: thấp khi cache nguội, sụt khi key cùng hết hạn (thêm jitter để rải ra), và nút Flush cho thấy stampede vào DB.
+          </p>
+        </>
+      ) : (
+        <p className="text-[12px] text-muted-foreground">Hit rate cố định. Bật để mô phỏng cache nguội, TTL và thundering herd.</p>
+      )}
+    </div>
   );
 }

@@ -35,7 +35,26 @@ export interface NodeConfig {
   costPerHour: number;
   /** Kubernetes HPA-like autoscaling; `instances` is the start count. */
   autoscale?: Autoscale | null;
+  /** Cache nodes: simulate the keyspace (hit rate emerges) instead of `hitRate`. */
+  cache?: CacheModel | null;
 }
+
+export interface CacheModel {
+  /** Distinct keys requested. */
+  keys: number;
+  /** Zipf exponent of key popularity: 0 = uniform, ~1 = typical. */
+  skew: number;
+  /** 0 = never expires. */
+  ttlMs: number;
+  /** ±fraction applied to each TTL (0..1). */
+  ttlJitter: number;
+  /** Singleflight: concurrent misses on one key share one fetch. */
+  coalesce: boolean;
+  /** Start full instead of cold. */
+  warm: boolean;
+}
+
+export const DEFAULT_CACHE_MODEL: CacheModel = { keys: 10000, skew: 1, ttlMs: 0, ttlJitter: 0, coalesce: false, warm: true };
 
 export interface Autoscale {
   min: number;
@@ -126,7 +145,7 @@ export interface DesignEdge extends Partial<EdgePolicy> {
 export interface ChaosEvent {
   atMs: number;
   node: string;
-  action: 'down' | 'up' | 'latency' | 'errors';
+  action: 'down' | 'up' | 'latency' | 'errors' | 'flush';
   value?: number;
 }
 
@@ -178,6 +197,8 @@ export interface NodeWindow {
   instances: number;
   /** Autoscaled instances still starting. */
   starting: number;
+  /** Keyspace caches only. */
+  cache?: { hits: number; misses: number; coalesced: number; filled: number };
 }
 
 export interface EdgeWindow {

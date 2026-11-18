@@ -11,7 +11,7 @@
 | Node | `queueSize` | Số request được chờ khi hết slot. Vượt quá thì **bị từ chối** |
 | Node | `latencyP50Ms`, `latencyP99Ms` | Thời gian xử lý *cục bộ*, phân phối **lognormal** suy ra từ 2 điểm này: `μ = ln p50`, `σ = (ln p99 − ln p50) / 2.326` |
 | Node | `errorRate` | Xác suất một request xử lý xong vẫn lỗi |
-| Cache | `hitRate` | Xác suất trả lời ngay mà không gọi xuống dưới (cố định, không mô phỏng warm-up hay eviction) |
+| Cache | `hitRate` hoặc `cache` | `hitRate`: xác suất trả lời ngay, cố định. `cache`: mô phỏng keyspace (mục 2.8), hit rate tự hình thành |
 | Node | `costPerHour` | Chỉ để tính tiền: `Σ instances × costPerHour` |
 | Edge | `latencyMs` | Network một chiều (cố định) |
 | Edge | `timeoutMs`, `retries`, `backoffMs`, `jitter`, `circuitBreaker` | Chính sách phía caller |
@@ -72,6 +72,24 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
 
    Bài học (`examples/11-keda-queue-workers.json`): queue rỗng được hiểu là "hết việc". Vì vậy dù tải vẫn đều, worker vẫn bị thu nhỏ sau cooldown, backlog dồn lại rồi worker lại scale lên, tức là dao động. Đặt `min` đủ cho tải nền, hoặc cooldown dài hơn chu kỳ dồn. Concurrency của node queue là số message đang được giao cho consumer (tổng prefetch), và con số này cố định. Hàng đợi của worker cần chứa được phần đó, nếu không message bị từ chối thay vì nằm lại trong queue.
 
+8. **Cache theo keyspace** (`config.cache` trên node cache, thay cho `hitRate`):
+
+   ```json
+   "cache": { "keys": 50000, "skew": 0.9, "ttlMs": 30000, "ttlJitter": 0.3, "coalesce": true, "warm": true }
+   ```
+
+   - Mỗi request đọc một key, rút theo phân phối Zipf với số mũ `skew` (0 = đều, khoảng 1 = traffic web điển hình). Key còn hạn thì là hit. Key chưa có hoặc đã hết hạn thì là miss: request gọi xuống dưới, và nếu thành công thì ghi key lại với hạn `ttlMs × (1 ± ttlJitter)`.
+   - `coalesce` (singleflight): miss trên một key đang được nạp thì chờ lần nạp đó (vẫn giữ slot), không gọi xuống DB nữa.
+   - `warm`: bắt đầu với mọi key đã nạp ở t = 0. Không có jitter thì chúng cùng hết hạn ở `ttlMs`.
+   - Chaos `flush` (hoặc nút Flush trong Thuộc tính) xoá mọi key. `up` sau `down` cũng làm cache rỗng (restart không persistence).
+   - `NodeWindow.cache` = `{ hits, misses, coalesced, filled }`. Card node hiện hit rate đo được.
+
+   Bài học (test trong `sim.rs`, mẫu `examples/12-cache-stampede.json`):
+   - Cache nguội ấm lên theo độ phổ biến: key nóng đầy trong giây đầu, đuôi dài mất hàng chục giây.
+   - Key nạp cùng lúc sẽ hết hạn cùng lúc, và DB nhận cả đợt miss. Jitter TTL rải đợt đó ra.
+   - Flush khi query đắt mà key nóng: không có singleflight thì mọi request trong lúc nạp đều xuống DB (thundering herd). Có singleflight thì mỗi key chỉ một lần nạp.
+   - Singleflight **không** cứu được cache nguội có đuôi dài: các miss rơi vào những key khác nhau, nên cần warm-up có kiểm soát hoặc DB đủ sức.
+
 Mô phỏng này chạy nhanh hơn thời gian thực rất nhiều. Ví dụ native chạy 20k rps × 60s (1.2 triệu request) mất khoảng 1.3s.
 
 ## 3. Đầu ra: các con số được đo thế nào
@@ -99,9 +117,9 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- Cold start của từng request (JIT, cache nguội). Autoscaling đã có (mục 2.7), theo utilization hoặc độ dài queue (KEDA), chưa có custom metric khác (RPS, latency) hay scale về 0. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Cold start của từng request (JIT). Cache nguội đã có (mục 2.8). Autoscaling đã có (mục 2.7), theo utilization hoặc độ dài queue (KEDA), chưa có custom metric khác (RPS, latency) hay scale về 0. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
 - Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
-- Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
+- Cache keyspace không có giới hạn bộ nhớ hay eviction LRU/LFU: key chỉ mất khi hết TTL, flush hoặc restart. Ghi (write-through, invalidation khi update) chưa được mô phỏng.
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
 
 ## 6. Hiệu chỉnh bằng số liệu thật

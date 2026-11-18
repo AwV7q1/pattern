@@ -11,6 +11,7 @@ export type ToWorker =
   | { type: 'rps'; value: number }
   | { type: 'multiplier'; value: number }
   | { type: 'nodeDown'; index: number; down: boolean }
+  | { type: 'flushCache'; index: number }
   /** Follow the next `count` user requests hop by hop. */
   | { type: 'trace'; count: number }
   /** Headless scoring, exactly what the server does on submit. */

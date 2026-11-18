@@ -34,7 +34,7 @@ use serde::Serialize;
 
 use crate::histogram::Histogram;
 use crate::model::{
-    Arrival, Autoscale, Balance, ChaosAction, ScaleMetric, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
+    Arrival, Autoscale, Balance, CacheModel, ChaosAction, ScaleMetric, CircuitBreaker, ExecModel, NodeKind, Routing, SimInput,
     Slo,
 };
 use crate::rng::Rng;
@@ -196,6 +196,72 @@ struct HpaRt {
     history: VecDeque<(Time, usize)>,
 }
 
+const NO_KEY: u32 = u32::MAX;
+
+/// Keyspace of a cache node (`config.cache`).
+struct CacheRt {
+    cfg: CacheModel,
+    /// Cumulative Zipf popularity (empty for a uniform keyspace).
+    cdf: Vec<f64>,
+    /// Expiry of each key; 0 = not cached, `Time::MAX` = no TTL.
+    expires: Vec<Time>,
+    /// Coalescing: key → calls waiting for its in-flight fetch.
+    inflight: HashMap<u32, Vec<(u32, u32)>>,
+    hits: u64,
+    misses: u64,
+    coalesced: u64,
+}
+
+impl CacheRt {
+    fn new(cfg: CacheModel) -> Self {
+        let k = cfg.keys.clamp(1, 1_000_000) as usize;
+        let skew = cfg.skew.max(0.0);
+        let cdf = if skew > 0.0 {
+            let mut acc = 0.0;
+            let mut cdf: Vec<f64> = (0..k)
+                .map(|i| {
+                    acc += 1.0 / libm::pow(i as f64 + 1.0, skew);
+                    acc
+                })
+                .collect();
+            for c in &mut cdf {
+                *c /= acc;
+            }
+            cdf
+        } else {
+            Vec::new()
+        };
+        Self {
+            cfg,
+            cdf,
+            expires: vec![0; k],
+            inflight: HashMap::new(),
+            hits: 0,
+            misses: 0,
+            coalesced: 0,
+        }
+    }
+
+    fn key(&self, u: f64) -> u32 {
+        let k = self.expires.len();
+        let i = if self.cdf.is_empty() {
+            (u * k as f64) as usize
+        } else {
+            self.cdf.partition_point(|&c| c < u)
+        };
+        i.min(k - 1) as u32
+    }
+
+    /// Expiry of a key filled now; `u` spreads it by ±`ttl_jitter`.
+    fn expiry(&self, now: Time, u: f64) -> Time {
+        if self.cfg.ttl_ms <= 0.0 {
+            return Time::MAX;
+        }
+        let spread = 1.0 + self.cfg.ttl_jitter.clamp(0.0, 1.0) * (2.0 * u - 1.0);
+        now + ms_to_us(self.cfg.ttl_ms * spread).max(1)
+    }
+}
+
 struct NodeRt {
     kind: NodeKind,
     model: ExecModel,
@@ -210,6 +276,7 @@ struct NodeRt {
     /// scale-down are dropped from the back, so their events become no-ops.
     pending: VecDeque<Time>,
     hpa: Option<HpaRt>,
+    cache: Option<CacheRt>,
     cost: f64,
     /// Instance-time (active × µs), for the cost of autoscaled nodes.
     inst_area: f64,
@@ -436,6 +503,8 @@ struct Call {
     span: u64,
     /// When the call started waiting for a pooled connection.
     pool_since: Time,
+    /// Cache miss being fetched for this key (`NO_KEY` otherwise).
+    key: u32,
 }
 
 #[derive(Default)]
@@ -485,6 +554,19 @@ pub struct NodeWindow {
     pub instances: u32,
     /// Autoscaled instances still starting (not ready yet).
     pub starting: u32,
+    /// Keyspace caches: hits, misses and misses that joined an in-flight fetch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheWindow>,
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheWindow {
+    pub hits: u64,
+    pub misses: u64,
+    pub coalesced: u64,
+    /// Keys cached at the end of the window.
+    pub filled: u32,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -738,6 +820,17 @@ impl Simulation {
                         busy: 0.0,
                         cap: 0.0,
                         history: VecDeque::new(),
+                    }),
+                    cache: c.cache.filter(|_| n.kind == NodeKind::Cache).map(|cfg| {
+                        let mut rt = CacheRt::new(cfg);
+                        if cfg.warm {
+                            // filled before the run; with a TTL and no jitter they all expire together
+                            for i in 0..rt.expires.len() {
+                                let u = ((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 11) as f64 / (1u64 << 53) as f64;
+                                rt.expires[i] = rt.expiry(0, u);
+                            }
+                        }
+                        rt
                     }),
                     cost: c.cost_per_hour,
                     inst_area: 0.0,
@@ -1012,6 +1105,15 @@ impl Simulation {
             for call in drained {
                 self.settle(call, false);
             }
+        }
+        Ok(())
+    }
+
+    /// Evict every key of a keyspace cache (FLUSHALL); no-op for other nodes.
+    pub fn flush_cache(&mut self, node: usize) -> Result<(), String> {
+        let n = self.nodes.get_mut(node).ok_or("node index out of range")?;
+        if let Some(c) = n.cache.as_mut() {
+            c.expires.fill(0);
         }
         Ok(())
     }
@@ -1319,6 +1421,7 @@ impl Simulation {
                     trace: 0,
                     span: 0,
                     pool_since: 0,
+                    key: NO_KEY,
                 });
                 (self.calls.len() - 1) as u32
             }
@@ -1345,6 +1448,7 @@ impl Simulation {
         c.trace = 0;
         c.span = token;
         c.pool_since = 0;
+        c.key = NO_KEY;
         id
     }
 
@@ -1474,6 +1578,15 @@ impl Simulation {
                 let n = &mut self.nodes[node as usize];
                 n.latency_factor = 1.0;
                 n.error_rate = n.base_error_rate;
+                // a restarted cache comes back empty
+                if let Some(c) = n.cache.as_mut() {
+                    c.expires.fill(0);
+                }
+            }
+            ChaosAction::Flush => {
+                if let Some(c) = self.nodes[node as usize].cache.as_mut() {
+                    c.expires.fill(0);
+                }
             }
             ChaosAction::Latency => self.nodes[node as usize].latency_factor = value.max(0.01),
             ChaosAction::Errors => self.nodes[node as usize].error_rate = value.clamp(0.0, 1.0),
@@ -1785,11 +1898,58 @@ impl Simulation {
             self.finish(call, false);
             return;
         }
+        if self.nodes[node as usize].cache.is_some() {
+            self.cache_lookup(call);
+            return;
+        }
         if kind == NodeKind::Cache && self.rng.f64() < hit_rate {
             self.finish(call, true);
             return;
         }
         self.proceed(call);
+    }
+
+    /// Keyspace cache: hit, join an in-flight fetch, or fetch downstream.
+    fn cache_lookup(&mut self, call: u32) {
+        let node = self.calls[call as usize].node as usize;
+        let u = self.rng.f64();
+        let now = self.now;
+        let gen = self.calls[call as usize].gen;
+        let c = self.nodes[node].cache.as_mut().expect("cache node");
+        let key = c.key(u);
+        if c.expires[key as usize] > now {
+            c.hits += 1;
+            self.finish(call, true);
+            return;
+        }
+        c.misses += 1;
+        if c.cfg.coalesce {
+            if let Some(waiters) = c.inflight.get_mut(&key) {
+                // keeps its slot until the leader's fetch answers
+                waiters.push((call, gen));
+                c.coalesced += 1;
+                return;
+            }
+            c.inflight.insert(key, Vec::new());
+        }
+        self.calls[call as usize].key = key;
+        self.proceed(call);
+    }
+
+    /// A miss fetch of `key` ended: fill the key and answer coalesced waiters.
+    fn cache_filled(&mut self, node: usize, key: u32, ok: bool) {
+        let u = if ok { self.rng.f64() } else { 0.0 };
+        let now = self.now;
+        let Some(c) = self.nodes[node].cache.as_mut() else { return };
+        if ok {
+            c.expires[key as usize] = c.expiry(now, u);
+        }
+        let waiters = if c.cfg.coalesce { c.inflight.remove(&key).unwrap_or_default() } else { Vec::new() };
+        for (w, gen) in waiters {
+            if self.live(w, gen) {
+                self.finish(w, ok);
+            }
+        }
     }
 
     /// Ask the circuit breaker of `edge` whether a call may go through.
@@ -2076,6 +2236,7 @@ impl Simulation {
             self.calls[call as usize].node,
             self.calls[call as usize].inst as usize,
         );
+        let key = std::mem::replace(&mut self.calls[call as usize].key, NO_KEY);
         let n = &mut self.nodes[node as usize];
         if let Some(next) = n.insts[inst].queue.pop_front() {
             // slot handed directly to the next waiting call
@@ -2086,6 +2247,9 @@ impl Simulation {
             n.insts[inst].busy -= 1;
         }
         self.settle(call, ok);
+        if key != NO_KEY {
+            self.cache_filled(node as usize, key, ok);
+        }
     }
 
     /// Schedule the response of `call` back to its parent call, if any.
@@ -2198,6 +2362,18 @@ impl Simulation {
                         down: n.down,
                         instances: n.ready as u32,
                         starting: n.active.saturating_sub(n.ready) as u32,
+                        cache: n.cache.as_mut().map(|c| {
+                            let w = CacheWindow {
+                                hits: c.hits,
+                                misses: c.misses,
+                                coalesced: c.coalesced,
+                                filled: c.expires.iter().filter(|&&e| e > end).count() as u32,
+                            };
+                            c.hits = 0;
+                            c.misses = 0;
+                            c.coalesced = 0;
+                            w
+                        }),
                     };
                     n.busy_area = 0.0;
                     n.cpu_area = 0.0;
@@ -2568,6 +2744,138 @@ mod tests {
         };
         let err = Simulation::new(&queue_workers(Some(keda)), false).err().unwrap();
         assert!(err.contains("autoscale.queue 'nope'"), "{err}");
+    }
+
+    /// Users → cache (keyspace) → DB of ~2000 rps (20 slots × 10 ms).
+    fn keyspace(rps: f64, cache: CacheModel) -> SimInput {
+        SimInput {
+            design: Design {
+                nodes: vec![
+                    node("c", NodeKind::Client, NodeConfig::default()),
+                    node(
+                        "cache",
+                        NodeKind::Cache,
+                        NodeConfig {
+                            concurrency: 20_000,
+                            queue_size: 0,
+                            latency_p50_ms: 0.5,
+                            latency_p99_ms: 0.5,
+                            cache: Some(cache),
+                            ..NodeConfig::default()
+                        },
+                    ),
+                    node(
+                        "db",
+                        NodeKind::Database,
+                        NodeConfig {
+                            concurrency: 20,
+                            queue_size: 200,
+                            latency_p50_ms: 10.0,
+                            latency_p99_ms: 10.0,
+                            ..NodeConfig::default()
+                        },
+                    ),
+                ],
+                edges: vec![edge("c", "cache"), edge("cache", "db")],
+            },
+            scenario: scenario(rps, 40_000.0),
+        }
+    }
+
+    fn hit_ratio(w: &WindowMetrics) -> f64 {
+        let c = w.nodes[1].cache.unwrap();
+        c.hits as f64 / (c.hits + c.misses).max(1) as f64
+    }
+
+    #[test]
+    fn cold_cache_warms_up_hot_keys_first() {
+        let cold = CacheModel { keys: 20_000, skew: 1.0, warm: false, ..CacheModel::default() };
+        let (ws, _) = instance_series(&keyspace(1500.0, cold));
+        // Zipf: the few hot keys are filled within the first second
+        assert!(hit_ratio(&ws[0]) > 0.2 && hit_ratio(&ws[0]) < 0.8, "first second {}", hit_ratio(&ws[0]));
+        assert!(hit_ratio(&ws[10]) > hit_ratio(&ws[1]), "keeps warming");
+        assert!(hit_ratio(&ws[39]) > 0.85, "warm after 40 s: {}", hit_ratio(&ws[39]));
+        let filled = |s: usize| ws[s].nodes[1].cache.unwrap().filled;
+        assert!(filled(39) > filled(5) && filled(39) <= 20_000);
+        // DB load follows the misses
+        assert!(ws[0].nodes[2].arrivals > ws[39].nodes[2].arrivals * 3.0);
+    }
+
+    fn flush_at_10s(cache: CacheModel) -> (Vec<WindowMetrics>, Summary) {
+        let mut input = keyspace(5000.0, cache);
+        input.scenario.duration_ms = Some(20_000.0);
+        input.scenario.events = vec![ChaosEvent { at_ms: 10_000.0, node: "cache".into(), action: ChaosAction::Flush, value: 0.0 }];
+        instance_series(&input)
+    }
+
+    #[test]
+    fn flush_of_hot_keys_stampedes_the_db_unless_misses_are_coalesced() {
+        // an expensive query (200 ms, so the DB serves only 100 rps) behind 100 hot keys
+        let hot = |coalesce: bool| {
+            let mut input = keyspace(5000.0, CacheModel { keys: 100, skew: 0.0, coalesce, ..CacheModel::default() });
+            input.design.nodes[2].config.latency_p50_ms = 200.0;
+            input.design.nodes[2].config.latency_p99_ms = 200.0;
+            input.scenario.duration_ms = Some(20_000.0);
+            input.scenario.events = vec![ChaosEvent { at_ms: 10_000.0, node: "cache".into(), action: ChaosAction::Flush, value: 0.0 }];
+            instance_series(&input)
+        };
+        let (plain, plain_sum) = hot(false);
+        let (merged, merged_sum) = hot(true);
+        assert!(hit_ratio(&plain[9]) > 0.999 && plain[9].nodes[2].arrivals == 0.0, "warm before the flush");
+        // FLUSHALL: every request for a key misses until its fetch is back, so
+        // ~1000 requests in the first 200 ms all go to a DB that serves 100 rps
+        assert!(plain[10].nodes[2].arrivals > 500.0, "herd: {} DB calls", plain[10].nodes[2].arrivals);
+        assert!(plain[10].nodes[2].rejected > 100, "DB overloaded: {}", plain[10].nodes[2].rejected);
+        // singleflight: one fetch per key, everyone else waits for it
+        assert!(merged[10].nodes[2].arrivals <= 100.0, "{} DB calls", merged[10].nodes[2].arrivals);
+        assert!(merged[10].nodes[1].cache.unwrap().coalesced > 100);
+        assert_eq!(merged_sum.errors, 0);
+        assert!(plain_sum.errors > 100, "{}", plain_sum.errors);
+    }
+
+    #[test]
+    fn coalescing_does_not_save_a_cold_long_tail() {
+        // 100k keys, mild skew: after a flush most misses are for *different* keys
+        let tail = |coalesce: bool| flush_at_10s(CacheModel { keys: 100_000, skew: 0.5, coalesce, ..CacheModel::default() });
+        let (plain, _) = tail(false);
+        let (merged, _) = tail(true);
+        assert!(hit_ratio(&plain[10]) < 0.1, "cold: {}", hit_ratio(&plain[10]));
+        for w in [&plain[10], &merged[10]] {
+            assert!(w.nodes[2].rejected > 1000, "the DB is overloaded either way: {}", w.nodes[2].rejected);
+        }
+        assert!(merged[10].nodes[1].cache.unwrap().coalesced < 200);
+        // it warms back up, slowly
+        assert!(hit_ratio(&plain[19]) > hit_ratio(&plain[11]));
+    }
+
+    #[test]
+    fn keys_filled_together_expire_together_without_ttl_jitter() {
+        let worst_misses = |jitter: f64| {
+            let cache = CacheModel { keys: 2_000, skew: 0.0, ttl_ms: 15_000.0, ttl_jitter: jitter, ..CacheModel::default() };
+            let (ws, _) = instance_series(&keyspace(3000.0, cache));
+            let misses = |s: usize| ws[s].nodes[1].cache.unwrap().misses;
+            ((5..40).map(misses).max().unwrap(), misses(5))
+        };
+        let (wave, before) = worst_misses(0.0);
+        let (spread, _) = worst_misses(0.5);
+        // all 2000 keys were warmed at t = 0 and expire at 15 s
+        assert!(before < 50, "warm before the TTL: {before}");
+        assert!(wave > 1500, "expiry wave: {wave} misses in one second");
+        assert!(spread * 3 < wave, "jitter spreads the wave: {spread} vs {wave}");
+    }
+
+    #[test]
+    fn keyspace_cache_is_deterministic_and_validated_like_others() {
+        let cache = CacheModel { keys: 5_000, ttl_ms: 5_000.0, ttl_jitter: 0.2, coalesce: true, ..CacheModel::default() };
+        let a = run(&keyspace(2000.0, cache));
+        let b = run(&keyspace(2000.0, cache));
+        assert_eq!(a, b);
+        // a plain cache keeps its fixed hit rate and reports no keyspace window
+        let mut plain = keyspace(2000.0, cache);
+        plain.design.nodes[1].config.cache = None;
+        plain.design.nodes[1].config.hit_rate = 0.9;
+        let (ws, _) = instance_series(&plain);
+        assert!(ws[5].nodes[1].cache.is_none());
     }
 
     #[test]

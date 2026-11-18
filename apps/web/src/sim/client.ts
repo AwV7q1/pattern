@@ -96,6 +96,11 @@ export class SimClient {
   setMultiplier(value: number) {
     this.send({ type: 'multiplier', value });
   }
+  /** FLUSHALL on a keyspace cache node. */
+  flushCache(index: number) {
+    this.send({ type: 'flushCache', index });
+  }
+
   setNodeDown(index: number, down: boolean) {
     this.send({ type: 'nodeDown', index, down });
   }

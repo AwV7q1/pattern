@@ -113,13 +113,51 @@ pub struct NodeConfig {
     pub gc_every_requests: u32,
     /// Probability that a processed request fails (0..1).
     pub error_rate: f64,
-    /// Cache hit ratio (0..1), only used by `cache` nodes.
+    /// Cache hit ratio (0..1), only used by `cache` nodes without `cache`.
     pub hit_rate: f64,
+    /// `cache` nodes: simulate the keyspace instead of a fixed `hit_rate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheModel>,
     /// Cost per instance per hour (any currency unit).
     pub cost_per_hour: f64,
     /// Horizontal autoscaling (Kubernetes HPA); `instances` is the start count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoscale: Option<Autoscale>,
+}
+
+/// Keyspace model of a cache node: each request reads one key (Zipf
+/// popularity); a miss goes downstream and fills the key on success; keys
+/// expire after `ttl_ms`. The hit ratio *emerges* (warm-up after a flush or a
+/// restart, expiry waves), instead of being a constant.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct CacheModel {
+    /// Distinct keys requested (capped at 1 000 000).
+    pub keys: u32,
+    /// Zipf exponent of key popularity: 0 = uniform, ~1 = typical web traffic.
+    pub skew: f64,
+    /// Time to live of a filled key, 0 = never expires.
+    pub ttl_ms: f64,
+    /// Spread each TTL by ±`ttl_jitter` (0..1) so keys filled together do not expire together.
+    pub ttl_jitter: f64,
+    /// Request coalescing (singleflight): concurrent misses on one key wait
+    /// for the first fetch instead of all hitting the backend.
+    pub coalesce: bool,
+    /// Start full (every key filled at t = 0) instead of cold.
+    pub warm: bool,
+}
+
+impl Default for CacheModel {
+    fn default() -> Self {
+        Self {
+            keys: 10_000,
+            skew: 1.0,
+            ttl_ms: 0.0,
+            ttl_jitter: 0.0,
+            coalesce: false,
+            warm: true,
+        }
+    }
 }
 
 /// What the autoscaler scales on.
@@ -207,6 +245,7 @@ impl Default for NodeConfig {
             hit_rate: 0.0,
             cost_per_hour: 0.0,
             autoscale: None,
+            cache: None,
         }
     }
 }
@@ -393,6 +432,8 @@ pub enum ChaosAction {
     Latency,
     /// Error rate becomes `value`.
     Errors,
+    /// Cache nodes with a keyspace: every key is evicted (FLUSHALL, restart without persistence).
+    Flush,
 }
 
 fn default_timeout() -> f64 {

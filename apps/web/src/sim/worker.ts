@@ -56,6 +56,9 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
       case 'multiplier':
         sim?.set_traffic_multiplier(msg.value);
         break;
+      case 'flushCache':
+        sim?.flush_cache(msg.index);
+        break;
       case 'nodeDown':
         sim?.set_node_down(msg.index, msg.down);
         break;

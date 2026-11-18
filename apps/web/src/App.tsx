@@ -1415,6 +1415,14 @@ export function App() {
                       queues={nodes.filter((n) => n.data.kind === 'queue' && n.id !== selectedNode.id).map((n) => ({ id: n.id, label: n.data.label }))}
                       onChange={(config, label) => updateNode(selectedNode.id, config, label)}
                       onToggleDown={() => toggleDown(selectedNode)}
+                      onFlush={
+                        mode === 'sandbox'
+                          ? () => {
+                              client.flushCache(selectedNode.data.index);
+                              showFlash(`Đã flush ${selectedNode.data.label}`);
+                            }
+                          : undefined
+                      }
                       onDelete={() => onDelete({ nodes: [selectedNode], edges: [] })}
                       onTech={mode === 'sandbox' ? (t, apply) => setTech(selectedNode.id, t, apply) : undefined}
                     />
