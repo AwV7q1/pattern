@@ -1,20 +1,12 @@
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
-import { bezierAt, bezierFor, bezierPath, payloadScale, setEdgeGeometry } from '@/gpu/edgeGeometry';
-import type { FlowEdgeType } from '@/model/flow';
+import { arcFractions, bezierFor, bezierPath, flattenBezier, payloadScale, pointAt, roundedPath, setEdgeGeometry } from '@/gpu/edgeGeometry';
+import { fanOffset, type FlowEdgeType } from '@/model/flow';
 import { cn } from '@/lib/utils';
 import { useEdgeFocus } from './edgeFocus';
 
 /** Below this zoom, plain labels are unreadable, so only warnings stay. */
 const LABEL_ZOOM = 0.75;
 
-/** Vertical gap between edges that leave or enter the same side of a node. */
-const SPREAD = 14;
-const MAX_SPREAD = 64;
-const offset = (slot: number, count: number) => {
-  if (count <= 1) return 0;
-  const gap = Math.min(SPREAD, MAX_SPREAD / (count - 1));
-  return (slot - (count - 1) / 2) * gap;
-};
 const kb = (v: number) => (v >= 1024 ? `${(v / 1024).toFixed(1)}MB` : `${+v.toFixed(1)}KB`);
 const CIRCLED = '⓪①②③④⑤⑥⑦⑧⑨⑩';
 
@@ -28,13 +20,33 @@ const CIRCLED = '⓪①②③④⑤⑥⑦⑧⑨⑩';
  * To stay readable when many services call each other: back edges loop
  * around the nodes instead of crossing them, edges joining the same pair
  * share one label box, hovering or selecting a node dims every edge that
- * does not touch it, and plain labels hide when zoomed out.
+ * does not touch it, and plain labels hide when zoomed out. In orthogonal
+ * style the edge follows the route computed in `decorateEdges` instead.
  */
 export function FlowEdge({ id, source, target, sourceX, sourceY, targetX, targetY, data, selected, markerEnd }: EdgeProps<FlowEdgeType>) {
   const v = data?.view;
-  const sy = sourceY + (v ? offset(v.outSlot, v.outCount) : 0);
-  const ty = targetY + (v ? offset(v.inSlot, v.inCount) : 0);
-  const b = bezierFor(sourceX, sy, targetX, ty, v?.backY);
+  const sy = sourceY + (v ? fanOffset(v.outSlot, v.outCount) : 0);
+  const ty = targetY + (v ? fanOffset(v.inSlot, v.inCount) : 0);
+  let svg: string;
+  let poly: number[];
+  if (v?.route) {
+    // routed from node boxes: pin the side ports to the real handles
+    poly = v.route.slice();
+    const n = poly.length;
+    if (!v.vertical) {
+      if (poly[1] === poly[3]) poly[3] = sy;
+      if (poly[n - 1] === poly[n - 3]) poly[n - 3] = ty;
+      [poly[0], poly[1], poly[n - 2], poly[n - 1]] = [sourceX, sy, targetX, ty];
+    }
+    svg = roundedPath(poly);
+  } else {
+    const vt = v?.vertical;
+    const b = vt ? bezierFor(vt.sx, vt.sy, vt.tx, vt.ty, undefined, true) : bezierFor(sourceX, sy, targetX, ty, v?.backY);
+    svg = bezierPath(b);
+    poly = flattenBezier(b);
+  }
+  const arc = arcFractions(poly);
+  const at = (t: number) => pointAt(poly, t, arc);
   const focus = useEdgeFocus(id, source, target);
   const zoomedIn = useStore((st) => st.transform[2] >= LABEL_ZOOM);
   const dim = focus === false;
@@ -42,7 +54,7 @@ export function FlowEdge({ id, source, target, sourceX, sourceY, targetX, target
   const showLabels = focus === true || selected || (focus === null && zoomedIn);
   const p = data?.policy;
   const ff = !!p?.fireAndForget && v?.routing !== 'pick';
-  if (data) setEdgeGeometry(data.index, b, [payloadScale(p?.requestKb), payloadScale(p?.responseKb), ff ? 1 : 0, 0]);
+  if (data) setEdgeGeometry(data.index, poly, [payloadScale(p?.requestKb), payloadScale(p?.responseKb), ff ? 1 : 0, 0]);
   const m = data?.metrics;
   const breaker = m?.breaker ?? 'closed';
   const stroke =
@@ -85,16 +97,16 @@ export function FlowEdge({ id, source, target, sourceX, sourceY, targetX, target
   const routes = showLabels ? (v?.routes ?? []) : [];
   const shown = showLabels ? badges : dim ? [] : badges.filter((t) => t.bad);
   // badges of a bundle sit side by side along the curve instead of stacking
-  const [mx, my] = bezierAt(b, 0.56 + (v && v.pairCount > 1 ? (v.pairSlot - (v.pairCount - 1) / 2) * 0.12 : 0));
+  const [mx, my] = at(0.56 + (v && v.pairCount > 1 ? (v.pairSlot - (v.pairCount - 1) / 2) * 0.12 : 0));
   // role badge near the source, route box past the middle, so they never meet
-  const [rx, ry] = bezierAt(b, 0.13 + (v?.pairSlot ?? 0) * 0.06);
-  const [lx, ly] = bezierAt(b, 0.56);
+  const [rx, ry] = at(0.13 + (v?.pairSlot ?? 0) * 0.06);
+  const [lx, ly] = at(0.56);
 
   return (
     <>
       <BaseEdge
         id={id}
-        path={bezierPath(b)}
+        path={svg}
         interactionWidth={16}
         markerEnd={markerEnd}
         style={{

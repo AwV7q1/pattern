@@ -1,4 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
+import { routeOrthogonal } from './routing';
 import {
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
@@ -57,6 +58,17 @@ export interface EdgeView {
    * must reach to pass below (or above) every node between both ends.
    */
   backY?: number;
+  /** Stacked nodes, curve style: joined bottom-to-top (or top-to-bottom) at these points. */
+  vertical?: { sx: number; sy: number; tx: number; ty: number };
+  /** Orthogonal style: the routed polyline `[x0, y0, x1, y1, …]` in flow coordinates. */
+  route?: number[];
+}
+export type EdgeStyleMode = 'curve' | 'orthogonal';
+
+/** Vertical gap between edges that leave or enter the same side of a node. */
+export function fanOffset(slot: number, count: number) {
+  if (count <= 1) return 0;
+  return (slot - (count - 1) / 2) * Math.min(14, 64 / (count - 1));
 }
 export type FlowEdgeType = Edge<FlowEdgeData, 'flow'>;
 
@@ -105,7 +117,7 @@ export function edgeId(source: string, target: string, taken: { id: string }[]) 
  * do not overlap (sorted by the other end's height), and number the steps
  * of `sequence` routing exactly like the engine groups them.
  */
-export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): FlowEdgeType[] {
+export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[], style: EdgeStyleMode = 'curve'): FlowEdgeType[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const y = (id: string) => byId.get(id)?.position.y ?? 0;
   const outs = new Map<string, FlowEdgeType[]>();
@@ -148,7 +160,12 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
     const h = n.measured?.height ?? 110;
     return { l: n.position.x, r: n.position.x + w, t: n.position.y, b: n.position.y + h, cy: n.position.y + h / 2 };
   };
+  // Stacked nodes (one mostly above the other) are joined bottom-to-top
+  // instead of side-to-side, which would need a loop.
+  const stacked = (sb: ReturnType<typeof box>, tb: ReturnType<typeof box>) =>
+    Math.min(sb.r, tb.r) - Math.max(sb.l, tb.l) > 0.4 * Math.min(sb.r - sb.l, tb.r - tb.l) && (tb.t - sb.b > 24 || sb.t - tb.b > 24);
   const backY = new Map<string, number>();
+  const vertical = new Map<string, NonNullable<EdgeView['vertical']>>();
   const nested = { below: 0, above: 0 };
   for (const e of edges) {
     const s = byId.get(e.source);
@@ -156,7 +173,14 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
     if (!s || !t) continue;
     const sb = box(s);
     const tb = box(t);
-    if (tb.l - sb.r >= 10) continue;
+    if (stacked(sb, tb)) {
+      const pair = pairs.get(`${e.source}\u0000${e.target}`) ?? [e];
+      const dx = fanOffset(pair.indexOf(e), pair.length);
+      const down = tb.t > sb.b;
+      vertical.set(e.id, { sx: (sb.l + sb.r) / 2 + dx, sy: down ? sb.b : sb.t, tx: (tb.l + tb.r) / 2 + dx, ty: down ? tb.t : tb.b });
+      continue;
+    }
+    if (style === 'orthogonal' || tb.l - sb.r >= 10) continue;
     const lo = Math.min(tb.l, sb.l);
     const hi = Math.max(tb.r, sb.r);
     const spanned = nodes.map(box).filter((b) => b.r > lo && b.l < hi);
@@ -165,6 +189,28 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
     const below = 2 * bottom - sb.cy - tb.cy <= sb.cy + tb.cy - 2 * top;
     const lane = below ? nested.below++ : nested.above++;
     backY.set(e.id, below ? bottom + lane * 18 : top - lane * 18);
+  }
+  // orthogonal: every edge routed around the nodes, from the same ports
+  let paths = new Map<string, number[]>();
+  if (style === 'orthogonal') {
+    const ports = edges.flatMap((e) => {
+      const s = byId.get(e.source);
+      const t = byId.get(e.target);
+      if (!s || !t) return [];
+      const v = vertical.get(e.id);
+      if (v) {
+        const d = Math.sign(v.ty - v.sy);
+        return [{ id: e.id, from: { x: v.sx, y: v.sy, dx: 0, dy: d }, to: { x: v.tx, y: v.ty, dx: 0, dy: d } }];
+      }
+      const sb = box(s);
+      const tb = box(t);
+      return [{
+        id: e.id,
+        from: { x: sb.r, y: sb.cy + fanOffset(outSlot.get(e.id) ?? 0, outs.get(e.source)?.length ?? 1), dx: 1, dy: 0 },
+        to: { x: tb.l, y: tb.cy + fanOffset(inSlot.get(e.id) ?? 0, ins.get(e.target)?.length ?? 1), dx: 1, dy: 0 },
+      }];
+    });
+    paths = routeOrthogonal(nodes.map((n) => ({ id: n.id, ...box(n) })), ports);
   }
   return edges.map((e) => {
     const src = byId.get(e.source);
@@ -184,6 +230,8 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
       pairCount: pair.length,
       routes: routes?.length ? routes : undefined,
       backY: backY.get(e.id),
+      vertical: vertical.get(e.id),
+      route: paths.get(e.id),
     };
     return { ...e, data: { ...e.data!, view } };
   });

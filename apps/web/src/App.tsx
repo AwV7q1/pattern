@@ -7,6 +7,7 @@ import {
   useNodesState,
   useReactFlow,
   MarkerType,
+  Panel,
   type Connection,
   type EdgeTypes,
   type Node,
@@ -49,6 +50,7 @@ import {
   endpointsOf,
   sanitizeScenario,
   type FlowEdgeType,
+  type EdgeStyleMode,
   type SystemNodeType,
 } from './model/flow';
 import { KIND_META, fmt } from './lib/meta';
@@ -156,6 +158,8 @@ export function App() {
   groupsRef.current = groups;
   const [groupSel, setGroupSel] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyleMode>(() => (localStorage.getItem('edgeStyle') === 'curve' ? 'curve' : 'orthogonal'));
+  useEffect(() => localStorage.setItem('edgeStyle', edgeStyle), [edgeStyle]);
   const dragMembers = useRef(new Map<string, { nodes: Set<string>; groups: Set<string> }>());
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -672,7 +676,7 @@ export function App() {
   /** Edges as drawn: fanned out, numbered, with an arrow at the callee. */
   const viewEdges = useMemo(
     () =>
-      decorateEdges(nodes, edges).map((e) => ({
+      decorateEdges(nodes, edges, edgeStyle).map((e) => ({
         ...e,
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -681,7 +685,7 @@ export function App() {
           color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
         },
       })),
-    [nodes, edges],
+    [nodes, edges, edgeStyle],
   );
 
   // ------------------------------------------------------------------ editing
@@ -1277,6 +1281,25 @@ export function App() {
             <Background gap={24} color="oklch(1 0 0 / 6%)" />
             <ParticleLayer client={client} />
             <Controls showInteractive={false} position="bottom-right" />
+            <Panel position="bottom-left" className="!m-3">
+              <div className="flex overflow-hidden rounded-md border bg-background/90 text-[11px]">
+                {(
+                  [
+                    ['orthogonal', 'Vuông góc', 'Cạnh đi theo đường ngang/dọc, vòng qua các node'],
+                    ['curve', 'Cong', 'Cạnh là đường cong nối thẳng hai node'],
+                  ] as const
+                ).map(([k, label, title]) => (
+                  <button
+                    key={k}
+                    title={title}
+                    onClick={() => setEdgeStyle(k)}
+                    className={cn('px-2 py-1', edgeStyle === k ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Panel>
           </ReactFlow>
           </EdgeFocusContext>
           {practice && mode === 'game' && (
