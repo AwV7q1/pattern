@@ -24,6 +24,7 @@ import {
   RotateCcw,
   Server,
   Shield,
+  ShieldAlert,
   Skull,
   Trophy,
   Turtle,
@@ -927,54 +928,70 @@ function BotSide({
   const raw = botRpsNow(CONTENT, state);
   const cut = botCutNow(state);
   const effects = intentEffects(intent);
+  const hotfixed = (e: (typeof effects)[number]) => state.temp.hotfix && e.tone !== 'heal' && e.icon !== Bug;
+  const tone = (e: (typeof effects)[number]) =>
+    hotfixed(e)
+      ? 'bg-muted text-muted-foreground'
+      : e.tone === 'bad'
+        ? 'bg-rose-500/20 text-rose-300'
+        : e.tone === 'warn'
+          ? 'bg-orange-500/20 text-orange-300'
+          : 'bg-emerald-500/20 text-emerald-300';
   return (
     <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
       <IntentTrack intents={intents} step={state.enemy.step} />
-      {/* what it is about to do, said out loud */}
-      <div className="relative rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center">
-        <div className="flex items-center justify-center gap-1.5 font-semibold">
-          <Icon className="size-5 text-amber-300" /> {intent.label}
-        </div>
-        <div className="font-mono text-sm text-amber-200/80">
-          <span className="text-lg font-bold text-amber-200">{n0(raw * (1 - cut))}</span> rps lọt vào
-        </div>
-        {effects.length > 0 && (
-          <div className="mt-2 flex flex-col items-stretch gap-1">
-            {effects.map((e) => (
-              <span
-                key={e.text}
-                className={cn(
-                  'flex items-center gap-2 rounded-lg px-2.5 py-1 text-left text-sm font-semibold [&_svg]:size-5 [&_svg]:shrink-0',
-                  state.temp.hotfix && e.tone !== 'heal' && e.icon !== Bug
-                    ? 'bg-muted text-muted-foreground line-through'
-                    : e.tone === 'bad'
-                      ? 'bg-rose-500/20 text-rose-300'
-                      : e.tone === 'warn'
-                        ? 'bg-orange-500/20 text-orange-300'
-                        : 'bg-emerald-500/20 text-emerald-300',
-                )}
-              >
-                <e.icon /> {e.text}
-              </span>
-            ))}
+      {/* what it is about to do: one compact badge, the details on hover / focus */}
+      <div className="group relative">
+        <button
+          type="button"
+          aria-describedby="bot-intent-card"
+          className="flex items-center gap-2 rounded-full border border-amber-500/50 bg-amber-500/15 py-1 pl-1.5 pr-3 outline-none transition-colors hover:bg-amber-500/25 focus-visible:ring-2 focus-visible:ring-amber-400"
+        >
+          <span className="flex size-8 items-center justify-center rounded-full bg-amber-400/25 text-amber-300">
+            <Icon className="size-5" />
+          </span>
+          <span className="font-mono text-lg font-bold text-amber-200">{n0(raw * (1 - cut))}</span>
+          <span className="text-xs text-amber-200/70">rps</span>
+          {effects.map((e) => (
+            <span key={e.text} className={cn('flex size-7 items-center justify-center rounded-full [&_svg]:size-4', tone(e))}>
+              <e.icon />
+            </span>
+          ))}
+        </button>
+        <div
+          id="bot-intent-card"
+          role="tooltip"
+          className="pointer-events-none invisible absolute left-1/2 top-full z-30 mt-2 w-[280px] -translate-x-1/2 translate-y-1 rounded-xl border border-amber-500/40 bg-card/95 p-3 text-xs opacity-0 shadow-2xl shadow-black/60 backdrop-blur transition-[opacity,transform] duration-150 group-focus-within:visible group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:visible group-hover:translate-y-0 group-hover:opacity-100"
+        >
+          <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
+            <Icon className="size-4 text-amber-300" /> {intent.label}
           </div>
-        )}
-        <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-b border-r border-amber-500/40 bg-[color-mix(in_oklab,var(--background)_88%,#f59e0b)]" />
-      </div>
-
-      <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
-
-      <div className="w-full rounded-lg bg-card/60 p-3 text-xs backdrop-blur">
-        <p className="mb-2 text-muted-foreground">{intent.text}</p>
-        <div className="space-y-1.5 font-mono">
-          <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
-          <Row lg icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
-          <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
+          <p className="mb-2 text-muted-foreground">{intent.text}</p>
+          <div className="space-y-1.5 font-mono">
+            <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
+            <Row lg icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
+            <Row lg icon={<ShieldAlert className="text-amber-300" />} label="Lọt vào hệ thống" value={`${n0(raw * (1 - cut))} rps`} />
+            <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
+          </div>
+          {effects.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1 border-t pt-2">
+              {effects.map((e) => (
+                <span
+                  key={e.text}
+                  className={cn('flex items-center gap-2 rounded-lg px-2.5 py-1 text-sm font-semibold [&_svg]:size-4 [&_svg]:shrink-0', tone(e), hotfixed(e) && 'line-through')}
+                >
+                  <e.icon /> {e.text}
+                </span>
+              ))}
+            </div>
+          )}
           {state.temp.hotfix && (intent.chaos || intent.clientRetries || intent.cacheHitScale !== undefined) && (
-            <div className="pt-1 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
+            <div className="pt-2 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
           )}
         </div>
       </div>
+
+      <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
     </div>
   );
 }
