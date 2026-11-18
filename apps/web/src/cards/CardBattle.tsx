@@ -34,7 +34,7 @@ import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
-import type { Design } from '@/types';
+import type { Design, WindowMetrics } from '@/types';
 import cardsData from './data/cards.json';
 import enemiesData from './data/enemies.json';
 import battleData from './data/battle.json';
@@ -42,7 +42,7 @@ import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattl
 import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand } from './Hand';
-import { absorb, anchor, bolts, floatText, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
+import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
 const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData } as unknown as Content;
 
@@ -78,6 +78,26 @@ function costOf(design: Design, temp: BattleState['temp']) {
 
 type Flash = { key: number; player: number; enemy: number };
 
+/** Load on one node during the replay of a turn. */
+type NodeLoad = { util: number; bad: boolean };
+
+/**
+ * The turn as it plays out: what the meters show while the bot attacks.
+ * 'attack' while the engine computes in the background, 'replay' while its
+ * windows are played back second by second.
+ */
+type Live = {
+  phase: 'attack' | 'replay';
+  hp: number;
+  headroom: number;
+  enemyHp: number;
+  tMs: number;
+  rps: number;
+  p99: number;
+  errRate: number;
+  nodes: Record<string, NodeLoad>;
+};
+
 /**
  * Card battle prototype: defend a small system against a botnet. Your
  * infrastructure faces the bot across the arena; cards are dragged from the
@@ -99,6 +119,9 @@ export function CardBattle() {
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
   const [splash, setSplash] = useState<{ key: number; def: CardDef; x: number; y: number } | null>(null);
   const busy = useRef(false);
+  const [live, setLive] = useState<Live | null>(null);
+  /** Set by the skip button: the turn's playback jumps to the result. */
+  const skip = useRef(false);
 
   const arenaRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
@@ -106,6 +129,7 @@ export function CardBattle() {
   const infraRef = useRef<HTMLDivElement>(null);
   const gateRef = useRef<HTMLDivElement>(null);
   const shieldRef = useRef<HTMLDivElement>(null);
+  const hpRef = useRef<HTMLDivElement>(null);
   const opsRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<HTMLSpanElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
@@ -224,80 +248,169 @@ export function CardBattle() {
     });
   };
 
-  /** The bot winds up and its requests (and your users') stream into the gateway. */
-  const attackFx = async (plan: TurnPlan) => {
+  /** The request path inside your system, gateway first: Nginx → API → (Redis) → Postgres. */
+  const pathIds = () => ['lb', 'api', ...(nodeEls.current.cache ? ['cache'] : []), 'db'];
+  const pathPts = (layer: HTMLElement) =>
+    pathIds()
+      .map((id) => nodeEls.current[id])
+      .filter((el): el is HTMLDivElement => !!el)
+      .map((el) => anchor(el, layer));
+
+  /** One burst of the bot's requests at the shield / gateway, plus your users' requests. */
+  const botBurst = (plan: TurnPlan, ms: number) => {
     const layer = fxRef.current;
     const bot = botRef.current;
     const gate = gateRef.current;
-    if (!layer || !bot || !gate) return wait(700);
-    pulse(bot, 1.14, 420);
-    await wait(260);
+    if (!layer || !bot || !gate) return;
     const from = anchor(bot, layer, 0.22, 0.55);
     const to = anchor(gate, layer, 0.92, 0.5);
     const stopX = shieldRef.current ? anchor(shieldRef.current, layer).x : undefined;
-    const onHit = () => glow(gate, 'rgba(251,113,133,0.75)', 240);
-    const usersFrom = { x: (from.x + to.x) / 2, y: -12 };
-    await Promise.all([
-      wave(layer, {
-        from,
-        to,
-        count: clamp(Math.round(plan.botRps / 60), 10, 48),
-        blocked: plan.botRps > 0 ? plan.botBlockedRps / plan.botRps : 0,
-        stopX,
-        kind: 'bot',
-        window: 1500,
-        flight: 780,
-        spreadFrom: 34,
-        onHit,
-      }),
-      wave(layer, {
-        from: usersFrom,
-        to,
-        count: clamp(Math.round(plan.legitRps / 45), 3, 10),
-        kind: 'user',
-        window: 1500,
-        flight: 900,
-        spreadFrom: 0,
-        arc: 0,
-      }),
-    ]);
+    void wave(layer, {
+      from,
+      to,
+      count: clamp(Math.round(plan.botRps / 140), 4, 18),
+      blocked: plan.botRps > 0 ? plan.botBlockedRps / plan.botRps : 0,
+      stopX,
+      kind: 'bot',
+      window: ms,
+      flight: 720,
+      spreadFrom: 34,
+      onHit: () => glow(gate, 'rgba(251,113,133,0.6)', 200),
+    });
+    void wave(layer, {
+      from: { x: (from.x + to.x) / 2, y: -12 },
+      to,
+      count: clamp(Math.round(plan.legitRps / 120), 1, 4),
+      kind: 'user',
+      window: ms,
+      flight: 820,
+      spreadFrom: 0,
+      arc: 0,
+    });
   };
 
-  /** Hits land: your system shakes for the damage you took, then it hits back. */
-  const impactFx = async (r: TurnReport) => {
-    if (r.damage.total > 0) {
-      shake(infraRef.current, Math.min(12, 4 + r.damage.total));
-      const red = 'rgba(244,63,94,0.8)';
-      if (r.errorRate > 0.01 || r.damage.latency > 0) {
-        glow(nodeEls.current.api, red, 500);
-        glow(nodeEls.current.db, red, 500);
-      }
-      await wait(380);
+  /**
+   * Phase 1, while the engine computes in the background: the bot winds up
+   * and keeps attacking, requests run through the system. Lasts at least
+   * `minMs` and until `isDone()`.
+   */
+  const attackPhase = async (plan: TurnPlan, isDone: () => boolean, minMs = 1300) => {
+    const layer = fxRef.current;
+    pulse(botRef.current, 1.14, 420);
+    await wait(260);
+    const t0 = performance.now();
+    while (!skip.current) {
+      botBurst(plan, 700);
+      if (layer) flow(layer, pathPts(layer), { count: 7, window: 700 });
+      await wait(700);
+      if (isDone() && performance.now() - t0 >= minMs) break;
     }
-    if (r.enemyDamage > 0) await counterFx(r.enemyDamage);
-    else await wait(200);
+  };
+
+  /**
+   * Phase 2: the engine's windows played back. Each window updates the load
+   * on every node, the live numbers in the middle and drains the Error Budget
+   * (headroom first) and the bot's HP by its share of the turn's damage.
+   */
+  const replayPhase = async (plan: TurnPlan, windows: WindowMetrics[], r: TurnReport, start: BattleState) => {
+    const layer = fxRef.current;
+    const ids = plan.input.design.nodes.map((n) => n.id);
+    const n = windows.length;
+    if (!n) return;
+    const stepMs = clamp(Math.round(3600 / n), 140, 480);
+    // where damage happens: failed requests and slow windows weigh most, cost spreads evenly
+    const weight = windows.map((w) => w.errorCount + w.timeoutCount + (w.sloOk ? 0 : 20) + 1);
+    const wsum = weight.reduce((a, b) => a + b, 0);
+    // never below zero on screen: the rules clamp the final HP the same way
+    const hpLoss = Math.min(r.damage.total, start.hp);
+    const rawTotal = r.damage.absorbed + hpLoss;
+    let cum = 0;
+    let prev = { hp: start.hp, headroom: start.headroom, enemyHp: start.enemy.hp };
+    for (let i = 0; i < n; i++) {
+      if (skip.current) break;
+      const w = windows[i];
+      cum += weight[i];
+      const raw = Math.round((rawTotal * cum) / wsum);
+      const absorbed = Math.min(r.damage.absorbed, raw);
+      const lost = Math.min(hpLoss, raw - absorbed);
+      const cur = {
+        hp: start.hp - lost,
+        headroom: start.headroom - absorbed,
+        enemyHp: Math.max(0, start.enemy.hp - Math.floor((r.enemyDamage * (i + 1)) / n)),
+      };
+      const nodes: Record<string, NodeLoad> = {};
+      w.nodes.forEach((nw, k) => {
+        if (ids[k] && ids[k] !== 'client') nodes[ids[k]] = { util: nw.utilization, bad: nw.down || nw.rejected > 0 || nw.utilization > 0.95 };
+      });
+      const done = w.okCount + w.errorCount + w.timeoutCount;
+      const errShare = done > 0 ? (w.errorCount + w.timeoutCount) / done : 0;
+      setLive({ phase: 'replay', ...cur, tMs: w.tMs, rps: w.rps, p99: w.p99Ms, errRate: errShare, nodes });
+
+      if (layer) {
+        botBurst(plan, stepMs);
+        // the request path, with this window's real outcomes
+        const path = pathIds();
+        const failing = path
+          .map((id, k) => ({ k, nw: w.nodes[ids.indexOf(id)] }))
+          .filter((x) => x.nw)
+          .sort((a, b) => b.nw.rejected - a.nw.rejected || Number(b.nw.down) - Number(a.nw.down) || b.nw.utilization - a.nw.utilization)[0];
+        const cacheAt = path.indexOf('cache');
+        const hitRatio = cacheAt >= 0 ? (w.nodes[ids.indexOf('cache')]?.hitRatio ?? 0) : 0;
+        flow(layer, pathPts(layer), {
+          count: clamp(Math.round(w.rps / 70), 3, 12),
+          window: stepMs,
+          segMs: 200,
+          errShare,
+          errAt: failing?.k,
+          hitShare: hitRatio * (1 - errShare),
+          hitAt: cacheAt >= 0 ? cacheAt : undefined,
+        });
+        for (const id of path) if (nodes[id]?.bad) glow(nodeEls.current[id], 'rgba(244,63,94,0.7)', stepMs);
+
+        const hpAt = hpRef.current ? anchor(hpRef.current, layer, 0.85, 0) : null;
+        if (cur.headroom < prev.headroom && infraRef.current) {
+          glow(infraRef.current, 'rgba(56,189,248,0.7)', 360);
+          if (hpAt) floatText(layer, hpAt, `Headroom chặn ${prev.headroom - cur.headroom}`, '#7dd3fc');
+        }
+        if (cur.hp < prev.hp) {
+          shake(infraRef.current, Math.min(8, 2 + prev.hp - cur.hp), 300);
+          if (hpAt) floatText(layer, hpAt, `−${prev.hp - cur.hp}`, '#fb7185');
+        }
+        if (cur.enemyHp < prev.enemyHp) void counterFx(prev.enemyHp - cur.enemyHp);
+      }
+      prev = cur;
+      await wait(stepMs);
+    }
+    await wait(skip.current ? 0 : 450);
   };
 
   const endTurn = async () => {
     if (busy.current || state.phase !== 'player') return;
     busy.current = true;
+    skip.current = false;
     setResolving(true);
     setError(null);
+    setLive({ phase: 'attack', hp: state.hp, headroom: state.headroom, enemyHp: state.enemy.hp, tMs: 0, rps: 0, p99: 0, errRate: 0, nodes: {} });
     try {
       const plan = planTurn(CONTENT, state);
-      const engine = compute.run(plan.input);
+      let done = false;
+      // the engine runs in its worker while the attack plays
+      const engine = compute.runDetailed(plan.input).finally(() => {
+        done = true;
+      });
       engine.catch(() => undefined); // awaited below; avoid an unhandled rejection meanwhile
-      await attackFx(plan);
-      const summary = await engine;
+      await attackPhase(plan, () => done);
+      const { summary, windows } = await engine;
       const next = resolveTurn(CONTENT, state, plan, summary);
       const r = next.reports.at(-1)!;
-      await impactFx(r);
+      await replayPhase(plan, windows, r, state);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: r.enemyDamage });
       setState(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       busy.current = false;
+      setLive(null);
       setResolving(false);
     }
   };
@@ -373,35 +486,56 @@ export function CardBattle() {
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
 
       <div ref={arenaRef} className="relative min-h-0 flex-1">
-        {/* the two sides face each other across the arena */}
-        {/* equal side columns keep VS on the exact middle of the screen */}
-        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] gap-4 overflow-y-auto px-6 pb-[200px] pt-2">
-          <div className="flex min-w-0 flex-col items-start justify-center">
-            <div className="flex w-full max-w-[400px] flex-col gap-4">
-              <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
-              {state.reports.length === 0 && <FirstTurnHint />}
-              {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
-            </div>
+        {/* the two sides face each other across the arena; equal side columns
+            keep the middle on the exact center. Row 1 holds both health bars on
+            one line, row 2 the system and the bot. */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto] gap-x-4 gap-y-3 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
+          <div className="col-start-1 row-start-1 flex min-w-0 justify-start">
+            <HpBar
+              hpRef={hpRef}
+              className="max-w-[400px]"
+              icon={<Heart />}
+              label="Error Budget"
+              hp={live?.hp ?? state.hp}
+              max={state.maxHp}
+              headroom={live?.headroom ?? state.headroom}
+              flash={flash}
+              pop={flash?.player ?? 0}
+              barClass="from-rose-600 to-rose-400"
+            />
+          </div>
+          <div className="col-start-3 row-start-1 flex min-w-0 justify-end">
+            <HpBar
+              className="max-w-[300px]"
+              icon={<Skull />}
+              label={enemy.name}
+              title={enemy.description}
+              hp={live?.enemyHp ?? state.enemy.hp}
+              max={state.enemy.maxHp}
+              flash={flash}
+              pop={flash?.enemy ?? 0}
+              barClass="from-rose-600 to-orange-500"
+            />
           </div>
 
-          <div className="flex min-w-0 flex-col items-center justify-center gap-4">
-            {resolving ? (
-              <div className="text-center text-xs text-muted-foreground">
-                <LoaderCircle className="mx-auto mb-1 size-5 animate-spin text-sky-400" />
-                Engine đang chạy {CONTENT.battle.turnMs / 1000} giây traffic
-                <div className="mt-2 flex justify-center gap-3">
-                  <Legend color="bg-rose-400" label="bot" />
-                  <Legend color="bg-sky-300" label="người dùng" />
-                  <Legend color="bg-emerald-400" label="bị chặn" />
-                </div>
-              </div>
+          <div className="col-start-2 row-span-2 row-start-1 flex min-w-0 flex-col items-center justify-center">
+            {live ? (
+              <LiveReadout live={live} onSkip={() => (skip.current = true)} />
             ) : (
               <span className="select-none font-black italic tracking-tighter text-foreground/10 [font-size:64px]">VS</span>
             )}
           </div>
 
-          <div className="flex min-w-0 flex-col items-end justify-center">
-            <BotSide state={state} intents={enemy.intents} name={enemy.name} description={enemy.description} intent={intent} flash={flash} botRef={botRef} attacking={resolving} />
+          <div className="col-start-1 row-start-2 flex min-w-0 flex-col items-start">
+            <div className="flex w-full max-w-[400px] flex-col gap-4">
+              <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+              {state.reports.length === 0 && !live && <FirstTurnHint />}
+              {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
+            </div>
+          </div>
+
+          <div className="col-start-3 row-start-2 flex min-w-0 flex-col items-end">
+            <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
           </div>
         </div>
 
@@ -507,7 +641,102 @@ function Bar({ value, max, className }: { value: number; max: number; className:
   );
 }
 
-function DamagePop({ flash, value, side }: { flash: { key: number } | null; value: number; side: 'player' | 'enemy' }) {
+/**
+ * A side's health on one line: icon, name, numbers and the bar. Both sides
+ * use it, side by side above the arena, so the two bars always line up.
+ */
+function HpBar({
+  hpRef,
+  className,
+  icon,
+  label,
+  title,
+  hp,
+  max,
+  headroom = 0,
+  flash,
+  pop,
+  barClass,
+}: {
+  hpRef?: React.RefObject<HTMLDivElement | null>;
+  className?: string;
+  icon: ReactNode;
+  label: string;
+  title?: string;
+  hp: number;
+  max: number;
+  headroom?: number;
+  flash: Flash | null;
+  pop: number;
+  barClass: string;
+}) {
+  return (
+    <div ref={hpRef} className={cn('relative w-full', className)}>
+      <DamagePop flash={flash} value={pop} side={label} />
+      <div className="mb-1 flex items-center gap-1.5 text-sm font-medium [&>svg]:size-4 [&>svg]:shrink-0 [&>svg]:text-rose-400">
+        {icon}
+        <span className="truncate" title={title}>
+          {label}
+        </span>
+        {headroom > 0 && (
+          <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300" title="Headroom: hấp thụ sát thương trước khi trừ máu">
+            <Shield className="size-3.5" /> {headroom}
+          </span>
+        )}
+        <span className="ml-auto font-mono tabular-nums">
+          {hp}/{max}
+        </span>
+      </div>
+      <Bar value={hp} max={max} className={cn('bg-gradient-to-r', barClass, headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')} />
+    </div>
+  );
+}
+
+/** The middle of the arena while a turn plays: the engine's clock and live numbers. */
+function LiveReadout({ live, onSkip }: { live: Live; onSkip: () => void }) {
+  const total = CONTENT.battle.turnMs;
+  const slo = CONTENT.battle.sloP99Ms;
+  return (
+    <div className="flex w-full flex-col items-center gap-2 text-center text-xs">
+      {live.phase === 'attack' ? (
+        <>
+          <Bot className="size-6 animate-pulse text-rose-400" />
+          <span className="font-semibold text-rose-300">Bot tấn công!</span>
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <LoaderCircle className="size-3 animate-spin" /> engine đang tính
+          </span>
+        </>
+      ) : (
+        <>
+          <span className="font-mono text-lg font-bold tabular-nums">
+            {Math.min(total, live.tMs + 1000) / 1000}s<span className="text-xs font-normal text-muted-foreground"> / {total / 1000}s</span>
+          </span>
+          <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-sky-400 transition-[width] duration-300" style={{ width: `${(Math.min(total, live.tMs + 1000) / total) * 100}%` }} />
+          </div>
+          <div className="w-full space-y-0.5 rounded-lg bg-card/60 p-2 font-mono backdrop-blur">
+            <Row label="rps" value={n0(live.rps)} />
+            <Row label="p99" value={`${Math.round(live.p99)}ms`} bad={live.p99 > slo} />
+            <Row label="lỗi" value={`${(live.errRate * 100).toFixed(1)}%`} bad={live.errRate > 0.01} />
+          </div>
+        </>
+      )}
+      <div className="flex flex-wrap justify-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+        <Legend color="bg-rose-400" label="bot" />
+        <Legend color="bg-sky-300" label="người dùng" />
+        <Legend color="bg-emerald-400" label="bị chặn" />
+        <Legend color="bg-slate-200" label="request" />
+        <Legend color="bg-amber-400" label="cache hit" />
+        <Legend color="bg-rose-500" label="lỗi" />
+      </div>
+      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onSkip}>
+        Bỏ qua <ArrowRight />
+      </Button>
+    </div>
+  );
+}
+
+function DamagePop({ flash, value, side }: { flash: { key: number } | null; value: number; side: string }) {
   if (!flash || value <= 0) return null;
   return (
     <span
@@ -526,7 +755,8 @@ function DamagePop({ flash, value, side }: { flash: { key: number } | null; valu
  */
 function SystemPanel({
   state,
-  flash,
+  hp,
+  loads,
   panelRef,
   gateRef,
   shieldRef,
@@ -534,7 +764,9 @@ function SystemPanel({
   hit,
 }: {
   state: BattleState;
-  flash: Flash | null;
+  /** Error Budget shown (live while a turn plays). */
+  hp: number;
+  loads?: Record<string, NodeLoad>;
   panelRef: React.RefObject<HTMLDivElement | null>;
   gateRef: React.RefObject<HTMLDivElement | null>;
   shieldRef: React.RefObject<HTMLDivElement | null>;
@@ -543,7 +775,7 @@ function SystemPanel({
 }) {
   const cost = costOf(state.design, state.temp);
   const budget = CONTENT.battle.budgetPerHour;
-  const ratio = state.hp / state.maxHp;
+  const ratio = hp / state.maxHp;
   const status = ratio > 0.5 ? 'ok' : ratio > 0.25 ? 'warn' : 'crit';
   const shields = [state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null, state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null].filter(
     Boolean,
@@ -563,7 +795,6 @@ function SystemPanel({
         <div className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:18px_18px]" />
 
         <div className="relative">
-          <DamagePop flash={flash} value={flash?.player ?? 0} side="player" />
           <div className="mb-1.5 flex items-center gap-2 text-sm font-medium">
             <span className="flex gap-1">
               {(['ok', 'warn', 'crit'] as const).map((s) => (
@@ -583,23 +814,11 @@ function SystemPanel({
               ))}
             </span>
             <span className="text-xs uppercase tracking-wider text-muted-foreground">Hệ thống của bạn</span>
-            {state.headroom > 0 && (
-              <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300">
-                <Shield className="size-3.5" /> {state.headroom}
-              </span>
-            )}
             <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
               <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
             </span>
           </div>
-          <div className="mb-1 flex items-center gap-1.5 text-sm font-medium">
-            <Heart className="size-4 text-rose-400" /> Error Budget
-            <span className="font-mono">
-              {state.hp}/{state.maxHp}
-            </span>
-          </div>
-          <Bar value={state.hp} max={state.maxHp} className="bg-gradient-to-r from-rose-600 to-rose-400" />
-          <InfraLine state={state} gateRef={gateRef} nodeEls={nodeEls} />
+          <InfraLine state={state} loads={loads} gateRef={gateRef} nodeEls={nodeEls} />
         </div>
       </div>
 
@@ -687,20 +906,16 @@ function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
 
 function BotSide({
   state,
+  enemyHp,
   intents,
-  name,
-  description,
   intent,
-  flash,
   botRef,
   attacking,
 }: {
   state: BattleState;
+  enemyHp: number;
   intents: Intent[];
-  name: string;
-  description: string;
   intent: Intent;
-  flash: Flash | null;
   botRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
 }) {
@@ -741,18 +956,7 @@ function BotSide({
         <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-b border-r border-amber-500/40 bg-[color-mix(in_oklab,var(--background)_88%,#f59e0b)]" />
       </div>
 
-      <BotAvatar ref={botRef} hpRatio={state.enemy.hp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
-
-      <div className="relative w-full">
-        <DamagePop flash={flash} value={flash?.enemy ?? 0} side="enemy" />
-        <div className="mb-1 flex items-center gap-2 text-sm font-medium">
-          <Skull className="size-4 text-rose-400" /> <span title={description}>{name}</span>
-          <span className="ml-auto font-mono">
-            {state.enemy.hp}/{state.enemy.maxHp}
-          </span>
-        </div>
-        <Bar value={state.enemy.hp} max={state.enemy.maxHp} className="bg-gradient-to-r from-rose-600 to-orange-500" />
-      </div>
+      <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
 
       <div className="w-full rounded-lg bg-card/60 p-3 text-xs backdrop-blur">
         <p className="mb-2 text-muted-foreground">{intent.text}</p>
@@ -769,14 +973,14 @@ function BotSide({
   );
 }
 
-function Row({ icon, label, value, good }: { icon?: ReactNode; label: string; value: string; good?: boolean }) {
+function Row({ icon, label, value, good, bad }: { icon?: ReactNode; label: string; value: string; good?: boolean; bad?: boolean }) {
   return (
     <div className="flex justify-between gap-2">
       <span className="flex items-center gap-1.5 text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">
         {icon}
         {label}
       </span>
-      <span className={good ? 'text-emerald-300' : undefined}>{value}</span>
+      <span className={bad ? 'text-rose-400' : good ? 'text-emerald-300' : undefined}>{value}</span>
     </div>
   );
 }
@@ -789,10 +993,12 @@ function Row({ icon, label, value, good }: { icon?: ReactNode; label: string; va
  */
 function InfraLine({
   state,
+  loads,
   gateRef,
   nodeEls,
 }: {
   state: BattleState;
+  loads?: Record<string, NodeLoad>;
   gateRef: React.RefObject<HTMLDivElement | null>;
   nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
 }) {
@@ -811,17 +1017,17 @@ function InfraLine({
   return (
     <div className="pt-4">
       <div className="flex items-center gap-0.5">
-        <InfraNode nodeRef={set('db')} icon={<Database />} title="Postgres" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
+        <InfraNode nodeRef={set('db')} icon={<Database />} title="Postgres" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" load={loads?.db} />
         {cache && (
           <>
             <Pipe />
-            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
+            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" load={loads?.cache} />
           </>
         )}
         <Pipe policy={policies.length > 0} pipeRef={set('policy')} />
-        <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" />
+        <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" load={loads?.api} />
         <Pipe />
-        <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" />
+        <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" load={loads?.lb} />
       </div>
       {/* API → downstream policies, under the line so they never cover a node */}
       {policies.length > 0 && (
@@ -840,6 +1046,7 @@ function InfraNode({
   count,
   extra = 0,
   accent,
+  load,
   nodeRef,
 }: {
   icon: ReactNode;
@@ -848,6 +1055,8 @@ function InfraNode({
   count?: number;
   extra?: number;
   accent?: 'sky' | 'red' | 'indigo';
+  /** Live load while a turn plays: a meter at the bottom, red when overloaded. */
+  load?: NodeLoad;
   nodeRef?: (el: HTMLDivElement | null) => void;
 }) {
   const color =
@@ -861,11 +1070,25 @@ function InfraNode({
   return (
     <div
       ref={nodeRef}
-      className={cn('relative flex min-w-0 flex-1 flex-col items-center rounded-xl border-2 bg-card/80 px-1 py-1.5 text-center shadow-lg shadow-black/30 backdrop-blur', color)}
+      className={cn(
+        'relative flex min-w-0 flex-1 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 px-1 pb-2 pt-1.5 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
+        color,
+        load?.bad && 'border-rose-500 bg-rose-950/60',
+      )}
     >
       <span className="[&_svg]:size-4">{icon}</span>
       <div className="mt-0.5 max-w-full truncate text-xs font-medium">{title}</div>
-      <div className="max-w-full truncate text-[10px] text-muted-foreground">{sub}</div>
+      <div className={cn('max-w-full truncate text-[10px] text-muted-foreground', load && 'font-mono', load?.bad && 'text-rose-300')}>
+        {load ? `tải ${Math.round(load.util * 100)}%` : sub}
+      </div>
+      {load && (
+        <div className="absolute inset-x-1.5 bottom-1 h-1 overflow-hidden rounded-full bg-muted/60">
+          <div
+            className={cn('h-full rounded-full transition-[width,background-color] duration-200', load.util > 0.95 || load.bad ? 'bg-rose-500' : load.util > 0.7 ? 'bg-amber-400' : 'bg-emerald-400')}
+            style={{ width: `${clamp(load.util, 0, 1) * 100}%` }}
+          />
+        </div>
+      )}
       {count !== undefined && (
         <div className="absolute -right-2 -top-2 rounded-full border bg-card px-1.5 font-mono text-xs">
           ×{count}

@@ -267,3 +267,50 @@ export function floatText(layer: HTMLElement, at: Pt, text: string, color: strin
     { duration: reduced() ? 1 : 1300, easing: 'ease-out', fill: 'forwards' },
   ).onfinish = () => el.remove();
 }
+
+// ---------------------------------------------------------------- inside the system
+
+/**
+ * Requests travelling along the request path (`path[0]` is the gateway,
+ * the last point the database). Each one either reaches the end, is
+ * answered early by the cache (`hitAt`, amber burst), or fails at `errAt`
+ * (red burst that kicks back). Shares are fractions of `count`.
+ */
+export function flow(
+  layer: HTMLElement,
+  path: Pt[],
+  o: { count: number; window: number; segMs?: number; errShare?: number; errAt?: number; hitShare?: number; hitAt?: number },
+) {
+  if (reduced() || o.count <= 0 || path.length < 2) return;
+  const segMs = o.segMs ?? 260;
+  for (let i = 0; i < o.count; i++) {
+    const r = Math.random();
+    const err = r < (o.errShare ?? 0);
+    const hit = !err && o.hitAt !== undefined && r < (o.errShare ?? 0) + (o.hitShare ?? 0);
+    const stop = err ? (o.errAt ?? path.length - 1) : hit ? o.hitAt! : path.length - 1;
+    const pts = path.slice(0, stop + 1).map((p) => ({ x: p.x + rand(-3, 3), y: p.y + rand(-7, 7) }));
+    const el = spark(layer, '#e2e8f0', rand(3, 5));
+    el.style.boxShadow = '0 0 6px 1px rgba(226,232,240,0.7)';
+    const last = pts[pts.length - 1];
+    const frames: Keyframe[] = [{ transform: `translate(${pts[0].x}px, ${pts[0].y}px) scale(0.6)`, opacity: 0, offset: 0 }];
+    const n = pts.length - 1 || 1;
+    pts.forEach((p, k) => {
+      if (k === 0) frames.push({ transform: `translate(${p.x}px, ${p.y}px) scale(1)`, opacity: 1, offset: 0.06 });
+      else frames.push({ transform: `translate(${p.x}px, ${p.y}px) scale(1)`, opacity: 1, offset: 0.06 + (0.74 * k) / n });
+    });
+    frames.push(
+      err
+        ? { transform: `translate(${last.x + 18}px, ${last.y + rand(-14, 14)}px) scale(2.4)`, opacity: 0, background: '#f43f5e', boxShadow: '0 0 12px 3px rgba(244,63,94,0.9)', offset: 1 }
+        : hit
+          ? { transform: `translate(${last.x}px, ${last.y}px) scale(2.2)`, opacity: 0, background: '#fbbf24', boxShadow: '0 0 12px 3px rgba(251,191,36,0.9)', offset: 1 }
+          : { transform: `translate(${last.x}px, ${last.y}px) scale(0.4)`, opacity: 0, offset: 1 },
+    );
+    const anim = el.animate(frames, {
+      duration: segMs * (n + 0.6) * rand(0.9, 1.1),
+      delay: (i / o.count) * o.window + rand(0, o.window / o.count),
+      easing: 'linear',
+      fill: 'forwards',
+    });
+    anim.onfinish = () => el.remove();
+  }
+}
