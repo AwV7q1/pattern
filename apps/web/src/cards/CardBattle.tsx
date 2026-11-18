@@ -676,13 +676,17 @@ function HpBar({
   return (
     <div ref={hpRef} className={cn('relative w-full max-w-[220px]', className)}>
       <DamagePop flash={flash} value={pop} side={label} />
-      <div className={cn('relative h-4 overflow-hidden rounded-full bg-muted', headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')}>
-        <div className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', barClass)} style={{ width: `${Math.max(0, hp / max) * 100}%` }} />
-        <span className="absolute inset-0 flex items-center justify-center font-mono text-[11px] font-semibold tabular-nums text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.9)]">
-          {hp}/{max}
+      {/* a thin bar, the numbers in a badge raised over its middle */}
+      <div className="relative flex h-8 items-center">
+        <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')}>
+          <div className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', barClass)} style={{ width: `${Math.max(0, hp / max) * 100}%` }} />
+        </div>
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-rose-400/40 bg-background px-3 py-1 font-mono text-lg font-bold leading-none tabular-nums text-foreground shadow-lg shadow-black/60">
+          {hp}
+          <span className="text-xs font-medium text-muted-foreground">/{max}</span>
         </span>
       </div>
-      <div className="mt-1 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-rose-400">
+      <div className="mt-0.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-rose-400">
         {icon}
         <span className="truncate" title={title}>
           {label}
@@ -892,7 +896,7 @@ function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
             key={it.id}
             title={`${now ? 'Lượt này' : i === (at + 1) % n ? 'Lượt sau' : past ? 'Đã qua' : 'Sắp tới'}: ${it.label}`}
             className={cn(
-              'flex size-6 items-center justify-center rounded-full border transition-colors [&_svg]:size-3.5',
+              'flex size-8 items-center justify-center rounded-full border transition-colors [&_svg]:size-4.5',
               now
                 ? 'border-amber-400 bg-amber-400/20 text-amber-300 shadow-[0_0_10px_rgba(251,191,36,0.5)]'
                 : past
@@ -904,7 +908,7 @@ function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
           </span>
         );
       })}
-      {step >= n && <span className="ml-1 font-mono text-[10px] text-rose-300">vòng {Math.floor(step / n) + 1}</span>}
+      {step >= n && <span className="ml-1 font-mono text-xs text-rose-300">vòng {Math.floor(step / n) + 1}</span>}
     </div>
   );
 }
@@ -934,16 +938,18 @@ function BotSide({
       {/* what it is about to do, said out loud */}
       <div className="relative rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center">
         <div className="flex items-center justify-center gap-1.5 font-semibold">
-          <Icon className="size-4 text-amber-300" /> {intent.label}
+          <Icon className="size-5 text-amber-300" /> {intent.label}
         </div>
-        <div className="font-mono text-xs text-amber-200/80">{n0(raw * (1 - cut))} rps lọt vào</div>
+        <div className="font-mono text-sm text-amber-200/80">
+          <span className="text-lg font-bold text-amber-200">{n0(raw * (1 - cut))}</span> rps lọt vào
+        </div>
         {effects.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap justify-center gap-1">
+          <div className="mt-2 flex flex-col items-stretch gap-1">
             {effects.map((e) => (
               <span
                 key={e.text}
                 className={cn(
-                  'flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium [&_svg]:size-3',
+                  'flex items-center gap-2 rounded-lg px-2.5 py-1 text-left text-sm font-semibold [&_svg]:size-5 [&_svg]:shrink-0',
                   state.temp.hotfix && e.tone !== 'heal' && e.icon !== Bug
                     ? 'bg-muted text-muted-foreground line-through'
                     : e.tone === 'bad'
@@ -965,10 +971,10 @@ function BotSide({
 
       <div className="w-full rounded-lg bg-card/60 p-3 text-xs backdrop-blur">
         <p className="mb-2 text-muted-foreground">{intent.text}</p>
-        <div className="space-y-1 font-mono">
-          <Row icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
-          <Row icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
-          <Row icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
+        <div className="space-y-1.5 font-mono">
+          <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
+          <Row lg icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
+          <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
           {state.temp.hotfix && (intent.chaos || intent.clientRetries || intent.cacheHitScale !== undefined) && (
             <div className="pt-1 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
           )}
@@ -978,14 +984,15 @@ function BotSide({
   );
 }
 
-function Row({ icon, label, value, good, bad }: { icon?: ReactNode; label: string; value: string; good?: boolean; bad?: boolean }) {
+/** One status on its own line: icon and label left, the number right. `lg` for the bot's card. */
+function Row({ icon, label, value, good, bad, lg }: { icon?: ReactNode; label: string; value: string; good?: boolean; bad?: boolean; lg?: boolean }) {
   return (
-    <div className="flex justify-between gap-2">
-      <span className="flex items-center gap-1.5 text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0">
+    <div className="flex items-center justify-between gap-2">
+      <span className={cn('flex min-w-0 items-center text-muted-foreground [&_svg]:shrink-0', lg ? 'gap-2 [&_svg]:size-5' : 'gap-1.5 [&_svg]:size-3.5')}>
         {icon}
-        {label}
+        <span className="truncate">{label}</span>
       </span>
-      <span className={bad ? 'text-rose-400' : good ? 'text-emerald-300' : undefined}>{value}</span>
+      <span className={cn('shrink-0 whitespace-nowrap', lg && 'text-base font-bold', bad ? 'text-rose-400' : good ? 'text-emerald-300' : undefined)}>{value}</span>
     </div>
   );
 }
