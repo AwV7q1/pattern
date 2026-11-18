@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router';
 import {
+  ArrowLeft,
   ArrowRight,
   Bug,
   Database,
@@ -19,42 +21,24 @@ import {
   Skull,
   Trophy,
   Turtle,
-  Users,
   Wallet,
   Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
+import { useUi } from '@/app/ui-store';
 import type { Design } from '@/types';
 import cardsData from './data/cards.json';
 import enemiesData from './data/enemies.json';
 import battleData from './data/battle.json';
-import {
-  apiOut,
-  botCutNow,
-  botRpsNow,
-  canPlay,
-  cardDef,
-  currentIntent,
-  newBattle,
-  nodeOf,
-  planTurn,
-  playCard,
-  resolveTurn,
-} from './rules';
-import type { BattleState, CardDef, CardType, Content, Intent, TurnReport } from './types';
+import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn } from './rules';
+import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
+import { BotAvatar } from './BotAvatar';
+import { CARD_SIZE, CardFace, Hand } from './Hand';
+import { anchor, bolts, glow, pulse, shake, wait, wave } from './fx';
 
 const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData } as unknown as Content;
-
-const TYPE_STYLE: Record<CardType, { label: string; ring: string; head: string; chip: string }> = {
-  infra: { label: 'Hạ tầng', ring: 'border-sky-500/60', head: 'from-sky-500/25', chip: 'bg-sky-500/20 text-sky-300' },
-  policy: { label: 'Chính sách', ring: 'border-violet-500/60', head: 'from-violet-500/25', chip: 'bg-violet-500/20 text-violet-300' },
-  action: { label: 'Hành động', ring: 'border-emerald-500/60', head: 'from-emerald-500/25', chip: 'bg-emerald-500/20 text-emerald-300' },
-  attack: { label: 'Phản công', ring: 'border-rose-500/60', head: 'from-rose-500/25', chip: 'bg-rose-500/20 text-rose-300' },
-  curse: { label: 'Lời nguyền', ring: 'border-zinc-600', head: 'from-zinc-500/20', chip: 'bg-zinc-500/20 text-zinc-400' },
-};
 
 const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
   probe: Radar,
@@ -67,6 +51,7 @@ const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
 
 const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
 const n0 = (v: number) => Math.round(v).toLocaleString('vi-VN');
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** $/h of a design with this turn's temporary instances. */
 function costOf(design: Design, temp: BattleState['temp']) {
@@ -76,20 +61,41 @@ function costOf(design: Design, temp: BattleState['temp']) {
   }, 0);
 }
 
+type Flash = { key: number; player: number; enemy: number };
+
 /**
- * Card battle prototype: defend a small system against a botnet. Each turn
- * the player plays cards that change the topology or this turn's defences,
- * then the real engine runs 10 simulated seconds of traffic and its numbers
- * decide the damage on both sides. Rules live in `rules.ts` (pure, seeded).
+ * Card battle prototype: defend a small system against a botnet. Your
+ * infrastructure faces the bot across the arena; cards are dragged from the
+ * fanned hand onto the arena to play them. When the turn ends the real engine
+ * runs 10 simulated seconds of traffic while the bot's requests fly at your
+ * gateway, and the engine's numbers decide the damage on both sides. Rules
+ * live in `rules.ts` (pure, seeded); `fx.ts` only illustrates them.
  */
 export function CardBattle() {
   const [seed, setSeed] = useState(randomSeed);
   const [state, setState] = useState(() => newBattle(CONTENT, seed));
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [flash, setFlash] = useState<{ key: number; player: number; enemy: number } | null>(null);
+  const [flash, setFlash] = useState<Flash | null>(null);
   const [showRules, setShowRules] = useState(false);
+  const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
+  const [splash, setSplash] = useState<{ key: number; def: CardDef; x: number; y: number } | null>(null);
   const busy = useRef(false);
+
+  const arenaRef = useRef<HTMLDivElement>(null);
+  const fxRef = useRef<HTMLDivElement>(null);
+  const botRef = useRef<HTMLDivElement>(null);
+  const infraRef = useRef<HTMLDivElement>(null);
+  const gateRef = useRef<HTMLDivElement>(null);
+  const shieldRef = useRef<HTMLDivElement>(null);
+  const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // a game screen: the app's tab bar steps aside
+  const setImmersive = useUi((s) => s.setImmersive);
+  useEffect(() => {
+    setImmersive(true);
+    return () => setImmersive(false);
+  }, [setImmersive]);
 
   const restart = (s: number) => {
     setSeed(s);
@@ -98,24 +104,99 @@ export function CardBattle() {
     setFlash(null);
   };
 
-  const play = useCallback((uid: number) => {
-    setState((s) => {
-      const next = playCard(CONTENT, s, uid);
-      if (next !== s && next.enemy.hp < s.enemy.hp) setFlash({ key: Date.now(), player: 0, enemy: s.enemy.hp - next.enemy.hp });
-      return next;
+  /** Green bolts from your gateway into the bot. */
+  const counterFx = useCallback(async (damage: number) => {
+    const layer = fxRef.current;
+    const bot = botRef.current;
+    const source = shieldRef.current ?? gateRef.current;
+    if (!layer || !bot || !source) return;
+    await bolts(layer, anchor(source, layer), anchor(bot, layer, 0.5, 0.5), damage, () => {
+      shake(bot, 9);
+      glow(bot, 'rgba(110,231,183,0.6)', 320);
     });
   }, []);
 
-  const endTurn = useCallback(async () => {
+  const play = (uid: number, at?: { x: number; y: number }) => {
+    if (resolving || state.phase !== 'player') return;
+    const inst = state.hand.find((c) => c.uid === uid);
+    const next = playCard(CONTENT, state, uid);
+    if (!inst || next === state) return;
+    const arena = arenaRef.current?.getBoundingClientRect();
+    const pos = at ?? (arena ? { x: arena.left + arena.width / 2, y: arena.bottom - 320 } : { x: 0, y: 0 });
+    setSplash({ key: Date.now(), def: cardDef(CONTENT, inst.id), x: pos.x, y: pos.y });
+    setState(next);
+    const dmg = state.enemy.hp - next.enemy.hp;
+    if (dmg > 0) void counterFx(dmg).then(() => setFlash({ key: Date.now(), player: 0, enemy: dmg }));
+  };
+
+  /** The bot winds up and its requests (and your users') stream into the gateway. */
+  const attackFx = async (plan: TurnPlan) => {
+    const layer = fxRef.current;
+    const bot = botRef.current;
+    const gate = gateRef.current;
+    if (!layer || !bot || !gate) return wait(700);
+    pulse(bot, 1.14, 420);
+    await wait(260);
+    const from = anchor(bot, layer, 0.22, 0.55);
+    const to = anchor(gate, layer, 0.92, 0.5);
+    const stopX = shieldRef.current ? anchor(shieldRef.current, layer).x : undefined;
+    const onHit = () => glow(gate, 'rgba(251,113,133,0.75)', 240);
+    const usersFrom = { x: (from.x + to.x) / 2, y: -12 };
+    await Promise.all([
+      wave(layer, {
+        from,
+        to,
+        count: clamp(Math.round(plan.botRps / 60), 10, 48),
+        blocked: plan.botRps > 0 ? plan.botBlockedRps / plan.botRps : 0,
+        stopX,
+        kind: 'bot',
+        window: 1500,
+        flight: 780,
+        spreadFrom: 34,
+        onHit,
+      }),
+      wave(layer, {
+        from: usersFrom,
+        to,
+        count: clamp(Math.round(plan.legitRps / 45), 3, 10),
+        kind: 'user',
+        window: 1500,
+        flight: 900,
+        spreadFrom: 0,
+        arc: 0,
+      }),
+    ]);
+  };
+
+  /** Hits land: your system shakes for the damage you took, then it hits back. */
+  const impactFx = async (r: TurnReport) => {
+    if (r.damage.total > 0) {
+      shake(infraRef.current, Math.min(12, 4 + r.damage.total));
+      const red = 'rgba(244,63,94,0.8)';
+      if (r.errorRate > 0.01 || r.damage.latency > 0) {
+        glow(nodeEls.current.api, red, 500);
+        glow(nodeEls.current.db, red, 500);
+      }
+      await wait(380);
+    }
+    if (r.enemyDamage > 0) await counterFx(r.enemyDamage);
+    else await wait(200);
+  };
+
+  const endTurn = async () => {
     if (busy.current || state.phase !== 'player') return;
     busy.current = true;
     setResolving(true);
     setError(null);
     try {
       const plan = planTurn(CONTENT, state);
-      const [summary] = await Promise.all([compute.run(plan.input), new Promise((r) => setTimeout(r, 700))]);
+      const engine = compute.run(plan.input);
+      engine.catch(() => undefined); // awaited below; avoid an unhandled rejection meanwhile
+      await attackFx(plan);
+      const summary = await engine;
       const next = resolveTurn(CONTENT, state, plan, summary);
       const r = next.reports.at(-1)!;
+      await impactFx(r);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: r.enemyDamage });
       setState(next);
     } catch (err) {
@@ -124,32 +205,44 @@ export function CardBattle() {
       busy.current = false;
       setResolving(false);
     }
-  }, [state]);
+  };
 
-  // keyboard: 1-9 play a card, E / Space end the turn
+  // keyboard: 1-9 play a card, E ends the turn
+  const keys = useRef({ play, endTurn });
+  keys.current = { play, endTurn };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (/^[1-9]$/.test(e.key)) {
         const card = state.hand[Number(e.key) - 1];
-        if (card) play(card.uid);
+        if (card) keys.current.play(card.uid);
       } else if (e.key === 'e' || e.key === 'E') {
-        void endTurn();
+        void keys.current.endTurn();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.hand, play, endTurn]);
+  }, [state.hand]);
 
   const intent = currentIntent(CONTENT, state);
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
   const lastReport = state.reports.at(-1);
   const over = state.phase === 'won' || state.phase === 'lost';
+  const hand = state.hand.map((inst) => ({
+    uid: inst.uid,
+    def: cardDef(CONTENT, inst.id),
+    playable: canPlay(CONTENT, state, inst.uid) && !resolving,
+  }));
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(ellipse_at_top,rgba(56,189,248,0.07),transparent_60%)]">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(ellipse_at_80%_45%,rgba(244,63,94,0.10),transparent_45%),radial-gradient(ellipse_at_22%_45%,rgba(56,189,248,0.09),transparent_50%)]">
       {/* top bar */}
-      <div className="flex items-center gap-3 border-b px-4 py-2 text-sm">
+      <div className="relative z-30 flex items-center gap-3 px-4 py-2 text-sm">
+        <Button size="sm" variant="ghost" asChild>
+          <Link to="/play">
+            <ArrowLeft /> Thoát
+          </Link>
+        </Button>
         <span className="font-semibold">{CONTENT.battle.title}</span>
         <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-300">Prototype</span>
         <span className="text-muted-foreground">Lượt {state.turn}</span>
@@ -169,76 +262,129 @@ export function CardBattle() {
 
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
 
-      <div className="flex min-h-0 flex-1 gap-4 overflow-auto p-4">
-        {/* left: player */}
-        <div className="flex w-64 shrink-0 flex-col gap-3">
-          <PlayerPanel state={state} flash={flash} />
-          <TurnLog reports={state.reports} />
+      <div ref={arenaRef} className="relative min-h-0 flex-1">
+        {/* the two sides face each other across the arena */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1.5fr)_minmax(140px,0.55fr)_minmax(260px,0.75fr)] gap-6 overflow-y-auto px-6 pb-[200px] pt-2">
+          <div className="flex min-w-0 flex-col justify-center gap-4">
+            <PlayerHeader state={state} flash={flash} />
+            <div ref={infraRef}>
+              <InfraLine state={state} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} />
+            </div>
+            {lastReport ? <ReportCard report={lastReport} /> : <FirstTurnHint />}
+            {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
+          </div>
+
+          <div className="flex min-w-0 flex-col items-center justify-center gap-4">
+            {resolving ? (
+              <div className="text-center text-xs text-muted-foreground">
+                <LoaderCircle className="mx-auto mb-1 size-5 animate-spin text-sky-400" />
+                Engine đang chạy {CONTENT.battle.turnMs / 1000} giây traffic
+                <div className="mt-2 flex justify-center gap-3">
+                  <Legend color="bg-rose-400" label="bot" />
+                  <Legend color="bg-sky-300" label="người dùng" />
+                  <Legend color="bg-emerald-400" label="bị chặn" />
+                </div>
+              </div>
+            ) : (
+              <span className="select-none font-black italic tracking-tighter text-foreground/10 [font-size:64px]">VS</span>
+            )}
+            <TurnLog reports={state.reports} />
+          </div>
+
+          <div className="flex min-w-0 flex-col items-center justify-center">
+            <BotSide state={state} name={enemy.name} description={enemy.description} intent={intent} flash={flash} botRef={botRef} attacking={resolving} />
+          </div>
         </div>
 
-        {/* center: board + last turn */}
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <Board state={state} />
-          {lastReport ? <ReportCard report={lastReport} /> : <FirstTurnHint />}
-          {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
-        </div>
+        {/* drop target while a card is dragged */}
+        {dragState !== 'idle' && (
+          <div
+            className={cn(
+              'pointer-events-none absolute inset-x-6 bottom-[150px] top-2 z-10 flex items-center justify-center rounded-3xl border-2 border-dashed transition-colors',
+              dragState === 'over' ? 'border-amber-300/70 bg-amber-300/5' : 'border-foreground/15',
+            )}
+          >
+            <span className={cn('rounded-full bg-background/80 px-3 py-1 text-sm', dragState === 'over' ? 'text-amber-200' : 'text-muted-foreground')}>
+              {dragState === 'over' ? 'Thả để đánh lá này' : 'Kéo lên vùng chơi'}
+            </span>
+          </div>
+        )}
 
-        {/* right: enemy */}
-        <div className="w-72 shrink-0">
-          <EnemyPanel state={state} name={enemy.name} description={enemy.description} intent={intent} flash={flash} />
-        </div>
-      </div>
+        <div ref={fxRef} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden" />
 
-      {/* hand */}
-      <div className="border-t bg-background/80 px-4 pb-3 pt-2 backdrop-blur">
-        <div className="mb-2 flex items-center gap-4 text-xs text-muted-foreground">
+        {/* bottom corners: resources and the end-turn button, either side of the hand */}
+        <div className="absolute bottom-4 left-6 z-30 flex flex-col gap-1.5 text-xs text-muted-foreground">
           <OpsPips ops={state.ops} max={CONTENT.battle.opsPerTurn} />
-          <span>
-            <Layers className="mr-1 inline size-3.5" />
-            Bộ rút {state.drawPile.length}
-          </span>
-          <span>Bỏ {state.discard.length}</span>
-          {state.exhausted.length > 0 && <span>Tiêu hao {state.exhausted.length}</span>}
-          <span className="hidden md:inline">Phím 1–9 để đánh, E để kết thúc lượt</span>
-          <Button className="ml-auto" disabled={state.phase !== 'player' || resolving} onClick={() => void endTurn()}>
+          <div className="flex gap-3">
+            <span>
+              <Layers className="mr-1 inline size-3.5" />
+              Bộ rút {state.drawPile.length}
+            </span>
+            <span>Bỏ {state.discard.length}</span>
+            {state.exhausted.length > 0 && <span>Tiêu hao {state.exhausted.length}</span>}
+          </div>
+          <span className="hidden lg:inline">Kéo bài lên để đánh · phím 1–9 · E kết thúc lượt</span>
+        </div>
+        <div className="absolute bottom-6 right-6 z-30">
+          <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player' || resolving} onClick={() => void endTurn()}>
             {resolving ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}
             Kết thúc lượt
           </Button>
         </div>
-        <div className="flex min-h-56 items-end justify-center gap-3 overflow-x-auto pb-1">
-          {state.hand.map((inst, i) => (
-            <CardView
-              key={inst.uid}
-              def={cardDef(CONTENT, inst.id)}
-              index={i + 1}
-              playable={canPlay(CONTENT, state, inst.uid) && !resolving}
-              onPlay={() => play(inst.uid)}
-            />
-          ))}
-          {state.hand.length === 0 && <p className="self-center text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>}
-        </div>
+
+        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={setDragState} />
+        {hand.length === 0 && !over && (
+          <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
+        )}
       </div>
 
-      {resolving && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-[1px]">
-          <div className="flex items-center gap-3 rounded-lg border bg-card px-5 py-4 shadow-xl">
-            <LoaderCircle className="size-5 animate-spin text-sky-400" />
-            <div>
-              <div className="font-medium">Engine đang chạy {CONTENT.battle.turnMs / 1000} giây traffic…</div>
-              <div className="text-xs text-muted-foreground">
-                {n0(CONTENT.battle.legitRps)} người dùng/s + bot {n0(intent.botRps)} rps ({intent.label})
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {splash && <PlayedSplash key={splash.key} def={splash.def} x={splash.x} y={splash.y} onDone={() => setSplash(null)} />}
 
       {over && <EndScreen state={state} seed={seed} onRetry={() => restart(seed)} onNew={() => restart(randomSeed())} />}
     </div>
   );
 }
 
-// ---------------------------------------------------------------- panels
+// ---------------------------------------------------------------- pieces
+
+function Legend({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className={cn('size-2 rounded-full', color)} />
+      {label}
+    </span>
+  );
+}
+
+/** A played card flares up where it was dropped and fades into the arena. */
+function PlayedSplash({ def, x, y, onDone }: { def: CardDef; x: number; y: number; onDone: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const anim = el.animate(
+      [
+        { transform: 'scale(1.08)', opacity: 1, filter: 'brightness(1.4)' },
+        { transform: 'scale(1.15)', opacity: 1, filter: 'brightness(1.1)', offset: 0.35 },
+        { transform: 'scale(0.6) translateY(-40px)', opacity: 0, filter: 'brightness(1)' },
+      ],
+      { duration: 650, easing: 'ease-out', fill: 'forwards' },
+    );
+    anim.onfinish = () => done.current();
+    return () => anim.cancel();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className="pointer-events-none fixed z-50"
+      style={{ left: x - CARD_SIZE.w / 2, top: y - CARD_SIZE.h / 2, width: CARD_SIZE.w, height: CARD_SIZE.h }}
+    >
+      <CardFace def={def} playable glowing />
+    </div>
+  );
+}
 
 function Bar({ value, max, className }: { value: number; max: number; className: string }) {
   return (
@@ -253,32 +399,34 @@ function DamagePop({ flash, value, side }: { flash: { key: number } | null; valu
   return (
     <span
       key={`${flash.key}-${side}`}
-      className="pointer-events-none absolute right-3 top-8 animate-out fade-out slide-out-to-top-6 fill-mode-forwards text-2xl font-bold text-rose-400 duration-[1400ms]"
+      className="pointer-events-none absolute -top-2 right-2 animate-out fade-out slide-out-to-top-6 fill-mode-forwards text-3xl font-black text-rose-400 drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)] duration-[1400ms]"
     >
       −{value}
     </span>
   );
 }
 
-function PlayerPanel({ state, flash }: { state: BattleState; flash: { key: number; player: number } | null }) {
+function PlayerHeader({ state, flash }: { state: BattleState; flash: Flash | null }) {
+  const cost = costOf(state.design, state.temp);
+  const budget = CONTENT.battle.budgetPerHour;
   return (
-    <div className="relative rounded-lg border bg-card p-3">
+    <div className="relative max-w-md">
       <DamagePop flash={flash} value={flash?.player ?? 0} side="player" />
-      <div className="mb-1 flex items-center gap-2 text-sm font-medium">
+      <div className="mb-1.5 flex items-center gap-2 text-sm font-medium">
         <Heart className="size-4 text-rose-400" /> Error Budget
-        <span className="ml-auto font-mono">
+        <span className="font-mono">
           {state.hp}/{state.maxHp}
         </span>
+        {state.headroom > 0 && (
+          <span className="flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 text-xs text-sky-300">
+            <Shield className="size-3.5" /> {state.headroom}
+          </span>
+        )}
+        <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
+          <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
+        </span>
       </div>
-      <Bar value={state.hp} max={state.maxHp} className="bg-rose-500" />
-      <p className="mt-2 text-xs text-muted-foreground">
-        Mất máu khi người dùng thật gặp lỗi, khi p99 vượt SLO {CONTENT.battle.sloP99Ms}ms, hoặc khi vượt ngân sách.
-      </p>
-      {state.headroom > 0 && (
-        <div className="mt-2 flex items-center gap-2 rounded-md bg-sky-500/10 px-2 py-1 text-sm text-sky-300">
-          <Shield className="size-4" /> Headroom {state.headroom}
-        </div>
-      )}
+      <Bar value={state.hp} max={state.maxHp} className="bg-gradient-to-r from-rose-600 to-rose-400" />
     </div>
   );
 }
@@ -290,7 +438,7 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
       {Array.from({ length: Math.max(ops, max) }, (_, i) => (
         <span
           key={i}
-          className={cn('size-3.5 rounded-full border', i < ops ? 'border-amber-300 bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'border-muted-foreground/40')}
+          className={cn('size-4 rounded-full border', i < ops ? 'border-amber-300 bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)]' : 'border-muted-foreground/40')}
         />
       ))}
       <span className="font-mono text-xs text-muted-foreground">
@@ -300,46 +448,55 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
   );
 }
 
-function EnemyPanel({
+function BotSide({
   state,
   name,
   description,
   intent,
   flash,
+  botRef,
+  attacking,
 }: {
   state: BattleState;
   name: string;
   description: string;
   intent: Intent;
-  flash: { key: number; enemy: number } | null;
+  flash: Flash | null;
+  botRef: React.RefObject<HTMLDivElement | null>;
+  attacking: boolean;
 }) {
   const Icon = INTENT_ICON[intent.icon];
   const raw = botRpsNow(CONTENT, state);
   const cut = botCutNow(state);
   return (
-    <div className="flex flex-col gap-3">
-      <div className="relative rounded-lg border border-rose-500/30 bg-card p-3">
+    <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
+      {/* what it is about to do, said out loud */}
+      <div className="relative rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-center">
+        <div className="flex items-center justify-center gap-1.5 font-semibold">
+          <Icon className="size-4 text-amber-300" /> {intent.label}
+        </div>
+        <div className="font-mono text-xs text-amber-200/80">{n0(raw * (1 - cut))} rps lọt vào</div>
+        <span className="absolute -bottom-1.5 left-1/2 size-3 -translate-x-1/2 rotate-45 border-b border-r border-amber-500/40 bg-[color-mix(in_oklab,var(--background)_88%,#f59e0b)]" />
+      </div>
+
+      <BotAvatar ref={botRef} hpRatio={state.enemy.hp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
+
+      <div className="relative w-full">
         <DamagePop flash={flash} value={flash?.enemy ?? 0} side="enemy" />
         <div className="mb-1 flex items-center gap-2 text-sm font-medium">
-          <Skull className="size-4 text-rose-400" /> {name}
+          <Skull className="size-4 text-rose-400" /> <span title={description}>{name}</span>
           <span className="ml-auto font-mono">
             {state.enemy.hp}/{state.enemy.maxHp}
           </span>
         </div>
         <Bar value={state.enemy.hp} max={state.enemy.maxHp} className="bg-gradient-to-r from-rose-600 to-orange-500" />
-        <p className="mt-2 text-xs text-muted-foreground">{description}</p>
       </div>
 
-      <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
-        <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-amber-300/80">Ý định lượt này</div>
-        <div className="flex items-center gap-2 text-lg font-semibold">
-          <Icon className="size-5 text-amber-300" /> {intent.label}
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">{intent.text}</p>
-        <div className="mt-3 space-y-1 font-mono text-xs">
+      <div className="w-full rounded-lg bg-card/60 p-3 text-xs backdrop-blur">
+        <p className="mb-2 text-muted-foreground">{intent.text}</p>
+        <div className="space-y-1 font-mono">
           <Row label="Bot dự kiến" value={`${n0(raw)} rps`} />
           <Row label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
-          <Row label="Lọt vào hệ thống" value={`${n0(raw * (1 - cut))} rps`} />
           <Row label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
           {state.temp.hotfix && (intent.chaos || intent.clientRetries || intent.cacheHitScale !== undefined) && (
             <div className="pt-1 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
@@ -359,67 +516,71 @@ function Row({ label, value, good }: { label: string; value: string; good?: bool
   );
 }
 
-// ---------------------------------------------------------------- board
+// ---------------------------------------------------------------- your infrastructure
 
-function Board({ state }: { state: BattleState }) {
+/**
+ * Your system, drawn facing the bot: requests enter at Nginx on the right and
+ * flow left to the database, behind the WAF / rate-limit shield.
+ */
+function InfraLine({
+  state,
+  gateRef,
+  shieldRef,
+  nodeEls,
+}: {
+  state: BattleState;
+  gateRef: React.RefObject<HTMLDivElement | null>;
+  shieldRef: React.RefObject<HTMLDivElement | null>;
+  nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
+}) {
   const d = state.design;
   const api = nodeOf(d, 'api')!.config!;
   const db = nodeOf(d, 'db')!.config!;
   const cache = nodeOf(d, 'cache');
   const out = apiOut(d)!;
-  const cost = costOf(d, state.temp);
-  const budget = CONTENT.battle.budgetPerHour;
-  const policies = [
-    out.timeoutMs ? `timeout ${out.timeoutMs}ms` : null,
-    out.retries ? `retry ×${out.retries}` : null,
-    out.circuitBreaker ? 'breaker' : null,
-  ].filter(Boolean) as string[];
-  const shields = [
-    state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null,
-    state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null,
-  ].filter(Boolean) as string[];
+  const policies = [out.timeoutMs ? `timeout ${out.timeoutMs}ms` : null, out.retries ? `retry ×${out.retries}` : null, out.circuitBreaker ? 'breaker' : null].filter(
+    Boolean,
+  ) as string[];
+  const shields = [state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null, state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null].filter(
+    Boolean,
+  ) as string[];
+  const set = (id: string) => (el: HTMLDivElement | null) => {
+    nodeEls.current[id] = el;
+  };
 
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-        Hệ thống của bạn
-        <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
-          <Wallet className="size-3.5" /> ${cost.toFixed(2)}/h · ngân sách ${budget.toFixed(2)}/h
-        </span>
-      </div>
-      <div className="flex items-center gap-1 overflow-x-auto pb-1 pr-2 pt-6">
-        <BoardNode icon={<Users />} title="Client" sub="người dùng + bot" />
-        <Link label={shields.join(' · ')} shield={shields.length > 0} />
-        <BoardNode icon={<Network />} title="Nginx" sub="load balancer" />
-        <Link />
-        <BoardNode
-          icon={<Server />}
-          title="API"
-          sub={`${api.concurrency} slot/instance`}
-          count={api.instances ?? 1}
-          extra={state.temp.api}
-          accent="sky"
-        />
-        <Link label={policies.join(' · ')} policy={policies.length > 0} />
-        {cache && (
+    <div className="flex items-center gap-1 pt-6">
+      <InfraNode nodeRef={set('db')} icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} connection`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
+      {cache && (
+        <>
+          <Pipe />
+          <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
+        </>
+      )}
+      <Pipe label={policies.join(' · ')} policy={policies.length > 0} />
+      <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot/instance`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" />
+      <Pipe />
+      <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" />
+      <div className="relative ml-3 flex w-6 shrink-0 justify-center self-stretch">
+        {shields.length > 0 ? (
           <>
-            <BoardNode icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
-            <Link />
+            <div ref={shieldRef} className="h-full min-h-20 w-1.5 rounded-full bg-emerald-400/80 shadow-[0_0_16px_4px_rgba(52,211,153,0.45)]" />
+            <span className="absolute -top-6 whitespace-nowrap rounded bg-emerald-500/15 px-1 text-[10px] text-emerald-300">{shields.join(' · ')}</span>
           </>
-        )}
-        <BoardNode icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} connection`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
+        ) : null}
       </div>
     </div>
   );
 }
 
-function BoardNode({
+function InfraNode({
   icon,
   title,
   sub,
   count,
   extra = 0,
   accent,
+  nodeRef,
 }: {
   icon: ReactNode;
   title: string;
@@ -427,10 +588,18 @@ function BoardNode({
   count?: number;
   extra?: number;
   accent?: 'sky' | 'red' | 'indigo';
+  nodeRef?: (el: HTMLDivElement | null) => void;
 }) {
-  const color = accent === 'sky' ? 'border-sky-500/50' : accent === 'red' ? 'border-red-500/50' : accent === 'indigo' ? 'border-indigo-500/50' : 'border-border';
+  const color =
+    accent === 'sky'
+      ? 'border-sky-500/50 [&_svg]:text-sky-300'
+      : accent === 'red'
+        ? 'border-red-500/50 [&_svg]:text-red-300'
+        : accent === 'indigo'
+          ? 'border-indigo-500/50 [&_svg]:text-indigo-300'
+          : 'border-foreground/20 [&_svg]:text-foreground/80';
   return (
-    <div className={cn('relative min-w-24 shrink-0 rounded-md border-2 bg-background px-2.5 py-2', color)}>
+    <div ref={nodeRef} className={cn('relative min-w-[92px] shrink-0 rounded-xl border-2 bg-card/80 px-2.5 py-2 shadow-lg shadow-black/30 backdrop-blur', color)}>
       <div className="flex items-center gap-1.5 text-sm font-medium [&_svg]:size-4">
         {icon}
         {title}
@@ -446,23 +615,18 @@ function BoardNode({
   );
 }
 
-function Link({ label, shield, policy }: { label?: string; shield?: boolean; policy?: boolean }) {
+/** A connection; requests flow right to left, from the gateway inwards. */
+function Pipe({ label, policy }: { label?: string; policy?: boolean }) {
   return (
-    <div className="relative flex min-w-8 flex-1 flex-col items-center">
+    <div className="relative flex min-w-6 flex-1 flex-col items-center">
       {label ? (
-        <span
-          className={cn(
-            'absolute -top-5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded px-1 text-[10px]',
-            shield && 'bg-emerald-500/15 text-emerald-300',
-            policy && 'bg-violet-500/15 text-violet-300',
-          )}
-        >
+        <span className={cn('absolute -top-5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded px-1 text-[10px]', policy && 'bg-violet-500/15 text-violet-300')}>
           {label}
         </span>
       ) : null}
       <div className="flex w-full items-center">
+        <ArrowLeft className="-mr-1 size-3 text-muted-foreground/60" />
         <div className="h-px flex-1 bg-muted-foreground/40" />
-        <ArrowRight className="-ml-1 size-3 text-muted-foreground/60" />
       </div>
     </div>
   );
@@ -548,47 +712,6 @@ function TurnLog({ reports }: { reports: TurnReport[] }) {
           ))}
       </ol>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- cards
-
-function CardView({ def, index, playable, onPlay }: { def: CardDef; index: number; playable: boolean; onPlay: () => void }) {
-  const style = TYPE_STYLE[def.type];
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          disabled={!playable}
-          onClick={onPlay}
-          className={cn(
-            'group relative flex h-56 w-40 shrink-0 flex-col overflow-hidden rounded-xl border-2 bg-card text-left shadow-lg transition-all duration-150',
-            style.ring,
-            playable ? 'cursor-pointer hover:-translate-y-3 hover:shadow-2xl' : 'cursor-not-allowed opacity-50 saturate-50',
-          )}
-        >
-          <div className={cn('bg-gradient-to-b to-transparent px-3 pb-2 pt-3', style.head)}>
-            <div className="flex items-start gap-2">
-              <span
-                className={cn(
-                  'flex size-7 shrink-0 items-center justify-center rounded-full border-2 font-mono text-sm font-bold',
-                  def.unplayable ? 'border-zinc-600 text-zinc-500' : 'border-amber-300 bg-amber-400/20 text-amber-200',
-                )}
-              >
-                {def.unplayable ? '–' : def.cost}
-              </span>
-              <span className="text-sm font-semibold leading-tight">{def.name}</span>
-            </div>
-            <span className={cn('mt-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', style.chip)}>{style.label}</span>
-          </div>
-          <p className="flex-1 px-3 text-xs leading-snug">{def.text}</p>
-          {def.exhaust && <p className="px-3 text-[10px] text-amber-300/80">Tiêu hao</p>}
-          <p className="border-t px-3 py-2 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>
-          <span className="absolute bottom-1 right-2 font-mono text-[10px] text-muted-foreground/60">{index}</span>
-        </button>
-      </TooltipTrigger>
-      {!playable && !def.unplayable && <TooltipContent>Không đủ Ops</TooltipContent>}
-    </Tooltip>
   );
 }
 
