@@ -455,7 +455,7 @@ export function CardBattle() {
   }));
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(ellipse_at_80%_45%,rgba(244,63,94,0.10),transparent_45%),radial-gradient(ellipse_at_22%_45%,rgba(56,189,248,0.09),transparent_50%)]">
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-clip bg-[radial-gradient(ellipse_at_80%_45%,rgba(244,63,94,0.10),transparent_45%),radial-gradient(ellipse_at_22%_45%,rgba(56,189,248,0.09),transparent_50%)]">
       {/* top bar */}
       <div className="relative z-30 flex items-center gap-3 px-4 py-2 text-sm">
         <Button size="sm" variant="ghost" asChild>
@@ -490,20 +490,29 @@ export function CardBattle() {
 
       <div ref={arenaRef} className="relative min-h-0 flex-1">
         {/* the two sides face each other across the arena; equal side columns
-            keep the middle on the exact center. Row 1 holds the system and the
-            bot (bottom-aligned), row 2 both health bars on one line under them. */}
-        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto_auto] gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
-          <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start self-end">
-            <div className="w-full max-w-[400px]">
-              <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+            keep the middle on the exact center. Each side is its panel with its
+            health bar under it, and both sides are centered vertically. */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] grid-rows-[auto_auto] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-2 [align-content:safe_center]">
+          <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
+            <div className="flex w-full max-w-[460px] flex-col items-center gap-3">
+              <div className="w-full">
+                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+              </div>
+                <HpBar
+                  hpRef={hpRef}
+                  icon={<Heart />}
+                  label="Error Budget"
+                  hp={live?.hp ?? state.hp}
+                  max={state.maxHp}
+                  headroom={live?.headroom ?? state.headroom}
+                  flash={flash}
+                  pop={flash?.player ?? 0}
+                  barClass="from-rose-600 to-rose-400"
+                />
             </div>
           </div>
 
-          <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end self-end">
-            <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
-          </div>
-
-          <div className="col-start-2 row-span-2 row-start-1 flex min-w-0 flex-col items-center justify-center">
+          <div className="col-start-2 row-start-1 flex min-w-0 flex-col items-center justify-center">
             {live ? (
               <LiveReadout live={live} onSkip={() => (skip.current = true)} />
             ) : (
@@ -511,39 +520,25 @@ export function CardBattle() {
             )}
           </div>
 
-          <div className="col-start-1 row-start-2 flex min-w-0 justify-start">
-            <div className="flex w-full max-w-[400px] justify-center">
-              <HpBar
-                hpRef={hpRef}
-                icon={<Heart />}
-                label="Error Budget"
-                hp={live?.hp ?? state.hp}
-                max={state.maxHp}
-                headroom={live?.headroom ?? state.headroom}
-                flash={flash}
-                pop={flash?.player ?? 0}
-                barClass="from-rose-600 to-rose-400"
-              />
-            </div>
-          </div>
-          <div className="col-start-3 row-start-2 flex min-w-0 justify-end">
-            <div className="flex w-full max-w-[300px] justify-center">
-              <HpBar
-                icon={<Skull />}
-                label={enemy.name}
-                title={enemy.description}
-                hp={live?.enemyHp ?? state.enemy.hp}
-                max={state.enemy.maxHp}
-                flash={flash}
-                pop={flash?.enemy ?? 0}
-                barClass="from-rose-600 to-orange-500"
-              />
+          <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
+            <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
+              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
+                <HpBar
+                  icon={<Skull />}
+                  label={enemy.name}
+                  title={enemy.description}
+                  hp={live?.enemyHp ?? state.enemy.hp}
+                  max={state.enemy.maxHp}
+                  flash={flash}
+                  pop={flash?.enemy ?? 0}
+                  barClass="from-rose-600 to-orange-500"
+                />
             </div>
           </div>
 
           {error && (
-            <div className="col-start-1 row-start-3 flex min-w-0 flex-col items-start">
-              <div className="w-full max-w-[400px] rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>
+            <div className="col-start-1 row-start-2 flex min-w-0 flex-col items-start">
+              <div className="w-full max-w-[460px] rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>
             </div>
           )}
         </div>
@@ -676,14 +671,14 @@ function HpBar({
   return (
     <div ref={hpRef} className={cn('relative w-full max-w-[220px]', className)}>
       <DamagePop flash={flash} value={pop} side={label} />
-      {/* a thin bar, the numbers in a badge raised over its middle */}
+      {/* a thin bar, the numbers outlined and raised over its middle */}
       <div className="relative flex h-8 items-center">
         <div className={cn('h-1.5 w-full overflow-hidden rounded-full bg-muted', headroom > 0 && 'shadow-[0_0_0_2px_rgba(56,189,248,0.5)]')}>
           <div className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', barClass)} style={{ width: `${Math.max(0, hp / max) * 100}%` }} />
         </div>
-        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border border-rose-400/40 bg-background px-3 py-1 font-mono text-lg font-bold leading-none tabular-nums text-foreground shadow-lg shadow-black/60">
+        <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap font-mono text-xl font-black leading-none tabular-nums text-white [-webkit-text-stroke:3px_rgba(0,0,0,0.9)] [paint-order:stroke_fill] [text-shadow:0_2px_6px_rgba(0,0,0,0.9)]">
           {hp}
-          <span className="text-xs font-medium text-muted-foreground">/{max}</span>
+          <span className="text-sm font-bold text-white/80">/{max}</span>
         </span>
       </div>
       <div className="mt-0.5 flex items-center justify-center gap-1 text-xs font-medium text-muted-foreground [&>svg]:size-3.5 [&>svg]:shrink-0 [&>svg]:text-rose-400">
@@ -794,7 +789,7 @@ function SystemPanel({
       <div
         ref={panelRef}
         className={cn(
-          'relative rounded-3xl border-2 bg-[linear-gradient(160deg,rgba(14,165,233,0.10),rgba(9,9,11,0.55)_55%)] p-4 shadow-2xl shadow-black/50 backdrop-blur transition-[border-color,box-shadow] duration-300',
+          'relative rounded-3xl border-2 bg-[linear-gradient(160deg,rgba(14,165,233,0.10),rgba(9,9,11,0.55)_55%)] p-4 shadow-2xl shadow-black/50 backdrop-blur transition-[border-color,box-shadow] duration-300 sm:p-5',
           status === 'ok' ? 'border-sky-500/35' : status === 'warn' ? 'border-amber-500/45' : 'animate-pulse border-rose-500/60',
           state.headroom > 0 && 'shadow-[0_0_0_4px_rgba(56,189,248,0.25),0_0_36px_6px_rgba(56,189,248,0.3)]',
           hit && 'border-sky-400/60',
@@ -1083,14 +1078,14 @@ function InfraNode({
     <div
       ref={nodeRef}
       className={cn(
-        'relative flex min-w-0 flex-1 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 px-1 pb-2 pt-1.5 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
+        'relative flex min-w-0 flex-1 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 px-1.5 pb-2.5 pt-2 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
         color,
         load?.bad && 'border-rose-500 bg-rose-950/60',
       )}
     >
-      <span className="[&_svg]:size-4">{icon}</span>
-      <div className="mt-0.5 max-w-full truncate text-xs font-medium">{title}</div>
-      <div className={cn('max-w-full truncate text-[10px] text-muted-foreground', load && 'font-mono', load?.bad && 'text-rose-300')}>
+      <span className="[&_svg]:size-5">{icon}</span>
+      <div className="mt-0.5 max-w-full truncate text-sm font-medium">{title}</div>
+      <div className={cn('max-w-full truncate text-[11px] text-muted-foreground', load && 'font-mono', load?.bad && 'text-rose-300')}>
         {load ? `tải ${Math.round(load.util * 100)}%` : sub}
       </div>
       {load && (
