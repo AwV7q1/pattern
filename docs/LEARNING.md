@@ -92,13 +92,15 @@ Canvas mini, panel Ôn tập và panel So sánh đều là **panel tách đượ
 
 | Phần | Cấp độ | Bài | Thực hành |
 |---|---|---|---|
-| 1. Request đi đâu? | Cơ bản | client/server, latency, p50/p99, throughput và hàng đợi | Quán cà phê đông khách: scale instance |
-| 2. Gọi nhiều dịch vụ: thứ tự là tất cả | Cơ bản | tuần tự, song song, fire-and-forget, fan-out làm p99 xấu đi, payload và băng thông | Trang sản phẩm: tuần tự → song song. Email đăng ký: fire-and-forget |
-| 3. Mở rộng hệ thống | Trung cấp | scale dọc/ngang, LB, định luật Little, điểm gãy | Một máy không đủ: LB + nhiều node |
-| 4. Dữ liệu | Trung cấp | cache-aside, hit rate, connection pool và `max_connections` | Đợt sale đầu tiên |
-| 5. Khi mọi thứ hỏng | Trung cấp | timeout, retry/backoff/jitter, circuit breaker | Database chập chờn, Mất một zone |
-| 6. Bất đồng bộ | Trung cấp | queue, backlog | Black Friday |
-| 7. Nâng cao: đo và dự đoán | Nâng cao | event loop Node.js, đo bằng k6 và coordinated omission, sizing | dẫn sang tab Công suất |
+| 1. Request đi đâu? | Cơ bản | client/server, status code, latency và cỡ độ lớn, p50/p99 (không lấy trung bình percentile), throughput và hàng đợi, SLI/SLO/SLA và error budget | Quán cà phê đông khách: scale instance |
+| 2. Gọi nhiều dịch vụ: thứ tự là tất cả | Cơ bản | tuần tự, song song, fire-and-forget (bẫy trong NestJS), fan-out và hedged request, payload, băng thông và CDN, N+1 query | Trang sản phẩm: tuần tự → song song. Email đăng ký: fire-and-forget |
+| 3. Mở rộng hệ thống | Trung cấp | scale dọc/ngang, stateless, health check (liveness/readiness), định luật Little, điểm gãy, autoscaling kiểu HPA | Một máy không đủ: LB + nhiều node |
+| 4. Dữ liệu | Trung cấp | cache-aside, TTL, cache stampede, connection pool và `max_connections`, read replica và replication lag, index, sharding | Đợt sale đầu tiên |
+| 5. Khi mọi thứ hỏng | Trung cấp | timeout và deadline, retry/backoff/jitter, retry budget, circuit breaker và fallback, idempotency, bulkhead và load shedding, dự phòng nhiều zone | Database chập chờn, Mất một zone |
+| 6. Bất đồng bộ | Trung cấp | queue, backlog, at-least-once, DLQ, outbox, backpressure, rate limit (token bucket), pub/sub và partition Kafka | Black Friday |
+| 7. Nâng cao: đo và dự đoán | Nâng cao | event loop Node.js và cluster, đo bằng k6 và coordinated omission, sizing (RAM, N+1), GC pause và USL, metrics/logs/traces, RED/USE | dẫn sang tab Công suất |
+
+Có 42 bài. Thẻ `predict` và `fix` chạy bằng engine có ở mọi phần, ví dụ: N+1 query (đổi vòng lặp thành một query), TTL cache (có bẫy TTL 1 ngày làm giá cũ), pool kết nối (có bẫy pool 200 vượt `max_connections` khi scale), timeout trong retry storm (có bẫy timeout 30 s), số lần retry cho lỗi thoáng qua, số process Node trong cluster. Thẻ `predict` cho thấy autoscale chậm hơn spike, retry storm không tự hồi phục, circuit breaker giúp hồi phục, và queue giữ p99 thấp trong đợt đỉnh.
 
 Level thực hành nằm ở `levels/learn/`, có lời giải ở `levels/learn/solutions/`. Hai luật mới giữ cho bài học có ý nghĩa:
 
@@ -125,4 +127,4 @@ cargo test -p pattern-engine --test levels   # level ban đầu phải thua, l�
 ## Hướng phát triển
 
 - Bài kiểm tra nhảy cóc để mở nhanh cả một phần.
-- Thêm thẻ `fix` cho phần Dữ liệu và Khi mọi thứ hỏng (cache, timeout/retry).
+- Thẻ `fix` cho phần Bất đồng bộ (cần núm thêm/bớt queue, số consumer).

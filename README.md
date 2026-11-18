@@ -23,7 +23,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 ## Tính năng
 
-- **Học** (tab mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 29 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
+- **Học** (tab mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 42 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
 - **Sandbox**: kéo thả thành phần (LB, service, cache, DB, queue), nối dây, xoá. Chỉnh mọi tham số node và chính sách edge (timeout, retry + backoff + jitter, circuit breaker). Điều khiển RPS, spike ×2/×3/×5, tắt node (chaos). Tải design ra JSON để chạy bằng CLI.
 - **Studio** (trong tab Sandbox), xem [docs/STUDIO.md](docs/STUDIO.md):
   - Thư viện khoảng 45 công nghệ thật (Nginx, Traefik, NestJS, Go, Redis, PostgreSQL, RabbitMQ, Kafka, Authentik, Keycloak, Kubernetes…) có logo, mô tả tổng quan và chi tiết, thanh điểm mạnh/yếu, so sánh tối đa 4 lựa chọn, đổi công nghệ ngay trong Inspector.
