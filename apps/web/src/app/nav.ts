@@ -9,6 +9,7 @@ import {
   Layers,
   MessagesSquare,
   Shapes,
+  UserRound,
   Wrench,
   type LucideIcon,
 } from 'lucide-react';
@@ -61,5 +62,9 @@ export const NAV: NavGroup[] = [
       { to: '/capacity/sizing', label: 'Chọn server', icon: Boxes, keywords: 'sizing vps vcpu ram capacity' },
       { to: '/capacity/calibrate', label: 'Hiệu chỉnh k6', icon: Gauge, keywords: 'calibrate k6 load test' },
     ],
+  },
+  {
+    label: 'Tài khoản',
+    items: [{ to: '/account', label: 'Tài khoản', icon: UserRound, keywords: 'account login đăng nhập đồng bộ sync' }],
   },
 ];

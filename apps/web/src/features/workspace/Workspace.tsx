@@ -1352,7 +1352,7 @@ export function Workspace(props: WorkspaceProps) {
           >
             <Background gap={24} color="oklch(1 0 0 / 6%)" />
             <ParticleLayer client={client} />
-            <Controls showInteractive={false} position="bottom-right" />
+            <Controls showInteractive={false} position="bottom-right" style={{ marginBottom: 96 }} />
             <Panel position="bottom-left" className="!m-3">
               <div className="flex overflow-hidden rounded-md border bg-background/90 text-[11px]">
                 {(
@@ -1388,7 +1388,7 @@ export function Workspace(props: WorkspaceProps) {
             </div>
           )}
           {error && (
-            <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
+            <div className="absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
               {error}
             </div>
           )}

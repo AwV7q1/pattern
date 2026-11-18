@@ -24,7 +24,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 ## Tính năng
 
-Điều hướng bằng thanh bên trái (thu gọn được) và **⌘K / Ctrl+K** để tìm nhanh trang, dự án, level, bài học, công nghệ, thuật ngữ. Mỗi màn có URL riêng:
+Điều hướng bằng thanh tab nổi ở đáy màn hình (Học, Game, Studio, Công suất, Từ điển; ẩn khi đang học một bài), nút **Thêm** hoặc **⌘K / Ctrl+K** để tìm nhanh trang, dự án, level, bài học, công nghệ, thuật ngữ. Mỗi màn có URL riêng:
 
 | URL | Màn |
 |---|---|

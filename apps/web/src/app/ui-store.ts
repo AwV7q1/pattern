@@ -3,8 +3,9 @@ import { persist } from 'zustand/middleware';
 import type { Design } from '@/types';
 
 interface UiState {
-  sidebarCollapsed: boolean;
-  toggleSidebar: () => void;
+  /** A lesson or review is open: the tab bar steps aside. */
+  immersive: boolean;
+  setImmersive: (on: boolean) => void;
   commandOpen: boolean;
   setCommandOpen: (open: boolean) => void;
   /** Last design opened in the studio, offered by the capacity tools. */
@@ -15,8 +16,8 @@ interface UiState {
 export const useUi = create<UiState>()(
   persist(
     (set) => ({
-      sidebarCollapsed: false,
-      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      immersive: false,
+      setImmersive: (immersive) => set({ immersive }),
       commandOpen: false,
       setCommandOpen: (commandOpen) => set({ commandOpen }),
       lastDesign: null,
@@ -24,7 +25,7 @@ export const useUi = create<UiState>()(
     }),
     {
       name: 'pattern.ui',
-      partialize: (s) => ({ sidebarCollapsed: s.sidebarCollapsed, lastDesign: s.lastDesign }),
+      partialize: (s) => ({ lastDesign: s.lastDesign }),
     },
   ),
 );
