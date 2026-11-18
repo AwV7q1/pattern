@@ -32,6 +32,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
   - Kubernetes: khung Cluster/Namespace/Node pool/Zone, autoscale kiểu HPA trong engine (pod khởi động trễ, ổn định khi giảm).
   - Case study đơn giản hoá từ bài viết công khai của Discord, Slack, Netflix, Twitter, Stack Overflow, Figma.
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
+- **Game thẻ bài** (Game → Thẻ bài, prototype): deckbuilder theo lượt chống botnet. Mỗi lượt engine chạy 10s traffic thật, số liệu quyết định sát thương. Xem [docs/CARDS.md](docs/CARDS.md).
 - **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
 - **Công suất**:
   - Sizing wizard: tải mục tiêu cộng chi phí mỗi request đo được, cho ra số vCPU, RAM, pool, gói VPS. Kết quả được kiểm chứng bằng mô phỏng ở các kịch bản cao điểm, đột biến, mất 1 server và DB chậm.

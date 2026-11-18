@@ -10,6 +10,7 @@
     "sim": "cargo run -q --release -p pattern-sim --",
     "test:gpu": "node apps/web/scripts/gpu-smoke.cjs",
     "dev:server": "pnpm --filter server dev",
-    "check:learn": "node --experimental-strip-types apps/web/scripts/check-curriculum.mjs"
+    "check:learn": "node --experimental-strip-types apps/web/scripts/check-curriculum.mjs",
+    "balance:cards": "node --experimental-strip-types apps/web/scripts/cards-balance.mjs"
   }
 }

@@ -1,0 +1,251 @@
+[
+  {
+    "id": "scale_api",
+    "name": "Scale Out API",
+    "type": "infra",
+    "cost": 1,
+    "text": "+1 instance API cho cả trận. Tốn thêm $0.10/h.",
+    "lesson": "Scale ngang: thêm máy thì thêm slot, nhưng tốn tiền mỗi giờ.",
+    "effects": [
+      {
+        "op": "scale",
+        "node": "api",
+        "n": 1
+      }
+    ]
+  },
+  {
+    "id": "replica",
+    "name": "Read Replica",
+    "type": "infra",
+    "cost": 2,
+    "text": "+1 instance DB cho cả trận. Đắt: $0.50/h.",
+    "lesson": "Database là phần đắt nhất và khó scale nhất.",
+    "effects": [
+      {
+        "op": "scale",
+        "node": "db",
+        "n": 1
+      }
+    ]
+  },
+  {
+    "id": "cache",
+    "name": "Redis Cache",
+    "type": "infra",
+    "cost": 2,
+    "text": "Đặt cache trước DB (hit 70%). Đánh lại: +15% hit, tối đa 95%.",
+    "lesson": "Cache-aside: phần lớn request đọc không còn chạm tới DB.",
+    "effects": [
+      {
+        "op": "cache",
+        "hitRate": 0.7,
+        "step": 0.15,
+        "max": 0.95
+      }
+    ]
+  },
+  {
+    "id": "timeout",
+    "name": "Timeout 250ms",
+    "type": "policy",
+    "cost": 0,
+    "text": "Lời gọi từ API xuống bỏ cuộc sau 250ms, nhả slot ngay.",
+    "lesson": "Không timeout thì slot bị giữ khi DB chậm, lỗi lan ngược lên trên.",
+    "effects": [
+      {
+        "op": "edge",
+        "patch": {
+          "timeoutMs": 250
+        }
+      }
+    ]
+  },
+  {
+    "id": "backoff",
+    "name": "Retry + Backoff",
+    "type": "policy",
+    "cost": 1,
+    "text": "API thử lại 2 lần khi lỗi, có backoff và jitter.",
+    "lesson": "Retry cứu lỗi thoáng qua, nhưng khi quá tải thì nhân tải lên.",
+    "effects": [
+      {
+        "op": "edge",
+        "patch": {
+          "retries": 2,
+          "backoffMs": 50,
+          "jitter": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "breaker",
+    "name": "Circuit Breaker",
+    "type": "policy",
+    "cost": 1,
+    "text": "Ngắt mạch khi ≥ 50% lời gọi từ API lỗi: trả lỗi nhanh 3 giây. Cẩn thận: khi mạch mở, mọi request đều lỗi.",
+    "lesson": "Fail fast để downstream có thời gian hồi phục.",
+    "effects": [
+      {
+        "op": "edge",
+        "patch": {
+          "circuitBreaker": {
+            "failureThreshold": 0.5,
+            "minRequests": 20,
+            "windowMs": 1000,
+            "openMs": 3000
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "rate_limit",
+    "name": "Rate Limit theo IP",
+    "type": "action",
+    "cost": 1,
+    "text": "Lượt này lọc 50% traffic bot. Bot bị chặn gây sát thương lên botnet.",
+    "lesson": "Token bucket mỗi IP: kẻ spam bị 429, người dùng thật gần như không bị ảnh hưởng.",
+    "effects": [
+      {
+        "op": "rateLimit",
+        "cut": 0.5
+      }
+    ]
+  },
+  {
+    "id": "burst",
+    "name": "Burst Scale",
+    "type": "action",
+    "cost": 1,
+    "text": "Lượt này +3 instance API (vẫn tính tiền lượt này).",
+    "lesson": "Autoscale tạm thời: đỡ được spike, nhưng DB phía sau vẫn vậy.",
+    "effects": [
+      {
+        "op": "scale",
+        "node": "api",
+        "n": 3,
+        "temp": true
+      }
+    ]
+  },
+  {
+    "id": "stale",
+    "name": "Serve Stale",
+    "type": "action",
+    "cost": 1,
+    "text": "+7 Headroom: hấp thụ sát thương lượt này.",
+    "lesson": "Trả dữ liệu cũ còn hơn trả lỗi (stale-while-revalidate).",
+    "effects": [
+      {
+        "op": "headroom",
+        "n": 7
+      }
+    ]
+  },
+  {
+    "id": "hotfix",
+    "name": "Hotfix",
+    "type": "action",
+    "cost": 1,
+    "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Rút 1 lá.",
+    "lesson": "Đôi khi cách nhanh nhất là sửa đúng chỗ đang cháy.",
+    "effects": [
+      {
+        "op": "hotfix"
+      },
+      {
+        "op": "draw",
+        "n": 1
+      }
+    ]
+  },
+  {
+    "id": "runbook",
+    "name": "Runbook",
+    "type": "action",
+    "cost": 1,
+    "text": "Rút 2 lá.",
+    "lesson": "Có sẵn quy trình thì xử lý sự cố nhanh hơn.",
+    "effects": [
+      {
+        "op": "draw",
+        "n": 2
+      }
+    ]
+  },
+  {
+    "id": "coffee",
+    "name": "Cà phê 3h sáng",
+    "type": "action",
+    "cost": 0,
+    "text": "+1 Ops. Tiêu hao.",
+    "lesson": "On-call cũng là con người.",
+    "effects": [
+      {
+        "op": "ops",
+        "n": 1
+      }
+    ],
+    "exhaust": true
+  },
+  {
+    "id": "block_ip",
+    "name": "Chặn dải IP",
+    "type": "attack",
+    "cost": 1,
+    "text": "Gây 6 sát thương lên botnet.",
+    "lesson": "Chặn ở tầng mạng: rẻ, nhưng botnet đổi IP rất nhanh.",
+    "effects": [
+      {
+        "op": "attack",
+        "dmg": 6
+      }
+    ]
+  },
+  {
+    "id": "waf",
+    "name": "WAF Rule",
+    "type": "attack",
+    "cost": 2,
+    "text": "Gây 4 sát thương. Từ giờ lọc thêm 25% bot mỗi lượt (tối đa 75%).",
+    "lesson": "Luật WAF lọc theo dấu hiệu, có tác dụng lâu dài.",
+    "effects": [
+      {
+        "op": "attack",
+        "dmg": 4
+      },
+      {
+        "op": "waf",
+        "cut": 0.25,
+        "max": 0.75
+      }
+    ]
+  },
+  {
+    "id": "honeypot",
+    "name": "Honeypot",
+    "type": "attack",
+    "cost": 2,
+    "text": "Gây 12 sát thương. Tiêu hao.",
+    "lesson": "Dụ bot vào endpoint giả để nhận diện và chặn cả cụm.",
+    "effects": [
+      {
+        "op": "attack",
+        "dmg": 12
+      }
+    ],
+    "exhaust": true
+  },
+  {
+    "id": "tech_debt",
+    "name": "Tech Debt",
+    "type": "curse",
+    "cost": 0,
+    "text": "Không đánh được. Chiếm chỗ trên tay.",
+    "lesson": "Nợ kỹ thuật làm mọi việc sau đó chậm hơn.",
+    "effects": [],
+    "unplayable": true
+  }
+]
