@@ -298,7 +298,8 @@ export function download(name: string, text: string, type = 'application/json') 
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   a.click();
-  URL.revokeObjectURL(url);
+  // revoking synchronously can cancel the download in Firefox/Safari
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export const slug = (s: string) =>

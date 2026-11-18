@@ -130,6 +130,8 @@ export type WorkspaceProps =
     };
 type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes' | 'lint';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
+/** Simulated time between two `lastRun` snapshots of the open project. */
+const RUN_SNAPSHOT_MS = 5000;
 const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
 
@@ -312,6 +314,8 @@ export function Workspace(props: WorkspaceProps) {
 
   const closeProject = () => {
     flushSave.current?.();
+    // the flushed save resolves later: it must not reopen this project
+    projectRef.current = null;
     client.pause();
     setRunning(false);
     if (props.mode === 'sandbox') props.onClose();
@@ -365,6 +369,8 @@ export function Workspace(props: WorkspaceProps) {
     setSaveState({ status: 'saving' });
     try {
       await store.put(p);
+      // closed or switched to another project while writing: keep the UI as it is
+      if (projectRef.current?.id !== p.id) return p;
       saved.current = { design, notes: nextNotes };
       setProject(p);
       setSaveState({ status: 'saved', at: p.updatedAt });
@@ -380,9 +386,12 @@ export function Workspace(props: WorkspaceProps) {
     }
   }, []);
 
+  // keyed on the project id only: `project` itself changes on every lastRun
+  // snapshot and would keep resetting the autosave debounce while the simulation runs
+  const projectId = project?.id;
   const designJson = useMemo(
-    () => (project && mode === 'sandbox' ? JSON.stringify(withGroups(toDesign(nodes, edges), groups)) : null),
-    [project, mode, nodes, edges, groups],
+    () => (projectId && mode === 'sandbox' ? JSON.stringify(withGroups(toDesign(nodes, edges), groups)) : null),
+    [projectId, mode, nodes, edges, groups],
   );
 
   // design review (studio only: in game levels it would give the answer away)
@@ -394,7 +403,7 @@ export function Workspace(props: WorkspaceProps) {
 
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
-    if (readOnly || !designJson || !project || loaded.current.key !== projectKey(project.id)) return;
+    if (readOnly || !designJson || !projectId || loaded.current.key !== projectKey(projectId)) return;
     if (!saved.current.design) saved.current.design = loaded.current.design;
     const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
     if (!dirty) {
@@ -410,7 +419,7 @@ export function Workspace(props: WorkspaceProps) {
     flushSave.current = run;
     const t = setTimeout(run, 800);
     return () => clearTimeout(t);
-  }, [designJson, notes, project, persist, readOnly]);
+  }, [designJson, notes, projectId, persist, readOnly]);
 
   // do not lose the last 800 ms when the tab closes
   useEffect(() => {
@@ -501,15 +510,20 @@ export function Workspace(props: WorkspaceProps) {
     });
   }, [client, setEdges, setNodes]);
 
-  // remember how the open project behaved (feeds the agent prompt)
+  // remember how the open project behaved (feeds the agent prompt), every 5 s of
+  // simulated time; `windows` is capped at HISTORY so its length cannot be the clock
+  const lastRunAt = useRef(-Infinity);
   useEffect(() => {
     const current = projectRef.current;
-    if (!current || mode !== 'sandbox' || windows.length < 5 || windows.length % 5 !== 0) return;
+    const last = windows[windows.length - 1];
+    if (!last || last.tMs < lastRunAt.current) lastRunAt.current = -Infinity; // restarted
+    if (!current || mode !== 'sandbox' || !last || windows.length < 5) return;
+    if (last.tMs - lastRunAt.current < RUN_SNAPSHOT_MS) return;
+    lastRunAt.current = last.tMs;
     const recent = windows.slice(-10);
     const avg = (f: (w: WindowMetrics) => number) => recent.reduce((s, w) => s + f(w), 0) / recent.length;
     const total = recent.reduce((s, w) => s + w.okCount + w.errorCount, 0);
     const errors = recent.reduce((s, w) => s + w.errorCount, 0);
-    const last = recent[recent.length - 1];
     const ns = [...nodesRef.current].sort((a, b) => a.data.index - b.data.index);
     const hot = ns
       .filter((n) => n.data.kind !== 'client')
@@ -530,10 +544,13 @@ export function Workspace(props: WorkspaceProps) {
       p99Ms: avg((w) => w.p99Ms),
       errorRate: total ? errors / total : 0,
       sloOk: recent.filter((w) => w.sloOk).length / recent.length,
-      costPerHour: nodesRef.current.reduce(
-        (sum, n) => sum + (n.data.kind === 'client' ? 0 : n.data.config.costPerHour * n.data.config.instances),
-        0,
-      ),
+      // replicas actually running (autoscale changes them; starting pods are billed too)
+      costPerHour: ns.reduce((sum, n) => {
+        if (n.data.kind === 'client') return sum;
+        const i = n.data.index;
+        const replicas = avg((w) => (w.nodes[i] ? w.nodes[i].instances + w.nodes[i].starting : n.data.config.instances));
+        return sum + n.data.config.costPerHour * replicas;
+      }, 0),
       hot,
     };
     const p = { ...current, lastRun };

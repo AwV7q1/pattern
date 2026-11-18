@@ -1,7 +1,8 @@
 // End-to-end smoke test: the learning path (lesson, engine-checked
 // prediction, practice level round-trip), then plays level 1 through the
 // real UI (drag & drop, wiring, scoring, leaderboard), the sandbox
-// (particles, request trace), and the capacity tools.
+// (particles, request trace), the capacity tools and Studio projects
+// (autosave, reload, version history).
 // Needs `pnpm dev` (5173) and, for the leaderboard step, `pnpm dev:server`.
 // Usage: node apps/web/scripts/e2e.cjs [screenshot-dir]
 const { chromium } = require('playwright');
@@ -32,6 +33,20 @@ const check = (name, ok, detail = '') => {
     await page.waitForURL(/\/studio\/[0-9a-f-]{36}/);
     await page.waitForSelector('.react-flow__node');
   };
+  // count IndexedDB writes of Studio projects (autosave regression checks)
+  await page.addInitScript(() => {
+    window.__projectPuts = [];
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (this.name === 'projects') window.__projectPuts.push({ t: performance.now(), updatedAt: value?.updatedAt });
+      return put.call(this, value, key);
+    };
+  });
+  const setSpeed = async (label) => {
+    await page.locator('button[role=combobox]', { hasText: /×$/ }).click();
+    await page.getByRole('option', { name: label, exact: true }).click();
+  };
+  const simSeconds = async () => Number(((await page.getByText(/^t = \d+s$/).textContent()) ?? '').replace(/\D/g, ''));
 
   await page.goto(URL);
 
@@ -186,6 +201,7 @@ const check = (name, ok, detail = '') => {
   await shot('6-sandbox-retry-storm');
 
   // 7b. sandbox: follow one request of the checkout fan-out
+  await page.getByRole('button', { name: 'Dừng' }).click();
   await openTemplate('08-checkout-fan-out');
   await page.waitForTimeout(500);
   check('sequence steps are numbered on the edges', (await page.locator('text=②').count()) >= 2);
@@ -310,6 +326,69 @@ const check = (name, ok, detail = '') => {
   const title = (await head.innerText()).replace(/\s+/g, ' ');
   check('trace compare: parallel checkout is faster than the pinned one', /−\d/.test(title), title);
   await shot('10-trace-compare');
+
+  // 11. studio: past the 120 s metrics history, the run snapshot must not write
+  // every tick, and autosave must still go through while the simulation runs
+  await page.getByRole('button', { name: 'Dừng' }).click();
+  await openTemplate('01-no-cache');
+  await setSpeed('8×');
+  await page.getByRole('button', { name: 'Chạy' }).click();
+  for (let i = 0; i < 120 && (await simSeconds()) < 125; i++) await page.waitForTimeout(500);
+  const putsSince = (t) => page.evaluate((t) => window.__projectPuts.filter((p) => p.t > t), t);
+  let t0 = await page.evaluate(() => performance.now());
+  const s0 = await simSeconds();
+  await page.waitForTimeout(3000);
+  const snapshots = (await putsSince(t0)).length;
+  const simulated = (await simSeconds()) - s0;
+  check('run snapshot is saved every 5 simulated seconds, not every tick', snapshots <= simulated / 5 + 1, `${snapshots} writes in ${simulated} s`);
+  const moved = page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first();
+  const nb = await moved.boundingBox();
+  t0 = await page.evaluate(() => performance.now());
+  await page.mouse.move(nb.x + 30, nb.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(nb.x + 130, nb.y + 100, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(2500);
+  const stamps = new Set((await putsSince(t0)).map((p) => p.updatedAt));
+  check('autosave goes through while the simulation runs', stamps.size >= 1 && (await page.getByText('Đã lưu').count()) > 0, `${stamps.size} new versions`);
+  await page.getByRole('button', { name: 'Dừng' }).click();
+
+  // 12. studio: the edit survives a reload, version history restores the original
+  const storedX = () =>
+    page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const open = indexedDB.open('pattern-studio');
+          open.onsuccess = () => {
+            const all = open.result.transaction('projects').objectStore('projects').getAll();
+            all.onsuccess = () => {
+              const p = all.result.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+              resolve(p.design.nodes.find((n) => n.label === 'PostgreSQL')?.position.x);
+            };
+          };
+        }),
+    );
+  // position on the canvas, in flow coordinates (independent of zoom / fitView); saved rounded
+  const flowX = async () =>
+    Number(
+      (await page.locator('.react-flow__node', { hasText: 'PostgreSQL' }).first().getAttribute('style')).match(
+        /translate\(([-\d.]+)px/,
+      )[1],
+    );
+  const movedX = await flowX();
+  const savedX = await storedX();
+  await page.reload(); // the URL keeps the project open
+  await page.waitForSelector('.react-flow__node');
+  await page.waitForTimeout(500);
+  const reloadedX = await flowX();
+  check('the moved node is saved and still there after a reload', Math.abs(savedX - movedX) < 1 && reloadedX === savedX, `${movedX} / saved ${savedX} / reloaded ${reloadedX}`);
+  await page.getByLabel('Lịch sử phiên bản').click();
+  await page.getByRole('dialog').getByText('Tạo dự án').first().click();
+  await page.getByRole('button', { name: /Khôi phục phiên bản này/ }).click();
+  await page.waitForTimeout(1200);
+  const restoredX = await flowX();
+  check('restoring the first version puts the node back', Math.abs(restoredX - movedX) > 50 && Math.abs((await storedX()) - restoredX) < 1, `${movedX} -> ${restoredX}`);
+  await shot('11-studio');
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await browser.close();
