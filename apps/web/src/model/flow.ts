@@ -1,16 +1,18 @@
 import type { Edge, Node } from '@xyflow/react';
-import { routeOrthogonal } from './routing';
+import { bendsToPath, manualOk, routeOrthogonal, SIDE_DIR, type Port } from './routing';
 import {
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
   type Design,
   type DesignEdge,
   type EdgePolicy,
+  type EdgeLayout,
   type EdgeWindow,
   type NodeConfig,
   type NodeKind,
   type NodeWindow,
   type Routing,
+  type Side,
 } from '@/types';
 
 /** Design-lint findings on a node or edge (derived for drawing, never stored). */
@@ -36,6 +38,8 @@ export type FlowEdgeData = {
   index: number;
   policy: EdgePolicy;
   metrics?: EdgeWindow;
+  /** Hand-made drawing (sides, bends), saved with the design. */
+  layout?: EdgeLayout;
   /** Derived for drawing (see `decorateEdges`), never stored. */
   view?: EdgeView;
   lint?: LintBadge;
@@ -62,11 +66,18 @@ export interface EdgeView {
    * must reach to pass below (or above) every node between both ends.
    */
   backY?: number;
-  /** Stacked nodes, curve style: joined bottom-to-top (or top-to-bottom) at these points. */
-  vertical?: { sx: number; sy: number; tx: number; ty: number };
+  /**
+   * Where the edge leaves the source and enters the target. `dx, dy` is the
+   * direction of travel there (out of the source, into the target).
+   */
+  from: PortView;
+  to: PortView;
   /** Orthogonal style: the routed polyline `[x0, y0, x1, y1, …]` in flow coordinates. */
   route?: number[];
+  /** The route is the hand-made one from `layout.bends`. */
+  manual?: boolean;
 }
+export type PortView = Port & { side: Side };
 export type EdgeStyleMode = 'curve' | 'orthogonal';
 
 /** Vertical gap between edges that leave or enter the same side of a node. */
@@ -75,6 +86,7 @@ export function fanOffset(slot: number, count: number) {
   return (slot - (count - 1) / 2) * Math.min(14, 64 / (count - 1));
 }
 export type FlowEdgeType = Edge<FlowEdgeData, 'flow'>;
+const FALLBACK_PORT: PortView = { x: 0, y: 0, dx: 1, dy: 0, side: 'right' };
 
 export function policyOf(e: DesignEdge): EdgePolicy {
   return {
@@ -96,6 +108,16 @@ export function policyOf(e: DesignEdge): EdgePolicy {
   };
 }
 
+const SIDES: readonly Side[] = ['left', 'right', 'top', 'bottom'];
+/** Hand-made drawing of a design edge, if any (unknown values are dropped). */
+export function layoutOf(e: DesignEdge): EdgeLayout | undefined {
+  const l: EdgeLayout = {};
+  if (e.fromSide && SIDES.includes(e.fromSide)) l.fromSide = e.fromSide;
+  if (e.toSide && SIDES.includes(e.toSide)) l.toSide = e.toSide;
+  if (Array.isArray(e.bends) && e.bends.length && e.bends.every((v) => Number.isFinite(v))) l.bends = e.bends;
+  return Object.keys(l).length ? l : undefined;
+}
+
 /** Routing the engine really uses (clients and LBs always pick one edge). */
 export function effectiveRouting(kind: NodeKind, config: NodeConfig): Routing {
   return kind === 'client' || kind === 'loadBalancer' ? 'pick' : (config.routing ?? 'pick');
@@ -106,7 +128,13 @@ export function effectiveRouting(kind: NodeKind, config: NodeConfig): Routing {
  * do not overlap (sorted by the other end's height), and number the steps
  * of `sequence` routing exactly like the engine groups them.
  */
-export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[], style: EdgeStyleMode = 'curve'): FlowEdgeType[] {
+export function decorateEdges(
+  nodes: SystemNodeType[],
+  edges: FlowEdgeType[],
+  style: EdgeStyleMode = 'curve',
+  /** Edge being reshaped by hand: drawn as dragged even across a node. */
+  editing: string | null = null,
+): FlowEdgeType[] {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const y = (id: string) => byId.get(id)?.position.y ?? 0;
   const outs = new Map<string, FlowEdgeType[]>();
@@ -142,56 +170,89 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[], st
     return { l: n.position.x, r: n.position.x + w, t: n.position.y, b: n.position.y + h, cy: n.position.y + h / 2 };
   };
   // Stacked nodes (one mostly above the other) are joined bottom-to-top
-  // instead of side-to-side, which would need a loop.
+  // instead of side-to-side, which would need a loop. A side picked by hand wins.
   const stacked = (sb: ReturnType<typeof box>, tb: ReturnType<typeof box>) =>
     Math.min(sb.r, tb.r) - Math.max(sb.l, tb.l) > 0.4 * Math.min(sb.r - sb.l, tb.r - tb.l) && (tb.t - sb.b > 24 || sb.t - tb.b > 24);
-  const backY = new Map<string, number>();
-  const vertical = new Map<string, NonNullable<EdgeView['vertical']>>();
-  const nested = { below: 0, above: 0 };
+  const boxes = new Map(nodes.map((n) => [n.id, box(n)]));
+  const sides = new Map<string, [Side, Side]>();
+  const edgeById = new Map(edges.map((e) => [e.id, e]));
   for (const e of edges) {
-    const s = byId.get(e.source);
-    const t = byId.get(e.target);
-    if (!s || !t) continue;
-    const sb = box(s);
-    const tb = box(t);
-    if (stacked(sb, tb)) {
-      const pair = pairs.get(`${e.source}\u0000${e.target}`) ?? [e];
-      const dx = fanOffset(pair.indexOf(e), pair.length);
-      const down = tb.t > sb.b;
-      vertical.set(e.id, { sx: (sb.l + sb.r) / 2 + dx, sy: down ? sb.b : sb.t, tx: (tb.l + tb.r) / 2 + dx, ty: down ? tb.t : tb.b });
-      continue;
-    }
-    if (style === 'orthogonal' || tb.l - sb.r >= 10) continue;
-    const lo = Math.min(tb.l, sb.l);
-    const hi = Math.max(tb.r, sb.r);
-    const spanned = nodes.map(box).filter((b) => b.r > lo && b.l < hi);
-    const bottom = Math.max(...spanned.map((b) => b.b)) + 36;
-    const top = Math.min(...spanned.map((b) => b.t)) - 36;
-    const below = 2 * bottom - sb.cy - tb.cy <= sb.cy + tb.cy - 2 * top;
-    const lane = below ? nested.below++ : nested.above++;
-    backY.set(e.id, below ? bottom + lane * 18 : top - lane * 18);
+    const sb = boxes.get(e.source);
+    const tb = boxes.get(e.target);
+    if (!sb || !tb) continue;
+    const down = tb.t > sb.b;
+    const auto: [Side, Side] = stacked(sb, tb) ? (down ? ['bottom', 'top'] : ['top', 'bottom']) : ['right', 'left'];
+    const l = e.data?.layout;
+    sides.set(e.id, [l?.fromSide ?? auto[0], l?.toSide ?? auto[1]]);
   }
-  // orthogonal: every edge routed around the nodes, from the same ports
-  let paths = new Map<string, number[]>();
-  if (style === 'orthogonal') {
-    const ports = edges.flatMap((e) => {
-      const s = byId.get(e.source);
-      const t = byId.get(e.target);
-      if (!s || !t) return [];
-      const v = vertical.get(e.id);
-      if (v) {
-        const d = Math.sign(v.ty - v.sy);
-        return [{ id: e.id, from: { x: v.sx, y: v.sy, dx: 0, dy: d }, to: { x: v.tx, y: v.ty, dx: 0, dy: d } }];
-      }
-      const sb = box(s);
-      const tb = box(t);
-      return [{
-        id: e.id,
-        from: { x: sb.r, y: sb.cy + fanOffset(outSlot.get(e.id) ?? 0, outs.get(e.source)?.length ?? 1), dx: 1, dy: 0 },
-        to: { x: tb.l, y: tb.cy + fanOffset(inSlot.get(e.id) ?? 0, ins.get(e.target)?.length ?? 1), dx: 1, dy: 0 },
-      }];
+  // ends sharing a node side are spread along it, ordered by where the other end is
+  const ports = new Map<string, [PortView, PortView]>();
+  const bySide = new Map<string, { e: FlowEdgeType; end: 0 | 1; other: number }[]>();
+  sides.forEach(([fs, ts], id) => {
+    const e = edgeById.get(id)!;
+    const sb = boxes.get(e.source)!;
+    const tb = boxes.get(e.target)!;
+    const along = (side: Side, b: typeof sb) => (side === 'left' || side === 'right' ? b.cy : (b.l + b.r) / 2);
+    for (const [end, node, side, other] of [[0, e.source, fs, tb], [1, e.target, ts, sb]] as const) {
+      const k = `${node}\u0000${side}`;
+      bySide.set(k, [...(bySide.get(k) ?? []), { e, end, other: along(side, other) }]);
+    }
+  });
+  bySide.forEach((list, k) => {
+    const [node, side] = k.split('\u0000') as [string, Side];
+    const b = boxes.get(node)!;
+    const [nx, ny] = SIDE_DIR[side];
+    list.sort((p, q) => p.other - q.other || p.e.id.localeCompare(q.e.id) || p.end - q.end);
+    list.forEach(({ e, end }, i) => {
+      const off = fanOffset(i, list.length);
+      const x = nx ? (nx > 0 ? b.r : b.l) : (b.l + b.r) / 2 + off;
+      const y = ny ? (ny > 0 ? b.b : b.t) : b.cy + off;
+      // travel goes out of the source side, into the target side
+      const port: PortView = end === 0 ? { x, y, dx: nx, dy: ny, side } : { x, y, dx: -nx, dy: -ny, side };
+      const pair = ports.get(e.id) ?? ([port, port] as [PortView, PortView]);
+      pair[end] = port;
+      ports.set(e.id, pair);
     });
-    paths = routeOrthogonal(nodes.map((n) => ({ id: n.id, ...box(n) })), ports);
+  });
+  // Back edges (curve style, default sides) loop around every node spanned
+  // horizontally, on the side that makes the shorter detour; loops sharing a
+  // side are nested.
+  const backY = new Map<string, number>();
+  const nested = { below: 0, above: 0 };
+  if (style === 'curve')
+    for (const e of edges) {
+      const sb = boxes.get(e.source);
+      const tb = boxes.get(e.target);
+      const sd = sides.get(e.id);
+      if (!sb || !tb || !sd || sd[0] !== 'right' || sd[1] !== 'left' || tb.l - sb.r >= 10) continue;
+      const lo = Math.min(tb.l, sb.l);
+      const hi = Math.max(tb.r, sb.r);
+      const spanned = [...boxes.values()].filter((b) => b.r > lo && b.l < hi);
+      const bottom = Math.max(...spanned.map((b) => b.b)) + 36;
+      const top = Math.min(...spanned.map((b) => b.t)) - 36;
+      const below = 2 * bottom - sb.cy - tb.cy <= sb.cy + tb.cy - 2 * top;
+      const lane = below ? nested.below++ : nested.above++;
+      backY.set(e.id, below ? bottom + lane * 18 : top - lane * 18);
+    }
+  // orthogonal: every edge routed around the nodes from its ports; hand-made
+  // routes are kept while they still fit, and the others avoid them
+  let paths = new Map<string, number[]>();
+  const manual = new Set<string>();
+  if (style === 'orthogonal') {
+    const list = [...boxes].map(([id, b]) => ({ id, ...b }));
+    const fixed = new Map<string, [number, number][]>();
+    for (const e of edges) {
+      const bends = e.data?.layout?.bends;
+      const pp = ports.get(e.id);
+      if (!bends || !pp) continue;
+      const path = bendsToPath(pp[0], pp[1], bends);
+      if (path && manualOk(path, pp[0], pp[1], list, { from: e.source, to: e.target }, e.id !== editing)) {
+        fixed.set(e.id, path);
+        manual.add(e.id);
+      }
+    }
+    const requests = [...ports].map(([id, [from, to]]) => ({ id, from, to }));
+    paths = routeOrthogonal(list, requests, fixed);
   }
   return edges.map((e) => {
     const src = byId.get(e.source);
@@ -211,8 +272,10 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[], st
       pairCount: pair.length,
       routes: routes?.length ? routes : undefined,
       backY: backY.get(e.id),
-      vertical: vertical.get(e.id),
+      from: ports.get(e.id)?.[0] ?? FALLBACK_PORT,
+      to: ports.get(e.id)?.[1] ?? FALLBACK_PORT,
       route: paths.get(e.id),
+      manual: manual.has(e.id) || undefined,
     };
     return { ...e, data: { ...e.data!, view } };
   });
@@ -276,7 +339,7 @@ export function toFlow(
       source: e.source,
       target: e.target,
       type: 'flow',
-      data: { index, policy: policyOf(e) },
+      data: { index, policy: policyOf(e), layout: layoutOf(e) },
     })),
   };
 }
@@ -290,7 +353,7 @@ export function reindex(nodes: SystemNodeType[], edges: FlowEdgeType[]) {
     nodes: nodes.map((n, index) => ({ ...n, data: { ...n.data, index, metrics: undefined } })),
     edges: edges.map((e, index) => ({
       ...e,
-      data: { policy: e.data?.policy ?? DEFAULT_POLICY, index, metrics: undefined },
+      data: { policy: e.data?.policy ?? DEFAULT_POLICY, layout: e.data?.layout, index, metrics: undefined },
     })),
   };
 }
@@ -329,6 +392,10 @@ export function toDesign(nodes: SystemNodeType[], edges: FlowEdgeType[]): Design
       if (p.requestKb || p.responseKb) out.bandwidthMbps = p.bandwidthMbps ?? DEFAULT_POLICY.bandwidthMbps;
       if (p.rateLimit) out.rateLimit = p.rateLimit;
       if (p.retryBudget) out.retryBudget = p.retryBudget;
+      const l = e.data!.layout;
+      if (l?.fromSide) out.fromSide = l.fromSide;
+      if (l?.toSide) out.toSide = l.toSide;
+      if (l?.bends?.length) out.bends = l.bends.map((v) => Math.round(v));
       return out;
     }),
   };

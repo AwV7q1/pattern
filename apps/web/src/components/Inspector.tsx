@@ -692,9 +692,11 @@ interface EdgeProps {
   allowFireAndForget?: boolean;
   onChange: (policy: EdgePolicy) => void;
   onDelete: () => void;
+  /** Drop the hand-made drawing (sides, bends) and route automatically again. */
+  onResetLayout?: () => void;
 }
 
-export function EdgeInspector({ edge, source, target, game, allowFireAndForget = true, onChange, onDelete }: EdgeProps) {
+export function EdgeInspector({ edge, source, target, game, allowFireAndForget = true, onChange, onDelete, onResetLayout }: EdgeProps) {
   const [p, setP] = useState(edge.policy);
   useEffect(() => setP(edge.policy), [edge.policy, edge.index]);
   const dirty = JSON.stringify(p) !== JSON.stringify(edge.policy);
@@ -709,6 +711,14 @@ export function EdgeInspector({ edge, source, target, game, allowFireAndForget =
           {source} → {target}
         </div>
         <div className="text-xs text-muted-foreground">Chính sách phía caller khi gọi qua edge này</div>
+        {edge.layout && onResetLayout && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground">
+            <span>Đường nối đang chỉnh tay</span>
+            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onResetLayout}>
+              Về tự động
+            </Button>
+          </div>
+        )}
       </div>
       {m && (
         <div className="grid grid-cols-4 gap-1 rounded-md border bg-muted/30 p-2 text-center font-mono text-[12px]">

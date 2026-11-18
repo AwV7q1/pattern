@@ -34,14 +34,9 @@ export function payloadScale(kb: number | undefined) {
  * Forward edges are the usual S-curve. A back edge (callee left of the
  * caller: a callback, an event loop) would cut through both nodes as an S,
  * so when `backY` is given it leaves right, swings down (or up) to about
- * `backY` and comes back into the callee's left side. `vertical` is for
- * stacked nodes joined bottom-to-top (or top-to-bottom).
+ * `backY` and comes back into the callee's left side.
  */
-export function bezierFor(sx: number, sy: number, tx: number, ty: number, backY?: number, vertical?: boolean): Bezier {
-  if (vertical) {
-    const dy = Math.max(Math.abs(ty - sy) * 0.5, 30) * Math.sign(ty - sy || 1);
-    return [sx, sy, sx, sy + dy, tx, ty - dy, tx, ty];
-  }
+export function bezierFor(sx: number, sy: number, tx: number, ty: number, backY?: number): Bezier {
   if (backY === undefined) {
     const dx = Math.max(Math.abs(tx - sx) * 0.5, 40);
     return [sx, sy, sx + dx, sy, tx - dx, ty, tx, ty];
@@ -50,6 +45,16 @@ export function bezierFor(sx: number, sy: number, tx: number, ty: number, backY?
   const h = (backY - (sy + ty) / 2) / 0.75;
   const k = 70 + Math.min(110, Math.abs(sx - tx) * 0.12);
   return [sx, sy, sx + k, sy + h, tx - k, ty + h, tx, ty];
+}
+
+/**
+ * Cubic bezier between two ports of any side: it leaves along `(sdx, sdy)`
+ * and arrives travelling along `(tdx, tdy)`.
+ */
+export function bezierBetween(sx: number, sy: number, sdx: number, sdy: number, tx: number, ty: number, tdx: number, tdy: number): Bezier {
+  const k0 = Math.max(Math.abs((tx - sx) * sdx + (ty - sy) * sdy) * 0.5, 40);
+  const k1 = Math.max(Math.abs((tx - sx) * tdx + (ty - sy) * tdy) * 0.5, 40);
+  return [sx, sy, sx + sdx * k0, sy + sdy * k0, tx - tdx * k1, ty - tdy * k1, tx, ty];
 }
 
 export function bezierPath(b: Bezier): string {
