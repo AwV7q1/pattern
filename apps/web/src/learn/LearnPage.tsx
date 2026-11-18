@@ -114,7 +114,7 @@ function LearnPageInner({ onBuild, openLesson, onOpened, onImmersiveChange }: Pr
   return (
     <div className="flex min-h-0 flex-1">
       <div className="min-h-0 flex-1 overflow-y-auto" onClick={() => setPicked(null)}>
-        <div className="mx-auto grid max-w-xl gap-10 px-6 py-8">
+        <div className="mx-auto grid max-w-xl gap-10 px-6 pt-8 pb-28">
           <GlossaryButton className="flex items-center gap-3 rounded-2xl border-2 border-b-4 p-4 text-left hover:bg-muted/50">
             <BookA className="size-8 shrink-0 text-sky-400" />
             <span className="flex-1">
@@ -240,7 +240,7 @@ function LearnPageInner({ onBuild, openLesson, onOpened, onImmersiveChange }: Pr
         </div>
       </div>
 
-      <aside className="hidden w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l p-5 lg:flex">
+      <aside className="hidden w-80 shrink-0 flex-col gap-4 overflow-y-auto border-l p-5 pb-28 lg:flex">
         <div className="grid grid-cols-2 gap-3">
           <div className="rounded-xl border-2 p-3">
             <div className="flex items-center gap-1.5 text-2xl font-bold text-orange-400">

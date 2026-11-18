@@ -1029,7 +1029,7 @@ export function App() {
           >
             <Background gap={24} color="oklch(1 0 0 / 6%)" />
             <ParticleLayer client={client} />
-            <Controls showInteractive={false} position="bottom-right" />
+            <Controls showInteractive={false} position="bottom-right" style={{ marginBottom: 96 }} />
           </ReactFlow>
           {practice && mode === 'game' && (
             <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
@@ -1044,7 +1044,7 @@ export function App() {
             </div>
           )}
           {error && (
-            <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
+            <div className="absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
               {error}
             </div>
           )}

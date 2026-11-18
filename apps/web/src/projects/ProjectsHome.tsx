@@ -150,7 +150,7 @@ export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab }: Pr
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8">
+      <div className="mx-auto grid max-w-6xl gap-6 px-6 pt-8 pb-28">
         <div className="flex items-end gap-3">
           <div>
             <h1 className="text-xl font-semibold">Studio</h1>

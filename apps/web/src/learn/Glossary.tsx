@@ -262,7 +262,7 @@ function GlossaryDialog({ open, focus, onOpenChange }: { open: boolean; focus?: 
 export function GlossaryPage() {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-2xl px-6 pb-8">
+      <div className="mx-auto max-w-2xl px-6 pb-28">
         <header className="pt-8 pb-3">
           <h1 className="flex items-center gap-2 text-2xl font-bold">
             <BookA className="size-6 text-sky-400" /> Từ điển thuật ngữ
