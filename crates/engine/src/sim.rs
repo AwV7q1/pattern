@@ -203,6 +203,10 @@ struct NodeRt {
     ready: usize,
     /// Desired instances, including those still starting.
     active: usize,
+    /// Ready times of instances still starting, oldest first. A `PodReady`
+    /// event only counts if it matches the front: pods cancelled by a
+    /// scale-down are dropped from the back, so their events become no-ops.
+    pending: VecDeque<Time>,
     hpa: Option<HpaRt>,
     cost: f64,
     /// Instance-time (active × µs), for the cost of autoscaled nodes.
@@ -711,6 +715,7 @@ impl Simulation {
                     balance: c.balance,
                     instances: instances as f64,
                     ready: instances as usize,
+                    pending: VecDeque::new(),
                     active: instances as usize,
                     hpa: hpa.map(|cfg| HpaRt {
                         cfg,
@@ -1101,6 +1106,7 @@ impl Simulation {
         if desired > active {
             let start = ms_to_us(cfg.pod_start_ms.max(0.0));
             for _ in active..desired {
+                self.nodes[node].pending.push_back(now + start);
                 self.schedule(now + start, Ev::PodReady { node: node as u32 });
             }
             self.nodes[node].active = desired;
@@ -1108,6 +1114,10 @@ impl Simulation {
             let n = &mut self.nodes[node];
             n.active = floor;
             n.ready = n.ready.min(floor);
+            // cancel the most recently started pods first
+            while n.ready + n.pending.len() > n.active {
+                n.pending.pop_back();
+            }
             self.resize(node);
         }
         let every = ms_to_us(cfg.eval_every_ms.max(100.0));
@@ -1117,9 +1127,10 @@ impl Simulation {
     fn on_pod_ready(&mut self, node: usize) {
         let now = self.now;
         let n = &mut self.nodes[node];
-        if n.ready >= n.active {
-            return; // scaled down while starting
+        if n.pending.front() != Some(&now) {
+            return; // this pod was cancelled by a scale-down
         }
+        n.pending.pop_front();
         n.account(now);
         n.account_cpu(now);
         n.ready += 1;
@@ -2440,6 +2451,38 @@ mod tests {
         // the start count is clamped into [min, max]
         assert_eq!(ws[0].nodes[1].instances, 3);
         assert!(ws.iter().any(|w| w.nodes[1].starting > 0), "starting pods are reported");
+    }
+
+    #[test]
+    fn hpa_cancelled_pods_do_not_make_later_pods_ready_early() {
+        let hpa = Autoscale {
+            min: 1,
+            max: 10,
+            target_utilization: 0.6,
+            eval_every_ms: 1_000.0,
+            stabilization_ms: 0.0,
+            pod_start_ms: 5_000.0,
+        };
+        let mut input = autoscaled(hpa);
+        input.design.nodes[1].config.instances = 1;
+        input.scenario.duration_ms = Some(14_000.0);
+        // overload (scale-up at 1 s, pod due at 6 s), idle (cancelled at 3 s),
+        // overload again (scale-up at 5 s, pod due at 10 s)
+        input.scenario.traffic = vec![
+            TrafficPhase { at_ms: 0.0, rps: 1200.0 },
+            TrafficPhase { at_ms: 2_000.0, rps: 0.0 },
+            TrafficPhase { at_ms: 3_500.0, rps: 1200.0 },
+        ];
+        let (ws, _) = instance_series(&input);
+        // window `i` covers [i, i+1) s; events at exactly i s show from window i
+        let w = |i: usize| (ws[i].nodes[1].instances, ws[i].nodes[1].starting);
+        assert_eq!(w(1), (1, 1), "a pod starts after the first evaluation");
+        assert_eq!(w(3), (1, 0), "it is cancelled once traffic stops");
+        assert_eq!(w(5), (1, 1), "a new pod starts at 5 s");
+        for i in 6..10 {
+            assert_eq!(w(i).0, 1, "the cancelled pod's event (6 s) must not ready the new pod early, window {i}");
+        }
+        assert_eq!(w(10).0, 2, "the new pod is ready after its own 5 s start delay");
     }
 
     #[test]
