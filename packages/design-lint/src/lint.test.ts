@@ -131,4 +131,10 @@ test('interview score: weights, verdict and feedback', () => {
   assert.equal(bad.verdict, 'fail');
   assert.ok(bad.feedback.some((l) => l.includes('DB quá tải')));
   assert.ok(bad.feedback.some((l) => l.includes('vượt ngân sách')));
+  const empty = scoreInterview({
+    runs: [{ name: 'Bình thường', kind: 'normal', summary: { ...ok, sloPass: false, sloWindowRatio: 0, errorRate: 1, costPerHour: 0 } }],
+    findings: [],
+    budgetPerHour: 2,
+  });
+  assert.equal(empty.total, 0, 'serving nothing earns nothing');
 });

@@ -318,3 +318,32 @@ test('community levels: engine-checked publishing, play, moderation', async () =
   const edit = await bob.json<{ solution: { nodes: unknown[] } }>(await bob.get(`/levels/${id}/edit`));
   assert.ok(edit.solution.nodes.length > 0);
 });
+
+// ------------------------------------------------------------ interviews
+
+test('interviews: graded on the server, reference unlocked after an attempt', async () => {
+  const prompts = await browser().json<{ id: string; reference?: unknown }[]>(await browser().get('/interviews'));
+  assert.ok(prompts.length >= 5);
+  assert.ok(prompts.every((p) => p.reference === undefined), 'no reference in the public list');
+
+  assert.equal((await bob.get('/interviews/url-shortener/reference')).status, 403);
+  const prompt = JSON.parse(readFileSync(join(root, 'interviews/url-shortener.json'), 'utf8'));
+
+  const weak = await bob.post('/interviews/url-shortener/attempts', { design: prompt.level.design, durationMs: 1000 });
+  assert.equal(weak.status, 201);
+  const w = (await weak.json()) as { score: { total: number; verdict: string }; runs: { error?: string }[] };
+  assert.equal(w.score.verdict, 'fail');
+  assert.ok(w.runs[0].error, 'an unconnected design is reported, not a crash');
+
+  const strong = await bob.post('/interviews/url-shortener/attempts', { design: prompt.reference, durationMs: 600_000 });
+  const s = (await strong.json()) as { id: string; score: { total: number; verdict: string; parts: { key: string }[] } };
+  assert.ok(s.score.total >= 85, `reference scores ${s.score.total}`);
+  assert.equal(s.score.verdict, 'strong');
+  assert.deepEqual(s.score.parts.map((p) => p.key), ['slo', 'resilience', 'cost', 'hygiene']);
+
+  const ref = await bob.json<{ design: { nodes: unknown[] } }>(await bob.get('/interviews/url-shortener/reference'));
+  assert.ok(ref.design.nodes.length > 1);
+  const mine = await bob.json<{ promptId: string; total: number }[]>(await bob.get('/interviews/attempts/mine'));
+  assert.deepEqual(mine.map((m) => m.promptId), ['url-shortener', 'url-shortener']);
+  assert.equal((await alice.get(`/interviews/attempts/${s.id}`)).status, 404, 'attempts are private');
+});

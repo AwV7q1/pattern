@@ -41,7 +41,7 @@ export const NAV: NavGroup[] = [
     label: 'Luyện',
     items: [
       { to: '/play', label: 'Game', icon: Gamepad2, keywords: 'level chơi game sao leaderboard' },
-      { to: '/interview', label: 'Phỏng vấn', icon: MessagesSquare, keywords: 'interview system design đề bài', hidden: true },
+      { to: '/interview', label: 'Phỏng vấn', icon: MessagesSquare, keywords: 'interview system design đề bài' },
       { to: '/levels/new', label: 'Tạo level', icon: Wrench, keywords: 'level editor creator cộng đồng' },
     ],
   },

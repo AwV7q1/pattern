@@ -4,6 +4,7 @@ import type { Finding, LintDesign, LintEdge, LintScenario, Patch, Severity } fro
 export type * from './types.ts';
 export { RULES } from './rules.ts';
 export { DEFAULT_RUBRIC, scoreInterview, type InterviewRun, type InterviewScore, type Rubric } from './interview.ts';
+export { hotNodes, interviewLevels, type GradingScenario, type InterviewPrompt } from './grading.ts';
 
 const ORDER: Record<Severity, number> = { error: 0, warn: 1, info: 2 };
 

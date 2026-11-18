@@ -28,6 +28,9 @@ export interface Summary {
 
 export class InvalidDesignError extends Error {}
 
+/** The pool is saturated or the run timed out (HTTP 503). */
+export class ServiceUnavailableError extends ServiceUnavailableException {}
+
 /** Waiting tasks beyond which new ones are refused (503) instead of queueing forever. */
 const MAX_QUEUE = 16;
 
@@ -61,14 +64,14 @@ export class EngineService implements OnModuleDestroy {
   }
 
   private async exec(task: EngineTask): Promise<string> {
-    if (this.pool.queueSize >= MAX_QUEUE) throw new ServiceUnavailableException('engine busy, try again shortly');
+    if (this.pool.queueSize >= MAX_QUEUE) throw new ServiceUnavailableError('engine busy, try again shortly');
     const abort = AbortSignal.timeout(this.timeoutMs);
     try {
       return (await this.pool.run(task, { signal: abort })) as string;
     } catch (err) {
-      if (abort.aborted) throw new ServiceUnavailableException('simulation took too long');
+      if (abort.aborted) throw new ServiceUnavailableError('simulation took too long');
       const message = err instanceof Error ? err.message : String(err);
-      if (/queue is full/i.test(message)) throw new ServiceUnavailableException('engine busy, try again shortly');
+      if (/queue is full/i.test(message)) throw new ServiceUnavailableError('engine busy, try again shortly');
       throw new InvalidDesignError(message);
     }
   }
@@ -79,6 +82,11 @@ export class EngineService implements OnModuleDestroy {
 
   async levelInput(levelJson: string, design: unknown): Promise<unknown> {
     return JSON.parse(await this.exec({ op: 'levelInput', level: levelJson, design: JSON.stringify(design) }));
+  }
+
+  /** Play a design on a level and keep the sanitized input and every metrics window. */
+  async levelRun(level: unknown, design: unknown): Promise<{ input: { design: { nodes: unknown[]; edges: unknown[] } }; summary: Summary; windows: { nodes: { utilization: number; rejected: number }[] }[] }> {
+    return JSON.parse(await this.exec({ op: 'levelRun', level: JSON.stringify(level), design: JSON.stringify(design) }));
   }
 
   /** Run `{ design, scenario }` (with `durationMs`) to the end. */

@@ -9,6 +9,7 @@ import { AccountPage } from '@/pages/AccountPage';
 import { SharePage } from '@/pages/SharePage';
 import { ComparePage } from '@/features/compare/ComparePage';
 import { LevelEditor } from '@/features/levels/LevelEditor';
+import { InterviewList, InterviewRoute } from '@/features/interview/InterviewPages';
 
 export const router = createBrowserRouter([
   {
@@ -19,6 +20,8 @@ export const router = createBrowserRouter([
       { path: 'learn/:lessonId', element: <LearnRoute /> },
       { path: 'play', element: <PlayHome /> },
       { path: 'play/*', element: <GameRoute /> },
+      { path: 'interview', element: <InterviewList /> },
+      { path: 'interview/:promptId', element: <InterviewRoute /> },
       { path: 'levels/new', element: <LevelEditor /> },
       { path: 'levels/:id/edit', element: <LevelEditor /> },
       { path: 'studio', element: <StudioHome /> },

@@ -1,0 +1,217 @@
+{
+  "id": "flash-news",
+  "title": "Trang tin khi có tin nóng",
+  "difficulty": "Trung bình",
+  "timeMinutes": 40,
+  "brief": "Một tờ báo điện tử bình thường nhận 2.000 lượt đọc mỗi giây. Khi có tin nóng, traffic tăng gấp 5 trong vài chục giây. Bài viết đọc nhiều hơn ghi rất nhiều, cache được.",
+  "requirements": [
+    "2.000 lượt đọc/giây, đột biến ×5 trong 10 giây",
+    "p99 ≤ 200ms, lỗi ≤ 1%",
+    "Một node cache sập không được làm lỗi trang",
+    "Mất một server API vẫn đạt SLO",
+    "Ngân sách $2.00/giờ"
+  ],
+  "talkingPoints": [
+    "Dư công suất cho đột biến (autoscale phản ứng chậm hơn tin nóng)",
+    "Hai node cache, circuit breaker để bỏ qua node sập",
+    "Database chỉ nhận cache miss",
+    "Timeout ngắn ở tầng cache để không giữ slot API"
+  ],
+  "level": {
+    "palette": [
+      "loadBalancer",
+      "service",
+      "cache",
+      "database"
+    ],
+    "maxInstances": 8,
+    "locked": [
+      "client"
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng",
+          "position": {
+            "x": 0,
+            "y": 200
+          }
+        }
+      ],
+      "edges": []
+    },
+    "scenario": {
+      "seed": 7,
+      "durationMs": 60000,
+      "timeoutMs": 1000,
+      "windowMs": 1000,
+      "traffic": [
+        {
+          "atMs": 0,
+          "rps": 2000
+        }
+      ],
+      "slo": {
+        "p99Ms": 200,
+        "errorRate": 0.01
+      },
+      "budgetPerHour": 2.0
+    }
+  },
+  "grading": [
+    {
+      "name": "Bình thường",
+      "kind": "normal"
+    },
+    {
+      "name": "Tin nóng ×5",
+      "kind": "peak",
+      "traffic": {
+        "multiplier": 5,
+        "fromMs": 20000,
+        "untilMs": 30000
+      }
+    },
+    {
+      "name": "Mất 1 instance API",
+      "kind": "failure",
+      "loseInstance": "service"
+    },
+    {
+      "name": "Một node cache sập",
+      "kind": "failure",
+      "faults": [
+        {
+          "nodes": [
+            "cache"
+          ],
+          "action": "down"
+        }
+      ]
+    }
+  ],
+  "reference": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 240,
+          "y": 200
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "News API",
+        "position": {
+          "x": 480,
+          "y": 200
+        },
+        "config": {
+          "instances": 4
+        }
+      },
+      {
+        "id": "cache",
+        "kind": "cache",
+        "label": "Redis A",
+        "position": {
+          "x": 720,
+          "y": 120
+        }
+      },
+      {
+        "id": "cache2",
+        "kind": "cache",
+        "label": "Redis B",
+        "position": {
+          "x": 720,
+          "y": 300
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL primary",
+        "position": {
+          "x": 960,
+          "y": 120
+        }
+      },
+      {
+        "id": "db2",
+        "kind": "database",
+        "label": "PostgreSQL replica",
+        "position": {
+          "x": 960,
+          "y": 300
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "cache",
+        "timeoutMs": 200,
+        "circuitBreaker": {
+          "failureThreshold": 0.5,
+          "minRequests": 20,
+          "windowMs": 1000,
+          "openMs": 5000
+        }
+      },
+      {
+        "source": "api",
+        "target": "cache2",
+        "timeoutMs": 200,
+        "circuitBreaker": {
+          "failureThreshold": 0.5,
+          "minRequests": 20,
+          "windowMs": 1000,
+          "openMs": 5000
+        }
+      },
+      {
+        "source": "cache",
+        "target": "db",
+        "timeoutMs": 150
+      },
+      {
+        "source": "cache",
+        "target": "db2",
+        "timeoutMs": 150
+      },
+      {
+        "source": "cache2",
+        "target": "db",
+        "timeoutMs": 150
+      },
+      {
+        "source": "cache2",
+        "target": "db2",
+        "timeoutMs": 150
+      }
+    ]
+  }
+}

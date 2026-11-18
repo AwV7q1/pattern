@@ -31,6 +31,11 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `/learn`, `/learn/:lessonId` | Lộ trình học, mở thẳng một bài |
 | `/play`, `/play/:levelId` | Danh sách level, chơi một level (`?lesson=` khi mở từ bài học) |
 | `/studio`, `/studio/:projectId` | Dự án, canvas của một dự án (`/studio?template=<example>` tạo dự án từ mẫu) |
+| `/studio/:projectId/compare` | So sánh A/B |
+| `/levels/new`, `/levels/:id/edit` | Tạo / sửa level cộng đồng |
+| `/interview`, `/interview/:id` | Phỏng vấn system design |
+| `/s/:slug` | Link chia sẻ chỉ đọc |
+| `/login`, `/account` | Đăng nhập, tài khoản |
 | `/library`, `/cases` | Thư viện công nghệ, case study |
 | `/capacity/sizing`, `/capacity/calibrate` | Chọn server, hiệu chỉnh từ k6 |
 
@@ -42,6 +47,11 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
   - Xuất prompt markdown cho agent triển khai: Mermaid, bảng thành phần, chính sách gọi, SLO, sự cố, kết quả mô phỏng, yêu cầu Compose/K8s/NestJS.
   - Kubernetes: khung Cluster/Namespace/Node pool/Zone, autoscale kiểu HPA trong engine (pod khởi động trễ, ổn định khi giảm).
   - Case study đơn giản hoá từ bài viết công khai của Discord, Slack, Netflix, Twitter, Stack Overflow, Figma.
+- **Kiểm tra design** (tab Kiểm tra trong Studio): khoảng 17 luật (retry storm, timeout sai thứ tự, retry nhân chồng, SPOF, pool vượt DB, cache stampede…) kèm giải thích và nút sửa nhanh. Xem [docs/STUDIO.md](docs/STUDIO.md).
+- **So sánh A/B**: hai design (bản hiện tại, phiên bản cũ, dự án khác) chạy cùng kịch bản và seed, biểu đồ chồng, bảng chênh lệch, diff từng tham số.
+- **Đồng bộ và chia sẻ**: dự án lưu IndexedDB trước, đồng bộ server khi đăng nhập (outbox offline, xung đột không mất dữ liệu), link chỉ đọc `/s/:slug`.
+- **Level cộng đồng**: biến một dự án thành level, engine kiểm tra (design ban đầu dưới 3★, lời giải đạt 3★), có leaderboard riêng.
+- **Phỏng vấn system design**: 5 đề có đồng hồ, chấm bằng engine + lint + rubric, báo cáo chi tiết. Xem [docs/INTERVIEW.md](docs/INTERVIEW.md).
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
 - **Leaderboard**: NestJS chạy lại đúng engine WASM (trong worker pool) để chấm. Client chỉ gửi design, scenario do server giữ. Cần đăng nhập, tên trên bảng là tên tài khoản.
 - **Tài khoản**: PostgreSQL + Prisma, email/mật khẩu (argon2id), session lưu ở server, chống CSRF, giới hạn tốc độ, sẵn sàng thêm SSO/OIDC. Xem [docs/SERVER.md](docs/SERVER.md).
@@ -69,6 +79,7 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `examples/calibration` | Số đo thật của server NestJS trong repo, dùng để thử calibrate |
 | `crates/engine-cli` | `pattern-sim`: chạy scenario hoặc chấm design theo level |
 | `examples/*.json` | Scenario sandbox `{ design, scenario }`, đồng thời là mẫu dự án trong Studio |
+| `interviews/*.json` | Đề phỏng vấn: yêu cầu, luật, kịch bản chấm, lời giải tham khảo |
 | `case-studies/*.json` | Case study: bối cảnh, quyết định, các giai đoạn design + scenario |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
 | `apps/web` | React 19 + shadcn/ui (Tailwind v4, Radix) + React Flow + WebGPU |

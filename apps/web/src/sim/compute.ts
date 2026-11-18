@@ -45,6 +45,15 @@ class Compute {
     return this.call<Summary>({ op: 'playLevel', level: JSON.stringify(level), design: JSON.stringify(design) });
   }
 
+  /** Play a design on a level; returns the sanitized input and every window (interview grading). */
+  levelRun(level: object, design: object) {
+    return this.call<{ input: { design: Design }; summary: Summary; windows: WindowMetrics[] }>({
+      op: 'levelRun',
+      level: JSON.stringify(level),
+      design: JSON.stringify(design),
+    });
+  }
+
   /** Run to the end and keep every metrics window (A/B charts). */
   runDetailed(input: object) {
     return this.call<{ summary: Summary; windows: WindowMetrics[] }>({ op: 'runDetailed', input: JSON.stringify(input) });

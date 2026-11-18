@@ -140,7 +140,8 @@ export const timeoutOrder: Rule = (ctx) => {
   };
   const out: Finding[] = [];
   for (const child of ctx.design.edges) {
-    if (child.fireAndForget || isClient(ctx, child.source)) continue;
+    // a queue's consumer works on its own clock, not the producer's deadline
+    if (child.fireAndForget || isClient(ctx, child.source) || ctx.byId.get(child.source)?.kind === 'queue') continue;
     const limit = deadline(child.source, new Set([child.source]));
     const budget = budgetOf(child);
     if (!limit || budget === Infinity || budget < limit.ms) continue;

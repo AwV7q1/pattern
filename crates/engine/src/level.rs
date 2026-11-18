@@ -64,6 +64,10 @@ pub struct Level {
     pub design: Design,
     #[serde(default)]
     pub locked: Vec<String>,
+    /// Locked nodes whose instance count the player may still change (a
+    /// given service with its own performance, scaled by the player).
+    #[serde(default)]
+    pub scalable: Vec<String>,
     /// Per-level overrides of [`default_catalog`].
     #[serde(default)]
     pub catalog: HashMap<NodeKind, NodeConfig>,
@@ -113,7 +117,11 @@ impl Level {
                 return Err(format!("duplicate node id '{}'", n.id));
             }
             if let Some(fixed) = locked.get(n.id.as_str()) {
-                nodes.push((*fixed).clone());
+                let mut node = (*fixed).clone();
+                if self.scalable.contains(&n.id) {
+                    node.config.instances = n.config.instances.clamp(1, self.max_instances.max(1));
+                }
+                nodes.push(node);
                 continue;
             }
             if n.kind == NodeKind::Client {

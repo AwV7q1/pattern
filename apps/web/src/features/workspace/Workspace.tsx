@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import {
   Background,
   Controls,
@@ -35,6 +35,7 @@ import {
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
+  type Design,
   type Level,
   type Preset,
   type Summary,
@@ -114,6 +115,11 @@ export type WorkspaceProps =
       lessonId?: string | null;
       onBackToPath?: () => void;
       onLevelChange: (key: string) => void;
+      /** Replaces the level picker in the toolbar (interviews). */
+      title?: ReactNode;
+      /** Replaces the Level tab content (interviews): gets the current design. */
+      panel?: (design: () => Design) => ReactNode;
+      panelLabel?: string;
     }
   | {
       mode: 'sandbox';
@@ -870,7 +876,9 @@ export function Workspace(props: WorkspaceProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
-        {mode === 'game' ? (
+        {props.mode === 'game' && props.title ? (
+          props.title
+        ) : mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
@@ -1118,7 +1126,7 @@ export function Workspace(props: WorkspaceProps) {
           <Tabs value={panel} onValueChange={(v) => setPanel(v as Panel)} className="min-h-0 flex-1 gap-0">
             <div className="m-3 mb-0 flex items-center gap-2">
               <TabsList className={cn('min-w-0 flex-1 justify-start overflow-x-auto', panelFull && 'mx-auto max-w-xl')}>
-                {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
+                {mode === 'game' && <TabsTrigger value="level">{(props.mode === 'game' && props.panelLabel) || 'Level'}</TabsTrigger>}
                 <TabsTrigger value="metrics">Số liệu</TabsTrigger>
                 <TabsTrigger value="trace">Trace</TabsTrigger>
                 <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
@@ -1154,14 +1162,18 @@ export function Workspace(props: WorkspaceProps) {
               <div className={cn('p-3', panelFull && 'mx-auto max-w-6xl px-6 py-4')}>
                 {mode === 'game' && (
                   <TabsContent value="level" className="max-w-2xl">
+                    {props.mode === 'game' && props.panel ? (
+                      props.panel(() => toDesign(nodesRef.current, edgesRef.current))
+                    ) : (
                     <LevelPanel
                       level={level}
                       design={() => toDesign(nodesRef.current, edgesRef.current)}
                       onVerify={verify}
                       verifying={verifying}
                       best={best}
-                      online={!levelKey.startsWith('learn/')}
+                      online={!levelKey.startsWith('learn/') && !levelKey.startsWith('interview-')}
                     />
+                    )}
                   </TabsContent>
                 )}
                 <TabsContent value="metrics" className="grid gap-3">

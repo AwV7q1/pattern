@@ -69,6 +69,9 @@ export function scoreInterview(input: {
   const avg = (rs: InterviewRun[]) => (rs.length ? rs.reduce((s, r) => s + sloCredit(r), 0) / rs.length : 1);
 
   const slo = avg(traffic);
+  // a design that serves nothing is not cheap, clean or resilient, it is
+  // missing: the other parts count in proportion to the traffic served
+  const served = traffic.length ? clamp01(traffic.reduce((s, r) => s + (1 - r.summary.errorRate), 0) / traffic.length) : 1;
   for (const r of traffic.filter((x) => sloCredit(x) < 1)) {
     feedback.push(
       `${r.name}: p99 ${Math.round(r.summary.p99Ms)}ms, lỗi ${(r.summary.errorRate * 100).toFixed(1)}%, chỉ ${Math.round(r.summary.sloWindowRatio * 100)}% thời gian đạt SLO.`,
@@ -80,7 +83,7 @@ export function scoreInterview(input: {
       );
   }
 
-  const resilience = avg(failures);
+  const resilience = avg(failures) * served;
   for (const r of failures.filter((x) => sloCredit(x) < 1))
     feedback.push(
       `Sự cố "${r.name}": chỉ ${Math.round(r.summary.sloWindowRatio * 100)}% thời gian đạt SLO. Xem lại replica, timeout, circuit breaker và retry budget.`,
@@ -96,8 +99,10 @@ export function scoreInterview(input: {
     else if (cost < budget * 0.5 && slo === 1) feedback.push('Rất tiết kiệm: dùng chưa tới nửa ngân sách mà vẫn đạt SLO.');
   }
 
+  costCredit *= served;
   const penalty = input.findings.reduce((s, f) => s + (f.severity === 'error' ? 0.4 : f.severity === 'warn' ? 0.15 : 0.03), 0);
-  const hygiene = clamp01(1 - penalty);
+  const hygiene = clamp01(1 - penalty) * served;
+  if (served < 0.5) feedback.unshift('Design chưa phục vụ được phần lớn request: kiểm tra đã nối từ client tới các thành phần chưa, và có đủ công suất không.');
   for (const f of input.findings.filter((x) => x.severity !== 'info').slice(0, 5)) feedback.push(`${f.message}. ${f.why}`);
 
   const parts: InterviewScore['parts'] = [
