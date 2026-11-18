@@ -28,6 +28,7 @@ import { Copy, Eye, GitCompareArrows, Share2, Wrench } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useUi } from '@/app/ui-store';
 import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
+import { EdgeFocusContext } from '@/components/edgeFocus';
 import {
   BUILDABLE,
   DEFAULT_CONFIG,
@@ -184,6 +185,7 @@ export function Workspace(props: WorkspaceProps) {
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const [groupSel, setGroupSel] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
   const dragMembers = useRef(new Map<string, { nodes: Set<string>; groups: Set<string> }>());
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -790,6 +792,10 @@ export function Workspace(props: WorkspaceProps) {
 
   const selectedNode = nodes.find((n) => n.selected);
   const selectedEdge = selectedNode ? undefined : viewEdges.find((e) => e.selected);
+  const edgeFocus = useMemo(
+    () => ({ node: hovered ?? selectedNode?.id ?? null, edge: hovered ? null : (selectedEdge?.id ?? null) }),
+    [hovered, selectedNode?.id, selectedEdge?.id],
+  );
   const selectedGroup = selectedNode || selectedEdge ? undefined : groups.find((g) => g.id === groupSel);
   const selectionKey = selectedNode?.id ?? selectedEdge?.id ?? selectedGroup?.id;
   useEffect(() => {
@@ -1243,6 +1249,7 @@ export function Workspace(props: WorkspaceProps) {
         )}
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+          <EdgeFocusContext value={edgeFocus}>
           <ReactFlow
             nodes={canvasNodes}
             edges={viewEdges}
@@ -1251,6 +1258,8 @@ export function Workspace(props: WorkspaceProps) {
             onNodesChange={onCanvasNodesChange}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
+            onNodeMouseEnter={(_, n) => n.type === 'system' && setHovered(n.id)}
+            onNodeMouseLeave={() => setHovered(null)}
             elevateNodesOnSelect={false}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -1268,6 +1277,7 @@ export function Workspace(props: WorkspaceProps) {
             <ParticleLayer client={client} />
             <Controls showInteractive={false} position="bottom-right" />
           </ReactFlow>
+          </EdgeFocusContext>
           {practice && mode === 'game' && (
             <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
               <GraduationCap className="size-4 text-primary" />

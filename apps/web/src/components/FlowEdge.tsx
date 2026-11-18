@@ -1,7 +1,11 @@
-import { BaseEdge, EdgeLabelRenderer, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from '@xyflow/react';
 import { bezierAt, bezierFor, bezierPath, payloadScale, setEdgeGeometry } from '@/gpu/edgeGeometry';
 import type { FlowEdgeType } from '@/model/flow';
 import { cn } from '@/lib/utils';
+import { useEdgeFocus } from './edgeFocus';
+
+/** Below this zoom, plain labels are unreadable, so only warnings stay. */
+const LABEL_ZOOM = 0.75;
 
 /** Vertical gap between edges that leave or enter the same side of a node. */
 const SPREAD = 14;
@@ -20,12 +24,22 @@ const CIRCLED = '⓪①②③④⑤⑥⑦⑧⑨⑩';
  * the badge at the source end says how the caller uses this edge:
  * ①②③ = step of a sequence, ∥ = parallel, ⇢ = fire-and-forget, ⇄ = one of
  * several (round-robin).
+ *
+ * To stay readable when many services call each other: back edges loop
+ * around the nodes instead of crossing them, edges joining the same pair
+ * share one label box, hovering or selecting a node dims every edge that
+ * does not touch it, and plain labels hide when zoomed out.
  */
-export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selected, markerEnd }: EdgeProps<FlowEdgeType>) {
+export function FlowEdge({ id, source, target, sourceX, sourceY, targetX, targetY, data, selected, markerEnd }: EdgeProps<FlowEdgeType>) {
   const v = data?.view;
   const sy = sourceY + (v ? offset(v.outSlot, v.outCount) : 0);
   const ty = targetY + (v ? offset(v.inSlot, v.inCount) : 0);
-  const b = bezierFor(sourceX, sy, targetX, ty);
+  const b = bezierFor(sourceX, sy, targetX, ty, v?.backY);
+  const focus = useEdgeFocus(id, source, target);
+  const zoomedIn = useStore((st) => st.transform[2] >= LABEL_ZOOM);
+  const dim = focus === false;
+  // labels: always when focused, never when dimmed, else only when readable
+  const showLabels = focus === true || selected || (focus === null && zoomedIn);
   const p = data?.policy;
   const ff = !!p?.fireAndForget && v?.routing !== 'pick';
   if (data) setEdgeGeometry(data.index, b, [payloadScale(p?.requestKb), payloadScale(p?.responseKb), ff ? 1 : 0, 0]);
@@ -74,8 +88,14 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
     else role = { text: '⇄', title: 'chọn 1 trong các nhánh (round-robin)' };
   } else if (ff) role = { text: '⇢', title: 'fire-and-forget: gửi đi, không chờ trả lời' };
 
-  const [mx, my] = bezierAt(b, 0.5);
-  const [rx, ry] = bezierAt(b, 0.28);
+  // which handler calls which endpoint (`create → /write`), one box per bundle
+  const routes = showLabels ? (v?.routes ?? []) : [];
+  const shown = showLabels ? badges : dim ? [] : badges.filter((t) => t.bad || t.warn);
+  // badges of a bundle sit side by side along the curve instead of stacking
+  const [mx, my] = bezierAt(b, 0.56 + (v && v.pairCount > 1 ? (v.pairSlot - (v.pairCount - 1) / 2) * 0.12 : 0));
+  // role badge near the source, route box past the middle, so they never meet
+  const [rx, ry] = bezierAt(b, 0.13 + (v?.pairSlot ?? 0) * 0.06);
+  const [lx, ly] = bezierAt(b, 0.56);
 
   return (
     <>
@@ -86,13 +106,15 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
         markerEnd={markerEnd}
         style={{
           stroke,
+          opacity: dim ? 0.12 : 1,
+          transition: 'opacity 120ms',
           strokeWidth: width,
           strokeDasharray: partitioned ? '1 6' : breaker === 'open' ? '6 4' : ff ? '2 5' : undefined,
           strokeLinecap: 'round',
         }}
       />
       <EdgeLabelRenderer>
-        {role && (
+        {role && !dim && (
           <div
             title={role.title}
             className={cn(
@@ -104,12 +126,24 @@ export function FlowEdge({ id, sourceX, sourceY, targetX, targetY, data, selecte
             {role.text}
           </div>
         )}
-        {badges.length > 0 && (
+        {routes.length > 0 && (
+          <div
+            className="nodrag nopan pointer-events-none absolute flex flex-col items-start rounded border border-primary/30 bg-background/90 px-1 py-px"
+            style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)`, zIndex: 2 }}
+          >
+            {routes.map((r, i) => (
+              <span key={i} className="font-mono text-[10px] leading-[14px] whitespace-nowrap text-muted-foreground">
+                {r}
+              </span>
+            ))}
+          </div>
+        )}
+        {shown.length > 0 && (
           <div
             className="nodrag nopan pointer-events-none absolute flex gap-1"
-            style={{ transform: `translate(-50%, -150%) translate(${mx}px, ${my}px)`, zIndex: 2 }}
+            style={{ transform: `translate(-50%, -100%) translate(${mx}px, ${my - (routes.length ? routes.length * 7 + 4 : 6)}px)`, zIndex: 2 }}
           >
-            {badges.map((t) => (
+            {shown.map((t) => (
               <span
                 key={t.text}
                 className={cn(
