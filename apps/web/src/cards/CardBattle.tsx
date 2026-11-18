@@ -457,18 +457,7 @@ export function CardBattle() {
   // while a card is dragged, light up the side it acts on and dim the other
   const sides = dragState === 'idle' || !dragDef ? { system: false, bot: false } : sidesOf(dragDef);
   const anyTarget = sides.system || sides.bot;
-  const targetRing = (on: boolean, side: 'system' | 'bot') =>
-    !anyTarget
-      ? ''
-      : !on
-        ? 'opacity-40'
-        : side === 'bot'
-          ? dragState === 'over'
-            ? 'shadow-[0_0_0_2px_rgba(251,113,133,0.9),0_0_40px_rgba(251,113,133,0.35)]'
-            : 'shadow-[0_0_0_2px_rgba(251,113,133,0.45)]'
-          : dragState === 'over'
-            ? 'shadow-[0_0_0_2px_rgba(56,189,248,0.9),0_0_40px_rgba(56,189,248,0.35)]'
-            : 'shadow-[0_0_0_2px_rgba(56,189,248,0.45)]';
+  const targetRing = (on: boolean) => (anyTarget && !on ? 'opacity-40' : '');
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
   const over = state.phase === 'won' || state.phase === 'lost';
   const hand = state.hand.map((inst) => ({
@@ -518,7 +507,7 @@ export function CardBattle() {
             (200 minus the 48px top bar) puts the row on the screen's vertical center. */}
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-[152px] [align-content:safe_center]">
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
-            <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 rounded-3xl transition-[opacity,box-shadow] duration-200', targetRing(sides.system, 'system'))}>
+            <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.system))}>
               {sides.system && <TargetTag side="system" over={dragState === 'over'} />}
               <div className="w-full">
                 <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
@@ -546,7 +535,7 @@ export function CardBattle() {
           </div>
 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
-            <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 rounded-3xl transition-[opacity,box-shadow] duration-200', targetRing(sides.bot, 'bot'))}>
+            <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
               {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
               <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
                 <HpBar
@@ -627,19 +616,35 @@ function sidesOf(def: CardDef) {
   return { bot: def.effects.some((e) => e.op === 'attack'), system: def.effects.some((e) => e.op !== 'attack') };
 }
 
-/** The label over a side while a card that acts on it is dragged. */
+/**
+ * The frame and label around a side while a card that acts on it is
+ * dragged. The frame stands well clear of the side's content.
+ */
 function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
   const bot = side === 'bot';
   return (
-    <span
+    <div
       className={cn(
-        'pointer-events-none absolute -top-9 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
-        bot ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
+        'pointer-events-none absolute -inset-x-5 -bottom-5 -top-12 z-20 rounded-[28px] border-2 transition-[background-color,border-color,box-shadow] duration-200',
+        bot
+          ? over
+            ? 'border-rose-400/90 bg-rose-500/[0.07] shadow-[0_0_48px_rgba(251,113,133,0.35)]'
+            : 'border-rose-400/45 bg-rose-500/[0.03]'
+          : over
+            ? 'border-sky-400/90 bg-sky-500/[0.07] shadow-[0_0_48px_rgba(56,189,248,0.35)]'
+            : 'border-sky-400/45 bg-sky-500/[0.03]',
       )}
     >
-      {bot ? <Swords /> : <Server />}
-      {over ? (bot ? 'Thả để tấn công bot' : 'Thả để áp dụng lên hệ thống') : bot ? 'Tác dụng lên bot' : 'Tác dụng lên hệ thống'}
-    </span>
+      <span
+        className={cn(
+          'absolute left-1/2 top-0 flex -translate-y-1/2 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
+          bot ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
+        )}
+      >
+        {bot ? <Swords /> : <Server />}
+        {over ? (bot ? 'Thả để tấn công bot' : 'Thả để áp dụng lên hệ thống') : bot ? 'Tác dụng lên bot' : 'Tác dụng lên hệ thống'}
+      </span>
+    </div>
   );
 }
 
