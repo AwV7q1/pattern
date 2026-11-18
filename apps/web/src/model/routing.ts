@@ -8,6 +8,8 @@
 // after another so later ones avoid running on top of earlier ones, and a
 // final pass spreads runs that still share a channel into parallel tracks.
 
+import type { Side } from '@/types';
+
 export interface Box {
   id: string;
   l: number;
@@ -37,17 +39,22 @@ const BEND = 30;
 
 type Pt = [number, number];
 
-export function routeOrthogonal(boxes: Box[], requests: RouteRequest[]): Map<string, number[]> {
+/**
+ * Routes every request; `fixed` holds hand-made routes, kept as they are and
+ * avoided by the others like any already placed edge.
+ */
+export function routeOrthogonal(boxes: Box[], requests: RouteRequest[], fixed = new Map<string, Pt[]>()): Map<string, number[]> {
   const grown = boxes.map((b) => ({ l: b.l - MARGIN, r: b.r + MARGIN, t: b.t - MARGIN, b: b.b + MARGIN }));
   // channel coordinates: just outside every node, and the middle of every gap
   const xs = channels(boxes.map((b) => [b.l, b.r]));
   const ys = channels(boxes.map((b) => [b.t, b.b]));
-  const placed: Pt[][] = [];
+  const placed: Pt[][] = [...fixed.values()];
   const out = new Map<string, Pt[]>();
 
   // short edges first: they have the fewest options, long ones detour around them
   const order = [...requests].sort((a, b) => dist(a) - dist(b));
   for (const req of order) {
+    if (fixed.has(req.id)) continue;
     const p0: Pt = [req.from.x, req.from.y];
     const p1: Pt = [req.to.x, req.to.y];
     const a: Pt = [p0[0] + req.from.dx * STUB, p0[1] + req.from.dy * STUB];
@@ -60,7 +67,11 @@ export function routeOrthogonal(boxes: Box[], requests: RouteRequest[]): Map<str
     let bestCost = Infinity;
     const consider = (mid: Pt[]) => {
       const path = simplify([p0, a, ...mid, b, p1]);
-      const c = cost(path, grown, placed);
+      let c = cost(path, grown, placed);
+      // merged end runs must still leave / enter along the port, not back through the node
+      const n = path.length;
+      if ((path[1][0] - p0[0]) * req.from.dx + (path[1][1] - p0[1]) * req.from.dy < STUB - 0.5) c += NODE_HIT;
+      if ((p1[0] - path[n - 2][0]) * req.to.dx + (p1[1] - path[n - 2][1]) * req.to.dy < STUB - 0.5) c += NODE_HIT;
       if (c < bestCost) {
         bestCost = c;
         best = path;
@@ -73,7 +84,7 @@ export function routeOrthogonal(boxes: Box[], requests: RouteRequest[]): Map<str
     if (bestCost >= NODE_HIT) {
       // two channels are not enough: leave through one vertical channel near
       // the source, cross on a horizontal one, come back down one near the target
-      const near = (x0: number) => [...lxs].sort((p, q) => Math.abs(p - x0) - Math.abs(q - x0)).slice(0, 8);
+      const near = (x0: number) => [...lxs].sort((p, q) => Math.abs(p - x0) - Math.abs(q - x0)).slice(0, 14);
       for (const x1 of near(a[0]))
         for (const x2 of near(b[0]))
           for (const y of lys) consider([[x1, a[1]], [x1, y], [x2, y], [x2, b[1]]]);
@@ -83,7 +94,84 @@ export function routeOrthogonal(boxes: Box[], requests: RouteRequest[]): Map<str
   }
 
   nudge([...out.values()]);
-  return new Map([...out].map(([id, p]) => [id, simplify(p).flat()]));
+  const result = new Map([...out].map(([id, p]) => [id, simplify(p).flat()]));
+  fixed.forEach((p, id) => result.set(id, p.flat()));
+  return result;
+}
+
+// ------------------------------------------------------------- manual routes
+//
+// A hand-made route is stored as the fixed coordinate of each inner run: a
+// vertical run by its x, a horizontal one by its y. Runs alternate axes,
+// the first leaves the source port along its direction and the last enters
+// the target port, so the corners follow from the ports alone. Moving a node
+// keeps the inner runs where the user put them and stretches the end ones.
+
+/** Outward direction of each side. */
+export const SIDE_DIR: Record<Side, [number, number]> = { right: [1, 0], left: [-1, 0], top: [0, -1], bottom: [0, 1] };
+/** Shortest end run a hand-made route may have. */
+export const MIN_STUB = 8;
+export { STUB };
+
+/** Corners of a manual route, or null when the bend count cannot join these port axes. */
+export function bendsToPath(from: Port, to: Port, bends: number[]): Pt[] | null {
+  const h0 = from.dx !== 0;
+  const h1 = to.dx !== 0;
+  // runs: the first, one per bend, the last; the last is horizontal iff…
+  if ((bends.length % 2 === 1 ? h0 : !h0) !== h1) return null;
+  const fixedAt = [h0 ? from.y : from.x, ...bends, h1 ? to.y : to.x];
+  const out: Pt[] = [[from.x, from.y]];
+  let h = h0;
+  for (let k = 0; k + 1 < fixedAt.length; k++, h = !h) out.push(h ? [fixedAt[k + 1], fixedAt[k]] : [fixedAt[k], fixedAt[k + 1]]);
+  out.push([to.x, to.y]);
+  return out;
+}
+
+/** Inner run coordinates of an orthogonal polyline (null for a single straight run). */
+export function pathToBends(p: number[]): number[] | null {
+  const n = p.length / 2;
+  if (n < 3) return null;
+  const out: number[] = [];
+  for (let k = 1; k < n - 2; k++) out.push(Math.abs(p[2 * k] - p[2 * k + 2]) < 0.5 ? p[2 * k] : p[2 * k + 1]);
+  return out;
+}
+
+/**
+ * Drops inner runs that shrank to nothing (merging the runs around them).
+ * Null when nothing is left but one straight run: the automatic route draws that.
+ */
+export function normalizeBends(from: Port, to: Port, bends: number[]): number[] | null {
+  const f = [from.dx !== 0 ? from.y : from.x, ...bends, to.dx !== 0 ? to.y : to.x];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let i = 1; i < f.length - 1; i++) {
+      if (Math.abs(f[i - 1] - f[i + 1]) >= 1) continue;
+      if (f.length === 3) return null;
+      // run i is empty: the runs on both sides are one; keep the port ends
+      f.splice(i + 1 < f.length - 1 ? i : i - 1, 2);
+      changed = true;
+      break;
+    }
+  }
+  return f.slice(1, -1);
+}
+
+/**
+ * A manual route is drawn only while it still makes sense: both end runs
+ * leave and enter their ports going the right way, and (unless the user is
+ * dragging it) no run crosses a node.
+ */
+export function manualOk(path: Pt[], from: Port, to: Port, boxes: Box[], ends: { from: string; to: string }, checkNodes = true): boolean {
+  const n = path.length;
+  if ((path[1][0] - path[0][0]) * from.dx + (path[1][1] - path[0][1]) * from.dy < MIN_STUB) return false;
+  if ((path[n - 1][0] - path[n - 2][0]) * to.dx + (path[n - 1][1] - path[n - 2][1]) * to.dy < MIN_STUB) return false;
+  if (!checkNodes) return true;
+  for (let i = 1; i < n; i++)
+    for (const b of boxes) {
+      if ((i === 1 && b.id === ends.from) || (i === n - 1 && b.id === ends.to)) continue;
+      if (hits(path[i - 1], path[i], { l: b.l + 2, r: b.r - 2, t: b.t + 2, b: b.b - 2 })) return false;
+    }
+  return true;
 }
 
 function dist(r: RouteRequest) {

@@ -23,11 +23,13 @@ import { LESSONS } from './learn/curriculum';
 import { SimClient } from './sim/client';
 import { clearEdgeGeometry } from './gpu/edgeGeometry';
 import { EdgeFocusContext } from './components/edgeFocus';
+import { EdgeEditContext, type EdgeEdit } from './components/edgeEdit';
 import {
   BUILDABLE,
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
   type Design,
+  type EdgeLayout,
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
@@ -673,10 +675,67 @@ export function App() {
     return () => clearInterval(id);
   }, [autoTrace, running, client]);
 
+  // ------------------------------------------------- hand-made edge drawing
+
+  /** Edge whose route is being dragged: drawn as dragged even across a node. */
+  const [editingEdge, setEditingEdge] = useState<string | null>(null);
+  const layoutBeforeEdit = useRef<EdgeLayout | undefined>(undefined);
+  const setEdgeLayout = useCallback(
+    (id: string, layout: EdgeLayout | undefined) =>
+      setEdges((es) => es.map((e) => (e.id === id ? { ...e, data: { ...e.data!, layout } } : e))),
+    [setEdges],
+  );
+  const edgeEdit = useMemo<EdgeEdit>(
+    () => ({
+      orthogonal: edgeStyle === 'orthogonal',
+      begin(id) {
+        layoutBeforeEdit.current = edgesRef.current.find((e) => e.id === id)?.data?.layout;
+        setEditingEdge(id);
+      },
+      set: setEdgeLayout,
+      end(id) {
+        setEditingEdge(null);
+        // a route released across a node is undone
+        setEdges((es) => {
+          const e = es.find((x) => x.id === id);
+          if (!e?.data?.layout?.bends || edgeStyle !== 'orthogonal') return es;
+          const ok = decorateEdges(nodesRef.current, es, 'orthogonal').find((x) => x.id === id)?.data?.view?.manual;
+          return ok ? es : es.map((x) => (x.id === id ? { ...x, data: { ...x.data!, layout: layoutBeforeEdit.current } } : x));
+        });
+      },
+    }),
+    [edgeStyle, setEdgeLayout, setEdges],
+  );
+  /**
+   * Nodes moved together carry the hand-made bends of the edges between
+   * them; a single node moving leaves the inner runs where they are.
+   */
+  const shiftBends = useCallback(
+    (moves: Map<string, { dx: number; dy: number }>) => {
+      if (!moves.size) return;
+      setEdges((es) => {
+        let changed = false;
+        const next = es.map((e) => {
+          const l = e.data?.layout;
+          const a = moves.get(e.source);
+          const b = moves.get(e.target);
+          if (!l?.bends || !l.fromSide || !a || !b || a.dx !== b.dx || a.dy !== b.dy) return e;
+          changed = true;
+          // bend 0 is an x when the edge leaves sideways, then axes alternate
+          const h0 = l.fromSide === 'left' || l.fromSide === 'right';
+          const bends = l.bends.map((v, i) => v + ((i % 2 === 0) === h0 ? a.dx : a.dy));
+          return { ...e, data: { ...e.data!, layout: { ...l, bends } } };
+        });
+        return changed ? next : es;
+      });
+    },
+    [setEdges],
+  );
+
   /** Edges as drawn: fanned out, numbered, with an arrow at the callee. */
   const viewEdges = useMemo(
     () =>
-      decorateEdges(nodes, edges, edgeStyle).map((e) => ({
+      decorateEdges(nodes, edges, edgeStyle, editingEdge).map((e) => ({
         ...e,
         markerEnd: {
           type: MarkerType.ArrowClosed,
@@ -685,7 +744,7 @@ export function App() {
           color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
         },
       })),
-    [nodes, edges, edgeStyle],
+    [nodes, edges, edgeStyle, editingEdge],
   );
 
   // ------------------------------------------------------------------ editing
@@ -870,7 +929,15 @@ export function App() {
       const ids = new Set(groupsRef.current.map((g) => g.id));
       const isFrame = (c: NodeChange<Node>) => 'id' in c && ids.has(c.id);
       const nodeChanges = changes.filter((c) => !isFrame(c)) as NodeChange<SystemNodeType>[];
+      const moved = new Map<string, { dx: number; dy: number }>();
+      for (const c of nodeChanges) {
+        if (c.type !== 'position' || !c.position) continue;
+        const n = nodesRef.current.find((x) => x.id === c.id);
+        if (n && (n.position.x !== c.position.x || n.position.y !== c.position.y))
+          moved.set(c.id, { dx: c.position.x - n.position.x, dy: c.position.y - n.position.y });
+      }
       if (nodeChanges.length) onNodesChange(nodeChanges);
+      shiftBends(moved);
       const frameChanges = changes.filter(isFrame);
       if (!frameChanges.length) return;
       let next = groupsRef.current;
@@ -896,11 +963,12 @@ export function App() {
         if (!m) return;
         next = next.map((x) => (m.groups.has(x.id) ? { ...x, position: { x: x.position.x + dx, y: x.position.y + dy } } : x));
         setNodes((ns) => ns.map((n) => (m.nodes.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n)));
+        shiftBends(new Map([...m.nodes].map((nid) => [nid, { dx, dy }])));
       });
       groupsRef.current = next;
       setGroups(next);
     },
-    [onNodesChange, setNodes],
+    [onNodesChange, setNodes, shiftBends],
   );
 
   const onNodeDragStart = useCallback((_: unknown, node: Node) => {
@@ -1255,6 +1323,7 @@ export function App() {
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
           <EdgeFocusContext value={edgeFocus}>
+          <EdgeEditContext value={edgeEdit}>
           <ReactFlow
             nodes={canvasNodes}
             edges={viewEdges}
@@ -1267,6 +1336,7 @@ export function App() {
             onNodeMouseLeave={() => setHovered(null)}
             elevateNodesOnSelect={false}
             onEdgesChange={onEdgesChange}
+            onEdgeDoubleClick={(_, e) => setEdgeLayout(e.id, undefined)}
             onConnect={onConnect}
             onDelete={({ nodes: dn, edges: de }) =>
               onDelete({ nodes: dn.filter((n) => n.type === 'system') as SystemNodeType[], edges: de as FlowEdgeType[] })
@@ -1301,6 +1371,7 @@ export function App() {
               </div>
             </Panel>
           </ReactFlow>
+          </EdgeEditContext>
           </EdgeFocusContext>
           {practice && mode === 'game' && (
             <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
@@ -1511,6 +1582,7 @@ export function App() {
                       allowFireAndForget={mode !== 'game' || !!level.allowFireAndForget}
                       onChange={(p) => updateEdge(selectedEdge.id, p)}
                       onDelete={() => onDelete({ nodes: [], edges: [selectedEdge] })}
+                      onResetLayout={() => setEdgeLayout(selectedEdge.id, undefined)}
                     />
                   ) : selectedGroup ? (
                     <div className="grid gap-3">

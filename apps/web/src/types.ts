@@ -159,7 +159,21 @@ export interface DesignNode {
   group?: string;
 }
 
-export interface DesignEdge extends Partial<EdgePolicy> {
+/** Side of a node an edge leaves or enters by. */
+export type Side = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * Hand-made drawing of an edge (ignored by the engine). `bends` are the
+ * fixed coordinates of the inner runs of an orthogonal route, alternating
+ * axes starting with the run after the one leaving `fromSide`.
+ */
+export interface EdgeLayout {
+  fromSide?: Side;
+  toSide?: Side;
+  bends?: number[];
+}
+
+export interface DesignEdge extends Partial<EdgePolicy>, EdgeLayout {
   source: string;
   target: string;
 }
