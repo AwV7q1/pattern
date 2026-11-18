@@ -369,11 +369,14 @@ export function CardBattle() {
 
       <div ref={arenaRef} className="relative min-h-0 flex-1">
         {/* the two sides face each other across the arena */}
-        <div className="absolute inset-0 grid grid-cols-[minmax(0,1.5fr)_minmax(140px,0.55fr)_minmax(260px,0.75fr)] gap-6 overflow-y-auto px-6 pb-[200px] pt-2">
-          <div className="flex min-w-0 flex-col justify-center gap-4">
-            <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
-            {state.reports.length === 0 && <FirstTurnHint />}
-            {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
+        {/* equal side columns keep VS on the exact middle of the screen */}
+        <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] gap-4 overflow-y-auto px-6 pb-[200px] pt-2">
+          <div className="flex min-w-0 flex-col items-center justify-center">
+            <div className="flex w-full max-w-[400px] flex-col gap-4">
+              <SystemPanel state={state} flash={flash} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+              {state.reports.length === 0 && <FirstTurnHint />}
+              {error && <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm">{error}</div>}
+            </div>
           </div>
 
           <div className="flex min-w-0 flex-col items-center justify-center gap-4">
@@ -723,18 +726,26 @@ function InfraLine({
   };
 
   return (
-    <div className="flex items-center gap-1 pt-8">
-      <InfraNode nodeRef={set('db')} icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} connection`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
-      {cache && (
-        <>
-          <Pipe />
-          <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
-        </>
+    <div className="pt-4">
+      <div className="flex items-center gap-0.5">
+        <InfraNode nodeRef={set('db')} icon={<Database />} title="PostgreSQL" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" />
+        {cache && (
+          <>
+            <Pipe />
+            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" />
+          </>
+        )}
+        <Pipe policy={policies.length > 0} pipeRef={set('policy')} />
+        <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" />
+        <Pipe />
+        <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" />
+      </div>
+      {/* API → downstream policies, under the line so they never cover a node */}
+      {policies.length > 0 && (
+        <div className="mt-2 text-center">
+          <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300">API → DB: {policies.join(' · ')}</span>
+        </div>
       )}
-      <Pipe label={policies.join(' · ')} policy={policies.length > 0} pipeRef={set('policy')} />
-      <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={`${api.concurrency} slot/instance`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" />
-      <Pipe />
-      <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" />
     </div>
   );
 }
@@ -765,12 +776,13 @@ function InfraNode({
           ? 'border-indigo-500/50 [&_svg]:text-indigo-300'
           : 'border-foreground/20 [&_svg]:text-foreground/80';
   return (
-    <div ref={nodeRef} className={cn('relative min-w-[92px] shrink-0 rounded-xl border-2 bg-card/80 px-2.5 py-2 shadow-lg shadow-black/30 backdrop-blur', color)}>
-      <div className="flex items-center gap-1.5 text-sm font-medium [&_svg]:size-4">
-        {icon}
-        {title}
-      </div>
-      <div className="text-[11px] text-muted-foreground">{sub}</div>
+    <div
+      ref={nodeRef}
+      className={cn('relative flex min-w-0 flex-1 flex-col items-center rounded-xl border-2 bg-card/80 px-1 py-1.5 text-center shadow-lg shadow-black/30 backdrop-blur', color)}
+    >
+      <span className="[&_svg]:size-4">{icon}</span>
+      <div className="mt-0.5 max-w-full truncate text-xs font-medium">{title}</div>
+      <div className="max-w-full truncate text-[10px] text-muted-foreground">{sub}</div>
       {count !== undefined && (
         <div className="absolute -right-2 -top-2 rounded-full border bg-card px-1.5 font-mono text-xs">
           ×{count}
@@ -782,18 +794,11 @@ function InfraNode({
 }
 
 /** A connection; requests flow right to left, from the gateway inwards. */
-function Pipe({ label, policy, pipeRef }: { label?: string; policy?: boolean; pipeRef?: (el: HTMLDivElement | null) => void }) {
+function Pipe({ policy, pipeRef }: { policy?: boolean; pipeRef?: (el: HTMLDivElement | null) => void }) {
   return (
-    <div ref={pipeRef} className="relative flex min-w-6 flex-1 flex-col items-center rounded-full">
-      {label ? (
-        <span className={cn('absolute -top-5 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded px-1 text-[10px]', policy && 'bg-violet-500/15 text-violet-300')}>
-          {label}
-        </span>
-      ) : null}
-      <div className="flex w-full items-center">
-        <ArrowLeft className="-mr-1 size-3 text-muted-foreground/60" />
-        <div className="h-px flex-1 bg-muted-foreground/40" />
-      </div>
+    <div ref={pipeRef} className="flex w-4 shrink-0 items-center rounded-full">
+      <ArrowLeft className={cn('-mr-1 size-3', policy ? 'text-violet-300' : 'text-muted-foreground/60')} />
+      <div className={cn('h-px flex-1', policy ? 'bg-violet-400/70' : 'bg-muted-foreground/40')} />
     </div>
   );
 }
