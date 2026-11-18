@@ -18,9 +18,23 @@ export function payloadScale(kb: number | undefined) {
   return kb && kb > 0 ? Math.min(2.6, 1 + Math.log2(1 + kb / 4) * 0.25) : 1;
 }
 
-export function bezierFor(sx: number, sy: number, tx: number, ty: number): Bezier {
-  const dx = Math.max(Math.abs(tx - sx) * 0.5, 40);
-  return [sx, sy, sx + dx, sy, tx - dx, ty, tx, ty];
+/**
+ * Cubic bezier from a node's right handle to another node's left handle.
+ * Forward edges are the usual S-curve. A back edge (callee left of the
+ * caller: a callback, an event loop) would cut through both nodes as an S,
+ * so when `backY` is given it leaves right, swings down (or up) to about
+ * `backY` and comes back into the callee's left side. Still one cubic, so
+ * particles follow it on the GPU.
+ */
+export function bezierFor(sx: number, sy: number, tx: number, ty: number, backY?: number): Bezier {
+  if (backY === undefined) {
+    const dx = Math.max(Math.abs(tx - sx) * 0.5, 40);
+    return [sx, sy, sx + dx, sy, tx - dx, ty, tx, ty];
+  }
+  // B(0.5).y = mid + 0.75·h, so h puts the loop's extreme at backY
+  const h = (backY - (sy + ty) / 2) / 0.75;
+  const k = 70 + Math.min(110, Math.abs(sx - tx) * 0.12);
+  return [sx, sy, sx + k, sy + h, tx - k, ty + h, tx, ty];
 }
 
 export function bezierPath(b: Bezier): string {

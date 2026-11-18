@@ -102,7 +102,7 @@
         "id": "postgres",
         "kind": "database",
         "label": "Postgres (dùng chung)",
-        "position": { "x": 1460, "y": 300 },
+        "position": { "x": 1780, "y": 300 },
         "config": {
           "instances": 1,
           "concurrency": 4,
@@ -136,7 +136,7 @@
         "id": "stockEvents",
         "kind": "queue",
         "label": "stock-events (Kafka)",
-        "position": { "x": 1140, "y": 800 },
+        "position": { "x": 1780, "y": 640 },
         "config": { "instances": 1, "concurrency": 50, "queueSize": 100000, "latencyP50Ms": 1, "latencyP99Ms": 3, "costPerHour": 0.1 }
       }
     ],

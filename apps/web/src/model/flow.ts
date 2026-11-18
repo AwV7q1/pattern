@@ -47,6 +47,16 @@ export interface EdgeView {
   /** 1-based step for `sequence` routing (equal steps run together). */
   step: number;
   steps: number;
+  /** Position among edges joining the same source and target (a bundle). */
+  pairSlot: number;
+  pairCount: number;
+  /** Handler → endpoint routes of the whole bundle, set on its first edge only. */
+  routes?: string[];
+  /**
+   * Back edge (callee left of caller): the y, in flow coordinates, its loop
+   * must reach to pass below (or above) every node between both ends.
+   */
+  backY?: number;
 }
 export type FlowEdgeType = Edge<FlowEdgeData, 'flow'>;
 
@@ -106,8 +116,8 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
   }
   const outSlot = new Map<string, number>();
   const inSlot = new Map<string, number>();
-  outs.forEach((list) => [...list].sort((a, b) => y(a.target) - y(b.target)).forEach((e, i) => outSlot.set(e.id, i)));
-  ins.forEach((list) => [...list].sort((a, b) => y(a.source) - y(b.source)).forEach((e, i) => inSlot.set(e.id, i)));
+  outs.forEach((list) => [...list].sort((a, b) => y(a.target) - y(b.target) || a.target.localeCompare(b.target)).forEach((e, i) => outSlot.set(e.id, i)));
+  ins.forEach((list) => [...list].sort((a, b) => y(a.source) - y(b.source) || a.source.localeCompare(b.source)).forEach((e, i) => inSlot.set(e.id, i)));
   const steps = new Map<string, [number, number]>();
   const handler = (e: FlowEdgeType) => e.data?.policy.fromEndpoint ?? null;
   outs.forEach((list, src) => {
@@ -121,9 +131,47 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
       mine.filter((e) => handler(e) === h).forEach((e) => steps.set(e.id, [orders.indexOf(e.data?.policy.order ?? 0) + 1, orders.length]));
     }
   });
+  // edges joining the same pair are drawn as one bundle with one label box
+  const pairs = new Map<string, FlowEdgeType[]>();
+  for (const e of edges) {
+    const k = `${e.source}\u0000${e.target}`;
+    pairs.set(k, [...(pairs.get(k) ?? []), e]);
+  }
+  const route = (e: FlowEdgeType) => {
+    const p = e.data?.policy;
+    return p?.fromEndpoint || p?.toEndpoint ? `${p.fromEndpoint ?? '*'} → /${p.toEndpoint ?? '…'}` : null;
+  };
+  // Back edges loop around every node spanned horizontally, on the side
+  // that makes the shorter detour; loops sharing a side are nested.
+  const box = (n: SystemNodeType) => {
+    const w = n.measured?.width ?? 200;
+    const h = n.measured?.height ?? 110;
+    return { l: n.position.x, r: n.position.x + w, t: n.position.y, b: n.position.y + h, cy: n.position.y + h / 2 };
+  };
+  const backY = new Map<string, number>();
+  const nested = { below: 0, above: 0 };
+  for (const e of edges) {
+    const s = byId.get(e.source);
+    const t = byId.get(e.target);
+    if (!s || !t) continue;
+    const sb = box(s);
+    const tb = box(t);
+    if (tb.l - sb.r >= 10) continue;
+    const lo = Math.min(tb.l, sb.l);
+    const hi = Math.max(tb.r, sb.r);
+    const spanned = nodes.map(box).filter((b) => b.r > lo && b.l < hi);
+    const bottom = Math.max(...spanned.map((b) => b.b)) + 36;
+    const top = Math.min(...spanned.map((b) => b.t)) - 36;
+    const below = 2 * bottom - sb.cy - tb.cy <= sb.cy + tb.cy - 2 * top;
+    const lane = below ? nested.below++ : nested.above++;
+    backY.set(e.id, below ? bottom + lane * 18 : top - lane * 18);
+  }
   return edges.map((e) => {
     const src = byId.get(e.source);
     const [step, count] = steps.get(e.id) ?? [0, 0];
+    const pair = pairs.get(`${e.source}\u0000${e.target}`) ?? [e];
+    const pairSlot = pair.indexOf(e);
+    const routes = pairSlot === 0 ? pair.map(route).filter((r): r is string => !!r) : undefined;
     const view: EdgeView = {
       outSlot: outSlot.get(e.id) ?? 0,
       outCount: outs.get(e.source)?.length ?? 1,
@@ -132,6 +180,10 @@ export function decorateEdges(nodes: SystemNodeType[], edges: FlowEdgeType[]): F
       routing: src ? effectiveRouting(src.data.kind, src.data.config, handler(e)) : 'pick',
       step,
       steps: count,
+      pairSlot,
+      pairCount: pair.length,
+      routes: routes?.length ? routes : undefined,
+      backY: backY.get(e.id),
     };
     return { ...e, data: { ...e.data!, view } };
   });
