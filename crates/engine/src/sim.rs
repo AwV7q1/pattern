@@ -3006,6 +3006,7 @@ mod tests {
             eval_every_ms: 1_000.0,
             stabilization_ms: 0.0,
             pod_start_ms: 5_000.0,
+            ..Autoscale::default()
         };
         let mut input = autoscaled(hpa);
         input.design.nodes[1].config.instances = 1;
