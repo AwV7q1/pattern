@@ -1,6 +1,7 @@
 import { forwardRef, useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Intent } from './types';
+import { BOT_DIE_MS, gaitStyle, minionGaitStyle, type BotTier } from './botMotion';
 
 /**
  * The enemy, drawn in SVG. Each enemy has its own body (warmup kid, radar,
@@ -18,6 +19,11 @@ import type { Intent } from './types';
  * - heal:  shield bubble, rising crosses, happy eyes
  *
  * Bosses in phase 2 burn; elites wear a gold rim; HP below half cracks it.
+ *
+ * On top of the stance, each body has its own idle gait (hop, stomp, dangle,
+ * slither… see botMotion.ts) and its tier adds a layer: warmup mini bots are
+ * smaller and twinkle, elites flex inside a spinning gold rim, floor bosses
+ * breathe over a shadow that sends out shockwaves. Defeat plays by tier.
  */
 
 export type BotStance = Intent['icon'];
@@ -1056,11 +1062,17 @@ export interface BotAvatarProps {
   /** Boss phase 2: on fire. */
   enraged?: boolean;
   rank?: BotRank;
+  /** A warmup fight's mini bot. */
+  mini?: boolean;
+  /** The fight is won: play the defeat animation and stay down. */
+  defeated?: boolean;
   className?: string;
 }
 
+export const tierOf = (rank: BotRank = 'normal', mini = false): BotTier => (rank === 'normal' && mini ? 'mini' : rank);
+
 export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function BotAvatar(
-  { enemyId, stance, hpRatio, enraged = false, rank = 'normal', className },
+  { enemyId, stance, hpRatio, enraged = false, rank = 'normal', mini = false, defeated = false, className },
   ref,
 ) {
   const uid = useId().replace(/:/g, '');
@@ -1072,8 +1084,17 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
   const dying = hpRatio < 0.25;
   const orbit = ORBIT_S[stance];
   const bodyId = `${uid}-body`;
+  const tier = tierOf(rank, mini);
+  const quake = enraged ? 1.6 : 2.6;
   return (
-    <div ref={ref} className={cn('relative size-44', className)} data-stance={stance} title={STANCE[stance].label}>
+    <div
+      ref={ref}
+      className={cn('relative size-44', defeated && `bot-die-${tier}`, className)}
+      style={defeated ? { animationDuration: `${BOT_DIE_MS[tier]}ms` } : undefined}
+      data-stance={stance}
+      data-tier={tier}
+      title={STANCE[stance].label}
+    >
       <svg viewBox="0 0 160 160" className="bot-avatar size-full overflow-visible" aria-hidden>
         <defs>
           <radialGradient id={`${uid}-aura`} cx="50%" cy="50%" r="50%">
@@ -1099,6 +1120,27 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
         </defs>
 
         <circle cx="80" cy="80" r="80" fill={`url(#${uid}-aura)`} style={{ transition: 'opacity 300ms' }} />
+
+        {/* floor boss: a heavy shadow that breathes, and shockwaves along the ground */}
+        {tier === 'boss' && (
+          <g>
+            <ellipse cx="80" cy="146" rx="46" ry="7" fill="#000" style={{ transformOrigin: '80px 146px', animation: `tier-shadow ${quake * 1.5}s ease-in-out infinite` }} />
+            {[0, 0.5].map((d) => (
+              <ellipse
+                key={d}
+                cx="80"
+                cy="146"
+                rx="56"
+                ry="10"
+                fill="none"
+                stroke={enraged ? '#f97316' : p.main}
+                strokeWidth="2"
+                opacity="0"
+                style={{ transformOrigin: '80px 146px', animation: `tier-quake ${quake}s ease-out ${d * quake}s infinite` }}
+              />
+            ))}
+          </g>
+        )}
 
         {/* boss phase 2: a ring of flames */}
         {enraged && (
@@ -1136,6 +1178,16 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
 
         <StanceBack stance={stance} look={look} />
 
+        {/* tier layer: mini bots are small, elites flex now and then, bosses breathe */}
+        <g
+          style={{
+            transformOrigin: '80px 140px',
+            transform: tier === 'mini' ? 'scale(0.86)' : undefined,
+            animation: tier === 'elite' ? 'tier-flex 4s ease-in-out infinite' : tier === 'boss' ? `tier-breathe ${enraged ? 2 : 3.6}s ease-in-out infinite` : undefined,
+          }}
+        >
+        {/* idle gait: how this body moves */}
+        <g style={gaitStyle(enemyId, tier, enraged)}>
         {/* the body: re-keyed on a stance change so it pops into the new pose */}
         <g key={stance} style={{ transformOrigin: '80px 80px', animation: 'bot-morph 450ms ease-out' }}>
           <g
@@ -1156,7 +1208,12 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
               {look.body(p, ids)}
               <Eyes look={look} stance={stance} dying={dying} glow={ids.glow} />
             </g>
-            {rank === 'elite' && <circle cx="80" cy="80" r="50" fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.8" />}
+            {tier === 'elite' && (
+              <>
+                <circle cx="80" cy="80" r="50" fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.8" style={{ transformOrigin: '80px 80px', animation: 'spin 14s linear infinite' }} />
+                <circle cx="80" cy="80" r="55" fill="none" stroke="#fbbf24" strokeWidth="0.8" strokeDasharray="1 7" opacity="0.6" style={{ transformOrigin: '80px 80px', animation: 'spin 9s linear infinite reverse' }} />
+              </>
+            )}
             {/* damage */}
             {hurt && <path d="M106 52 L98 64 L104 68 L94 82" fill="none" stroke="#d4d4d8" strokeWidth="1.5" strokeLinecap="round" opacity="0.85" />}
             {dying && (
@@ -1167,6 +1224,24 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
             )}
           </g>
         </g>
+        </g>
+        </g>
+
+        {/* mini bot: a few twinkles, it is just a beginner */}
+        {tier === 'mini' &&
+          [
+            [36, 40, 0],
+            [124, 50, 0.7],
+            [118, 118, 1.4],
+          ].map(([x, y, d]) => (
+            <path
+              key={x}
+              d={`M${x} ${y - 5} L${x + 1.5} ${y - 1.5} L${x + 5} ${y} L${x + 1.5} ${y + 1.5} L${x} ${y + 5} L${x - 1.5} ${y + 1.5} L${x - 5} ${y} L${x - 1.5} ${y - 1.5} Z`}
+              fill="#fde68a"
+              opacity="0"
+              style={{ transformOrigin: `${x}px ${y}px`, animation: `tier-twinkle 2.1s ease-in-out ${d}s infinite` }}
+            />
+          ))}
 
         <StanceFront stance={stance} />
       </svg>
@@ -1318,9 +1393,9 @@ export const MinionAvatar = forwardRef<HTMLDivElement, MinionAvatarProps>(functi
   const look = MINION_LOOKS[minionId] ?? MINION_LOOKS.bot_con;
   return (
     <div ref={ref} className={cn('relative size-12', className)}>
-      <svg viewBox="0 0 48 48" className="size-full overflow-visible" aria-hidden>
+      <svg viewBox="0 0 48 48" className="bot-avatar size-full overflow-visible" aria-hidden>
         <circle cx="24" cy="24" r="23" fill={look.color} opacity="0.12" />
-        <g style={{ transformOrigin: '24px 24px', animation: `bot-bob 2.4s ease-in-out ${index * 0.5}s infinite` }}>{look.body(look.color)}</g>
+        <g style={minionGaitStyle(minionId, index)}>{look.body(look.color)}</g>
         {hpRatio < 0.5 && <path d="M33 10 L29 17 L32 19 L27 26" fill="none" stroke="#d4d4d8" strokeWidth="1.2" strokeLinecap="round" opacity="0.85" />}
       </svg>
     </div>

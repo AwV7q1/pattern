@@ -69,7 +69,8 @@ import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
-import { BotAvatar, MinionAvatar, type BotRank } from './BotAvatar';
+import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
+import { BOT_DIE_MS, MINION_EXIT_MS, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
@@ -160,6 +161,18 @@ export interface CardBattleProps {
 
 export function CardBattle({ seed, setup, title, progress, deck, continueLabel, rank, onFinish, onAbandon }: CardBattleProps) {
   const [state, setState] = useState(() => newBattle(CONTENT, seed, setup));
+  /** Mini bot, normal, elite or floor boss: sets how the enemy moves. */
+  const tier = tierOf(rank, CONTENT.run.warmup.includes(state.enemy.id));
+  const tierRef = useRef(tier);
+  tierRef.current = tier;
+  /** The enemy has fallen (after the last hit lands); the end screen waits for its defeat to play out. */
+  const [down, setDown] = useState(false);
+  const [endReady, setEndReady] = useState(false);
+  useEffect(() => {
+    if (!down) return;
+    const t = setTimeout(() => setEndReady(true), BOT_DIE_MS[tierRef.current] + 250);
+    return () => clearTimeout(t);
+  }, [down]);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
@@ -229,8 +242,10 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     const bot = at ?? botRef.current;
     const source = shieldRef.current ?? gateRef.current;
     if (!layer || !bot || !source) return;
+    const onMinion = bot !== botRef.current;
     await bolts(layer, anchor(source, layer), anchor(bot, layer, 0.5, 0.5), damage, () => {
-      shake(bot, 9);
+      if (onMinion) minionHit(bot);
+      else botHit(bot, tierRef.current);
       glow(bot, 'rgba(110,231,183,0.6)', 320);
     });
   }, []);
@@ -352,6 +367,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         await counterFx(dmg);
         setFlash({ key: Date.now(), player: 0, enemy: dmg });
       }
+      if (next.phase === 'won') setDown(true);
     });
   };
 
@@ -411,10 +427,27 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
    */
   const attackPhase = async (plan: TurnPlan, isDone: () => boolean, minMs = 1300) => {
     const layer = fxRef.current;
-    pulse(botRef.current, 1.14, 420);
-    await wait(260);
+    const bot = botRef.current;
+    const minionAt = () => minionsOf(state).map((m) => ({ m, el: minionEls.current[m.uid] ?? null }));
+    // calling minions first: rise and flare
+    if (currentIntent(CONTENT, state).summon) {
+      await botSummon(bot, tier);
+      if (layer && bot) ring(layer, anchor(bot, layer), 'rgba(251,146,60,0.9)', 120);
+    }
+    // the strike, in this enemy's own style, with its minions jumping in one after another
+    minionAt().forEach(({ m, el }, i) => setTimeout(() => minionStrike(el, m.id), 120 + i * 110));
+    await botStrike(bot, state.enemy.id, tier);
     const t0 = performance.now();
+    let beat = 0;
     while (!skip.current) {
+      if (beat++ % 2 === 1) {
+        botJab(bot, tier);
+        const ms = minionAt();
+        if (ms.length) {
+          const { m, el } = ms[beat % ms.length];
+          minionStrike(el, m.id);
+        }
+      }
       botBurst(plan, 700);
       if (layer) flow(layer, pathPts(layer), { count: 7, window: 700 });
       await wait(700);
@@ -531,6 +564,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       setFlash({ key: Date.now(), player: r.damage.total, enemy: Math.max(0, state.enemy.hp - next.enemy.hp) });
       setState(next);
       reshuffleFx(state, next);
+      if (next.phase === 'won') setDown(true);
       // a finished fight keeps its last hand in the rules: leave it in the pile on screen
       over = next.phase === 'won' || next.phase === 'lost';
     } catch (err) {
@@ -655,6 +689,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                 intents={intentsNow(CONTENT, state)}
                 intent={intent}
                 rank={rank}
+                mini={tier === 'mini'}
+                defeated={down}
                 botRef={botRef}
                 usersRef={usersRef}
                 attacking={resolving}
@@ -670,9 +706,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                   pop={flash?.enemy ?? 0}
                   barClass="from-rose-600 to-orange-500"
                 />
-              {minionsOf(state).length > 0 && !over && (
-                <MinionRow state={state} minionEls={minionEls} onAim={resolving ? undefined : (uid) => setState((s) => setTarget(s, uid))} />
-              )}
+              <MinionRow state={state} minionEls={minionEls} onAim={resolving || over ? undefined : (uid) => setState((s) => setTarget(s, uid))} />
             </div>
           </div>
 
@@ -729,7 +763,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
       {showLibrary && <CardLibrary cards={CONTENT.cards} deck={deck} onClose={() => setShowLibrary(false)} />}
 
-      {over && <EndScreen state={state} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
+      {over && (state.phase === 'lost' || endReady) && <EndScreen state={state} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
     </div>
   );
 }
@@ -1102,6 +1136,8 @@ function BotSide({
   intents,
   intent,
   rank,
+  mini,
+  defeated,
   botRef,
   usersRef,
   attacking,
@@ -1112,6 +1148,8 @@ function BotSide({
   intents: Intent[];
   intent: Intent;
   rank?: BotRank;
+  mini?: boolean;
+  defeated?: boolean;
   botRef: React.RefObject<HTMLDivElement | null>;
   usersRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
@@ -1202,6 +1240,8 @@ function BotSide({
           stance={intent.icon}
           enraged={state.enemy.phase === 2}
           rank={rank}
+          mini={mini}
+          defeated={defeated}
           hpRatio={enemyHp / state.enemy.maxHp}
           className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
         <UserRing usersRef={usersRef} />
@@ -1231,23 +1271,29 @@ function MinionRow({
 }) {
   const target = targetOf(state);
   const scale = state.enemy.rps ?? 1;
+  const alive = minionsOf(state);
+  const gone = useLeavers(alive, MINION_EXIT_MS);
+  // fallen minions stay a moment for their exit: they die, or flee when their master falls
+  const shown = [...alive.map((m) => ({ m, exit: undefined as string | undefined })), ...gone.map((m) => (state.phase === 'won' ? { m, exit: 'minion-flee' } : { m: { ...m, hp: 0 }, exit: 'minion-die' }))].sort((a, b) => a.m.uid - b.m.uid);
+  if (!shown.length) return null;
   return (
     <div className="flex w-full flex-col items-center gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Lính đi kèm · bấm để nhắm</span>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{alive.length ? 'Lính đi kèm · bấm để nhắm' : 'Lính đi kèm'}</span>
       <div className="flex flex-wrap justify-center gap-1.5">
-        {minionsOf(state).map((m, i) => {
+        {shown.map(({ m, exit }, i) => {
           const def = minionDef(CONTENT, m.id);
-          const on = target?.uid === m.uid;
+          const on = !exit && target?.uid === m.uid;
           return (
             <button
               key={m.uid}
               type="button"
-              disabled={!onAim}
+              disabled={!onAim || !!exit}
               onClick={() => onAim?.(m.uid)}
               title={`${def.name}: ${def.text}`}
               aria-pressed={on}
               className={cn(
                 'relative flex w-[88px] flex-col items-center rounded-lg border bg-card/60 px-1 pb-1 pt-0.5 transition-colors',
+                exit ?? 'minion-in',
                 on ? 'border-rose-400 bg-rose-500/10 shadow-[0_0_10px_rgba(244,63,94,0.45)]' : 'border-border hover:border-rose-400/60',
               )}
             >
@@ -1271,6 +1317,26 @@ function MinionRow({
       </div>
     </div>
   );
+}
+
+/**
+ * Items that just left `items` (by uid), kept for `ms` so they can play an exit.
+ * A leaver shows up in the very render it leaves in, so its element (and any
+ * effect aimed at it) carries on without a remount.
+ */
+function useLeavers<T extends { uid: number }>(items: T[], ms: number): T[] {
+  const [gone, setGone] = useState<T[]>([]);
+  const prev = useRef(items);
+  const ids = new Set(items.map((i) => i.uid));
+  const fresh = prev.current.filter((i) => !ids.has(i.uid) && !gone.some((g) => g.uid === i.uid));
+  useEffect(() => {
+    prev.current = items;
+    if (!fresh.length) return;
+    setGone((g) => [...g, ...fresh]);
+    // no cleanup: a later change must not cancel this removal
+    setTimeout(() => setGone((g) => g.filter((x) => !fresh.includes(x))), ms);
+  });
+  return [...gone, ...fresh];
 }
 
 /** One status on its own line: icon and label left, the number right. `lg` for the bot's card. */

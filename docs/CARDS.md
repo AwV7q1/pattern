@@ -167,6 +167,49 @@ Lính có thân nhỏ riêng (`MinionAvatar`, bảng `MINION_LOOKS`): phong bì,
 
 Trùm ở pha 2 có vòng lửa, địch tinh anh có viền vàng, dưới nửa máu thì nứt. Địch mới chưa có trong `LOOKS` dùng thân kiến.
 
+### Chuyển động
+
+Mỗi địch và lính có bộ chuyển động riêng (`botMotion.ts`, keyframes trong `styles.css`): dáng đi lúc đứng yên, kiểu ra đòn khi tới lượt địch, và phản ứng khi trúng đòn, khi gọi lính, khi bị hạ. Phần nào cũng chỉ là minh hoạ; luật vẫn do `rules.ts` quyết.
+
+| Dáng đi | Địch |
+|---|---|
+| Nhún nhảy (`hop`) | Script Kiddie, Bot Săn Sneaker |
+| Lơ lửng (`hover`) | Bot Ping, Nhóm APT, Lãnh Chúa DDoS |
+| Bước đều (`march`) | Bot Spam Form, Kẻ Lạm Dụng API |
+| Đập như tim (`beat`) | Bot Kiểm Tra Uptime, Khuếch Đại DNS |
+| Trôi (`drift`) | Botnet Bầy Kiến, Bão Retry |
+| Giậm chân (`stomp`) | Đàn Thundering Herd |
+| Đu tơ (`dangle`) | Crawler Tham Lam |
+| Run rẩy (`jitter`) | Rò Rỉ Bộ Nhớ, Trại Click Farm |
+| Tích tắc (`tick`) | Cron Nửa Đêm |
+| Rình (`prowl`) | Scraper Đối Thủ, Credential Stuffer, Kẻ Đầu Độc Cache |
+| Bò rất chậm (`creep`) | Slowloris |
+| Quét qua lại (`scan`) | Botnet Camera IoT |
+| Uốn lượn (`slither`) | Sâu Zero-day, Botnet Hydra |
+| Đung đưa (`swing`) | Băng Tống Tiền, Black Friday |
+
+| Kiểu ra đòn | Địch |
+|---|---|
+| Lao tới (`lunge`) | Script Kiddie, Crawler, Slowloris, Sâu, Hydra |
+| Lấy đà rồi húc (`charge`) | Bot Uptime, Bầy Kiến, Thundering Herd, Scraper, Sneaker |
+| Nhảy lên dậm xuống (`slam`) | Rò Rỉ Bộ Nhớ, Băng Tống Tiền, Black Friday, Lãnh Chúa DDoS |
+| Xoay vòng (`spin`) | Bão Retry, Cron Nửa Đêm |
+| Biến mất rồi hiện sát (`blink`) | Credential Stuffer, Kẻ Lạm Dụng API, Nhóm APT |
+| Phun hai nhịp (`spit`) | Bot Ping, Bot Spam, Click Farm, Camera IoT, Khuếch Đại DNS, Kẻ Đầu Độc Cache |
+
+Cấp của địch thêm một lớp chuyển động:
+
+| Cấp | Đứng yên | Trúng đòn | Bị hạ |
+|---|---|---|---|
+| Mini bot (trận khởi động) | Nhỏ hơn, nhịp nhanh hơn, sao lấp lánh | Bị hất văng, xoay | Xoay tít rồi biến mất |
+| Thường | Dáng đi riêng | Rung | Ngã nghiêng, bạc màu |
+| Tinh anh | Hai viền vàng xoay ngược nhau, thỉnh thoảng gồng người | Rung ngắn, loé vàng | Loé sáng hai lần rồi vỡ mờ |
+| Trùm tầng | Thở chậm, bóng đổ dưới chân, sóng chấn lan trên mặt đất (pha 2 nhanh hơn, sóng màu lửa) | Gần như không lùi | Rung, loé sáng nhiều lần rồi nổ tan |
+
+Trùm có đòn to và chậm hơn, mini bot có đòn nhỏ và nhanh hơn. Khi địch sắp gọi lính, nó vươn lên, loé cam rồi toả một vòng sóng. Màn tổng kết chờ hiệu ứng bị hạ chạy xong mới hiện.
+
+Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, bánh răng tích tắc, điện thoại rung, túi mua sắm lao lên, laptop zombie lê bước, khiên và cột phát sóng phập phồng, đầu rắn uốn lượn, ổ cache lơ lửng. Lính xuất hiện thì rơi xuống, nhảy vào đánh cùng chủ, trúng đòn thì bẹp lại, chết thì loé sáng và rơi, còn khi chủ bị hạ thì quay lưng bỏ chạy.
+
 ## Cấu trúc code
 
 | File | Vai trò |
@@ -181,6 +224,7 @@ Trùm ở pha 2 có vòng lửa, địch tinh anh có viền vàng, dưới nử
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
 | `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
+| `apps/web/src/cards/botMotion.ts` | Chuyển động của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
 Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.
