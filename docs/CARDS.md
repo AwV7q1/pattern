@@ -169,45 +169,48 @@ Trùm ở pha 2 có vòng lửa, địch tinh anh có viền vàng, dưới nử
 
 ### Chuyển động
 
-Mỗi địch và lính có bộ chuyển động riêng (`botMotion.ts`, keyframes trong `styles.css`): dáng đi lúc đứng yên, kiểu ra đòn khi tới lượt địch, và phản ứng khi trúng đòn, khi gọi lính, khi bị hạ. Phần nào cũng chỉ là minh hoạ; luật vẫn do `rules.ts` quyết.
+Mỗi địch có bộ chuyển động riêng (`moves/`, keyframes trong `moves/moves.css`): dáng đứng yên và vài đạo cụ tự chuyển động, đòn đánh đặc trưng, phản ứng khi trúng đòn, khi gọi lính và khi bị hạ. Phần nào bộ riêng bỏ trống thì dùng chuyển động chung theo cấp (`botMotion.ts`). Phần nào cũng chỉ là minh hoạ; luật vẫn do `rules.ts` quyết.
 
-| Dáng đi | Địch |
+| Địch | Đứng yên | Ra đòn | Trúng đòn | Bị hạ |
+|---|---|---|---|---|
+| Script Kiddie | Gật gù theo nhạc, nốt nhạc bay ra từ tai nghe | Gõ phím loạn xạ, "Ctrl+V", ném đầu lâu script chép | Mũ văng lên rồi rơi lại | "RAGE QUIT", bật nhảy lộn ra sau |
+| Bot Ping | Nghiêng đầu lắng nghe, ăng-ten phát vòng sóng | Ăng-ten nạp sáng, bắn ba vòng ping | Mất gói: chớp tắt, đèn đỏ | Đèn đỏ rồi tắt, chìm xuống, "Request timed out." |
+| Bot Spam Form | Lạch bạch, cờ thư phất phơ | Ngả người, xả cả chùm phong bì | Cờ rơi xuống rồi bật lên | Cờ rơi, đổ chúi về trước, thư bung ra |
+| Bot Kiểm Tra Uptime | Bước theo nhịp tim, đường nhịp chạy trên màn | Nhịp vọt lên, xung bay ra khỏi màn hình | Rung tim loạn nhịp, đèn đỏ | Đường nhịp thẳng tắp, khuỵu xuống, "UPTIME 0%" |
+| Botnet Bầy Kiến | Bước ngang lật đật, râu giật giật | Chồm lên, một hàng kiến bò tới | Cuộn tròn, cụp râu | Lật ngửa, chân quơ quơ |
+| Bão Retry | Mây phồng xẹp, mưa phùn | Tối sầm, sét đánh ba lần (thử, thử lại, thử lại) | Mây bung ra, mưa xối | Mưa trút hết rồi bốc hơi |
+| Đàn Thundering Herd | Cào móng, phì hơi từ mũi | Cúi đầu cào đất hai lần rồi húc tới trong bụi | Lắc đầu, khoen mũi đung đưa | Khuỵu gối, ngã nghiêng, sao bay quanh đầu |
+| Crawler Tham Lam | Nhún trên sợi tơ, chân co duỗi | Tụt xuống, bắn một sợi tơ có lưới | Rút vọt lên rồi thả xuống | Đứt tơ, rơi ngửa, co chân |
+| Rò Rỉ Bộ Nhớ | Phình dần cho tới khi bị dọn rác thì co lại | Phình to, "99% RAM" đỏ, phun bit | Đồng hồ RAM giật, vũng nước bắn | "OOM KILLED": phình đỏ rồi nổ thành bit |
+| Cron Nửa Đêm | Rung từng hồi như chuông báo | Búa gõ chuông điên cuồng, sóng âm bay tới | Chuông lệch, màn hình mất giờ | Lò xo bật ra, chuông văng, úp mặt xuống |
+| Scraper Đối Thủ | Lăn qua lăn lại, bánh xe quay | Chĩa vòi, hút sạch nhãn giá và "$" về phía mình | Vòi giật, bụi phụt ra sau | Túi quá tải, nhãn giá bung ra, bánh xe dừng |
+| Credential Stuffer | Rón rén, chùm chìa leng keng | Thử từng chìa: sai, sai, sai, đúng | Túi tiền tuột tay | Còi hú, giơ tay, lủi đi |
+| Slowloris | Ôm dây cáp đung đưa thật chậm | Lấy đà rất lâu, vồ uể oải, kết nối treo bò dọc dây | Một lúc sau mới giật mình | Cuộn lại ngủ, "Zzz" |
+| Bot Săn Sneaker | Chạy tại chỗ, vệt tốc độ chạy | Lùi lấy đà rồi phóng tới để lại bóng mờ | Chống gót, trượt | Bị đá tung lên rồi mất hút |
+| Trại Click Farm | Rung từng hồi, các màn hình sáng lần lượt | Màn hình loé thành sóng, xả con trỏ chuột | Màn hình tắt gợn sóng rồi sáng lại | Mất điện: tắt từng màn hình, giá đỡ võng xuống |
+| Kẻ Lạm Dụng API | Nhún như gói JSON, ngoặc nhọn phập phồng | Kẹp ngoặc rồi bung ra, xả GET/POST | Ngoặc kẹp chặt, chìa khoá xoay | "401 REVOKED": chìa rơi, ngoặc rời ra |
+| Botnet Camera IoT | Quay qua quay lại trên giá | REC nháy, tia quét đỏ, router xả gói tin | Nhiễu sóng | Bảng màu "NO SIGNAL", đèn tắt, gục trên giá |
+| Khuếch Đại DNS | Giật lùi theo mỗi tiếng hét | Quay ngược loa về phía bạn, hít vào rồi thổi | Hú rít, sóng đỏ răng cưa | Sóng tắt, xẹp xuống, "×0" |
+| Sâu Zero-day | Co duỗi như sâu đo, sóng chạy qua các đốt | Chồm lên, cắn hai phát, phun mã khai thác | Gợn sóng từ đầu tới đuôi | Rã từng đốt từ đuôi, đầu gục sau cùng |
+| Băng Tống Tiền | Lắc như có người đang thử khoá, tờ giấy phất phơ | Sập khoá, quăng sợi xích | Khoá bật hé rồi sập lại | Chìa vào ổ xoay, khoá bật mở, tờ đòi tiền bay mất |
+| Nhóm APT | Lẩn khuất, lúc mờ lúc rõ | Biến mất, hiện sát mặt chém một nhát, biến mất | Tan thành khói rồi tụ lại | Tan thành khói, chỉ còn con dao rơi xuống |
+| Botnet Hydra | Hai đầu bên lắc lư lệch nhịp | Ba đầu lần lượt mổ, phun nọc | Hai đầu bên giật ra | Từng đầu gục xuống, rồi thân chùng |
+| Kẻ Đầu Độc Cache (trùm) | Lướt trên sương độc, bình sủi bọt, mặt nạ phả khói | Ném bình thành vòng cung, vỡ toé độc | Ho sặc khói | Chảy tan thành vũng, bình rơi lăn đi |
+| Black Friday (trùm) | Đu trên sợi dây, đồng hồ đếm ngược | Lật mặt, giá nháy, đàn túi mua sắm nảy tới | Xoay mạnh, xu rơi lả tả | Bị đóng dấu "SOLD OUT", đứt dây rơi xuống |
+
+Ai gọi lính thì có cách gọi riêng: Bot Spam dựng cờ bắn phong bì lên, Bầy Kiến rung râu cho kiến bò lên từ đất, Cron nhả bánh răng, Click Farm bật ra thêm một điện thoại, Hydra mọc đầu mới, Kẻ Đầu Độc Cache đổ bình thành vũng độc sủi bọt, Black Friday quét mã vạch "ting" một tiếng. Pha 2 của Kẻ Đầu Độc Cache đổi độc sang tím, khói dày hơn; Black Friday hạ giá còn -99%, đèn còi chớp.
+
+Cấp của địch thêm một lớp chung:
+
+| Cấp | Đứng yên |
 |---|---|
-| Nhún nhảy (`hop`) | Script Kiddie, Bot Săn Sneaker |
-| Lơ lửng (`hover`) | Bot Ping, Nhóm APT |
-| Bay lên, nghiêng nhẹ (`levitate`) | Lãnh Chúa DDoS |
-| Bước đều (`march`) | Bot Spam Form, Kẻ Lạm Dụng API |
-| Đập như tim (`beat`) | Bot Kiểm Tra Uptime, Khuếch Đại DNS |
-| Trôi (`drift`) | Botnet Bầy Kiến, Bão Retry |
-| Giậm chân (`stomp`) | Đàn Thundering Herd |
-| Đu tơ (`dangle`) | Crawler Tham Lam |
-| Run rẩy (`jitter`) | Rò Rỉ Bộ Nhớ, Trại Click Farm |
-| Tích tắc (`tick`) | Cron Nửa Đêm |
-| Rình (`prowl`) | Scraper Đối Thủ, Credential Stuffer, Kẻ Đầu Độc Cache |
-| Bò rất chậm (`creep`) | Slowloris |
-| Quét qua lại (`scan`) | Botnet Camera IoT |
-| Uốn lượn (`slither`) | Sâu Zero-day, Botnet Hydra |
-| Đung đưa (`swing`) | Băng Tống Tiền, Black Friday |
+| Mini bot (trận khởi động) | Nhỏ hơn, nhịp nhanh hơn, sao lấp lánh |
+| Tinh anh | Hai viền vàng xoay ngược nhau, thỉnh thoảng gồng người |
+| Trùm tầng | Thở chậm, bóng đổ dưới chân, sóng chấn lan trên mặt đất (pha 2 nhanh hơn, sóng màu lửa) |
 
-| Kiểu ra đòn | Địch |
-|---|---|
-| Lao tới (`lunge`) | Script Kiddie, Crawler, Slowloris, Sâu, Hydra |
-| Lấy đà rồi húc (`charge`) | Bot Uptime, Bầy Kiến, Thundering Herd, Scraper, Sneaker |
-| Nhảy lên dậm xuống (`slam`) | Rò Rỉ Bộ Nhớ, Băng Tống Tiền, Black Friday |
-| Xoay vòng (`spin`) | Bão Retry, Cron Nửa Đêm |
-| Biến mất rồi hiện sát (`blink`) | Credential Stuffer, Kẻ Lạm Dụng API, Nhóm APT |
-| Phun hai nhịp (`spit`) | Bot Ping, Bot Spam, Click Farm, Camera IoT, Khuếch Đại DNS, Kẻ Đầu Độc Cache |
+Địch mới chưa có bộ riêng dùng chuyển động chung: lơ lửng, lao tới, và phản ứng trúng đòn / bị hạ theo cấp (mini bot bị hất văng, trùm gần như không lùi).
 
-Cấp của địch thêm một lớp chuyển động:
-
-| Cấp | Đứng yên | Trúng đòn | Bị hạ |
-|---|---|---|---|
-| Mini bot (trận khởi động) | Nhỏ hơn, nhịp nhanh hơn, sao lấp lánh | Bị hất văng, xoay | Xoay tít rồi biến mất |
-| Thường | Dáng đi riêng | Rung | Ngã nghiêng, bạc màu |
-| Tinh anh | Hai viền vàng xoay ngược nhau, thỉnh thoảng gồng người | Rung ngắn, loé vàng | Loé sáng hai lần rồi vỡ mờ |
-| Trùm tầng | Thở chậm, bóng đổ dưới chân, sóng chấn lan trên mặt đất (pha 2 nhanh hơn, sóng màu lửa) | Gần như không lùi | Rung, loé sáng nhiều lần rồi nổ tan |
-
-Lãnh Chúa DDoS, trùm cuối, có bộ chuyển động riêng thay cho các kiểu dùng chung (`ddosLord.tsx`):
+Lãnh Chúa DDoS, trùm cuối, có bộ chuyển động công phu nhất (`moves/ddosLord.tsx`):
 
 | Lúc | Chuyển động |
 |---|---|
@@ -218,7 +221,7 @@ Lãnh Chúa DDoS, trùm cuối, có bộ chuyển động riêng thay cho các k
 | Pha 2 | Bùng một vòng sóng đỏ khi chuyển pha. Vương miện nứt, nghiêng và rực đỏ. Mắt mở to liên tục, gói tin chạy nhanh gấp đôi, thân thỉnh thoảng nhoè thành hai bản đỏ và xanh. Khi trúng đòn, khiên vỡ thành mảnh |
 | Bị hạ | Thân giật nhiễu rồi tắt như màn hình CRT: co thành một vạch sáng, rồi một chấm, rồi biến mất. Vương miện rơi xuống đất, nảy hai lần rồi nằm yên |
 
-Trùm có đòn to và chậm hơn, mini bot có đòn nhỏ và nhanh hơn. Khi địch sắp gọi lính, nó vươn lên, loé cam rồi toả một vòng sóng. Màn tổng kết chờ hiệu ứng bị hạ chạy xong mới hiện.
+Khi địch gọi lính, một vòng sóng cam toả ra quanh nó. Màn tổng kết chờ hiệu ứng bị hạ chạy xong mới hiện.
 
 Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, bánh răng tích tắc, điện thoại rung, túi mua sắm lao lên, laptop zombie lê bước, khiên và cột phát sóng phập phồng, đầu rắn uốn lượn, ổ cache lơ lửng. Lính xuất hiện thì rơi xuống, nhảy vào đánh cùng chủ, trúng đòn thì bẹp lại, chết thì loé sáng và rơi, còn khi chủ bị hạ thì quay lưng bỏ chạy.
 
@@ -236,8 +239,8 @@ Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, b�
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
 | `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
-| `apps/web/src/cards/botMotion.ts` | Chuyển động của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp |
-| `apps/web/src/cards/ddosLord.tsx` | Bộ chuyển động riêng của Lãnh Chúa DDoS: các lớp SVG và các hàm ra đòn, trúng đòn, gọi lính |
+| `apps/web/src/cards/botMotion.ts` | Chuyển động chung của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp; chuyển sang bộ riêng nếu địch có |
+| `apps/web/src/cards/moves/` | Bộ chuyển động riêng từng địch (`kit.tsx` mô tả cấu trúc `MoveSet`; `warmup`, `floor1`–`floor3`, `bosses`, `ddosLord`), keyframes trong `moves.css` |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
 Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.

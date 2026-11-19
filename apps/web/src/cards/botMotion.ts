@@ -61,39 +61,12 @@ const GAIT_ORIGIN: Partial<Record<Gait, string>> = {
   slither: '80px 140px',
 };
 
-const MOTIONS: Record<string, Motion> = {
-  // warmup mini bots: bouncy and quick
-  script_kiddie: { gait: 'hop', strike: 'lunge' },
-  ping_bot: { gait: 'hover', strike: 'spit' },
-  spam_bot: { gait: 'march', strike: 'spit' },
-  uptime_bot: { gait: 'beat', strike: 'charge' },
-  // classic enemies
-  swarm: { gait: 'drift', strike: 'charge' },
-  retry_storm: { gait: 'drift', strike: 'spin' },
-  herd: { gait: 'stomp', strike: 'charge' },
-  // floor 1
-  crawler: { gait: 'dangle', strike: 'lunge' },
-  memory_leak: { gait: 'jitter', strike: 'slam' },
-  cron_storm: { gait: 'tick', strike: 'spin' },
-  // floor 2
-  scraper: { gait: 'prowl', strike: 'charge' },
-  cred_stuffer: { gait: 'prowl', strike: 'blink' },
-  slowloris: { gait: 'creep', strike: 'lunge' },
-  sneaker_bot: { gait: 'hop', strike: 'charge' },
-  click_farm: { gait: 'jitter', strike: 'spit' },
-  api_abuser: { gait: 'march', strike: 'blink' },
-  // floor 3
-  iot_botnet: { gait: 'scan', strike: 'spit' },
-  amplifier: { gait: 'beat', strike: 'spit' },
-  worm: { gait: 'slither', strike: 'lunge' },
-  ransom_gang: { gait: 'swing', strike: 'slam' },
-  apt_group: { gait: 'hover', strike: 'blink' },
-  hydra: { gait: 'slither', strike: 'lunge' },
-  // floor bosses
-  cache_poisoner: { gait: 'prowl', strike: 'spit' },
-  black_friday: { gait: 'swing', strike: 'slam' },
-  ddos_lord: { gait: 'hover', strike: 'slam' }, // its own moves: moves/ddosLord.tsx
-};
+/**
+ * Shared styles for an enemy without a move set of its own (moves/). Every
+ * enemy today has one; a new enemy can borrow a shared gait and strike here
+ * until it gets its own.
+ */
+const MOTIONS: Record<string, Motion> = {};
 
 export const motionOf = (enemyId: string): Motion => MOTIONS[enemyId] ?? { gait: 'hover', strike: 'lunge' };
 
