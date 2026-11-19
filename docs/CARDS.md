@@ -249,7 +249,7 @@ pnpm balance:cards            # 20 trận mỗi chiến thuật (idle, random, g
 pnpm balance:cards 50 --log   # in diễn biến từng lượt
 pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng và nơi bot chết
 pnpm balance:cards 40 --run --by-enemy  # thêm tỉ lệ thắng, máu mất, số lượt theo từng địch
-pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật (greedy chậm nhất); trận quá 30 lượt tính là thua do giằng co
+pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật; trận quá 30 lượt tính là thua do giằng co
 ```
 
 Mục tiêu hiện tại cho trận đầu:
