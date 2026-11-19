@@ -6,6 +6,10 @@
 
 import type { Design, EdgePolicy } from '@/types';
 
+/** basic: starting deck only, never offered. */
+export type Rarity = 'basic' | 'common' | 'uncommon' | 'rare';
+export type RarityWeights = Record<Exclude<Rarity, 'basic'>, number>;
+
 export type CardType = 'infra' | 'policy' | 'action' | 'attack' | 'curse';
 /** Node a card targets. The battle topology is client → lb → api → [cache] → db. */
 export type NodeRef = 'api' | 'db';
@@ -46,6 +50,8 @@ export interface CardDef {
   name: string;
   type: CardType;
   cost: number;
+  /** Curses have none. */
+  rarity?: Rarity;
   text: string;
   /** One line on the real-world idea behind the card. */
   lesson: string;
@@ -160,6 +166,8 @@ export interface RunConfig {
   hp: number;
   /** Cards offered after each won fight (pick one or skip); elites offer one more. */
   rewardChoices: number;
+  /** Odds of each rarity in a card offer, after normal fights (and events) and after elites. */
+  rarityWeights: { battle: RarityWeights; elite: RarityWeights };
   /** Share of max HP restored at a rest stop. */
   restHeal: number;
   /** Share of max HP restored when climbing to the next floor. */

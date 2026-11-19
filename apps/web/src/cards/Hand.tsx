@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { CardDef, CardType } from './types';
+import type { CardDef, CardType, Rarity } from './types';
 import { reduced } from './fx';
 import { TYPE_ICON, cardIcon } from './cardArt';
 
@@ -311,6 +311,14 @@ export function Hand({
   );
 }
 
+/** Rarity badge on the artwork (common cards have none). */
+export const RARITY_STYLE: Record<Rarity, { label: string; text: string }> = {
+  basic: { label: 'Cơ bản', text: 'text-zinc-300' },
+  common: { label: 'Thường', text: 'text-zinc-200' },
+  uncommon: { label: 'Ít gặp', text: 'text-sky-300' },
+  rare: { label: 'Hiếm', text: 'text-amber-300' },
+};
+
 export function CardFace({
   def,
   playable,
@@ -344,6 +352,11 @@ export function CardFace({
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,.35)_1px,transparent_1px)] [background-size:10px_10px]" />
         <Icon aria-hidden className={cn('absolute -bottom-4 -right-3 size-[78px] opacity-15', style.icon)} strokeWidth={1.25} />
         <Icon aria-hidden className={cn('absolute left-1/2 top-1/2 size-9 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]', style.icon)} strokeWidth={1.75} />
+        {def.rarity && def.rarity !== 'common' && (
+          <span className={cn('absolute bottom-1 left-1 rounded-full bg-black/55 px-1.5 py-px text-[9px] font-medium', RARITY_STYLE[def.rarity].text)}>
+            {RARITY_STYLE[def.rarity].label}
+          </span>
+        )}
         {def.exhaust && (
           <span className="absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-px text-[9px] font-medium text-amber-200">Tiêu hao</span>
         )}

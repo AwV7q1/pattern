@@ -1,9 +1,40 @@
 [
   {
+    "id": "patch",
+    "name": "Vá nóng",
+    "type": "attack",
+    "cost": 1,
+    "rarity": "basic",
+    "text": "Gây 5 sát thương lên botnet.",
+    "lesson": "Bản vá nhỏ, nhanh: đủ chặn một đợt, không giải quyết gốc rễ.",
+    "effects": [
+      {
+        "op": "attack",
+        "dmg": 5
+      }
+    ]
+  },
+  {
+    "id": "buffer",
+    "name": "Buffer",
+    "type": "action",
+    "cost": 1,
+    "rarity": "basic",
+    "text": "+5 Headroom: hấp thụ sát thương lượt này.",
+    "lesson": "Dư công suất một chút để chịu được đợt tăng đột ngột.",
+    "effects": [
+      {
+        "op": "headroom",
+        "n": 5
+      }
+    ]
+  },
+  {
     "id": "scale_api",
     "name": "Scale Out API",
     "type": "infra",
     "cost": 1,
+    "rarity": "common",
     "text": "+1 instance API cho cả trận. Tốn thêm $0.10/h.",
     "lesson": "Scale ngang: thêm máy thì thêm slot, nhưng tốn tiền mỗi giờ.",
     "effects": [
@@ -19,6 +50,7 @@
     "name": "Read Replica",
     "type": "infra",
     "cost": 2,
+    "rarity": "uncommon",
     "text": "+1 instance DB cho cả trận. Đắt: $0.50/h.",
     "lesson": "Database là phần đắt nhất và khó scale nhất.",
     "effects": [
@@ -34,6 +66,7 @@
     "name": "Redis Cache",
     "type": "infra",
     "cost": 2,
+    "rarity": "uncommon",
     "text": "Đặt cache trước DB (hit 70%). Đánh lại: +15% hit, tối đa 95%.",
     "lesson": "Cache-aside: phần lớn request đọc không còn chạm tới DB.",
     "effects": [
@@ -50,6 +83,7 @@
     "name": "Timeout 250ms",
     "type": "policy",
     "cost": 0,
+    "rarity": "common",
     "text": "Lời gọi từ API xuống bỏ cuộc sau 250ms, nhả slot ngay.",
     "lesson": "Không timeout thì slot bị giữ khi DB chậm, lỗi lan ngược lên trên.",
     "effects": [
@@ -66,6 +100,7 @@
     "name": "Retry + Backoff",
     "type": "policy",
     "cost": 1,
+    "rarity": "common",
     "text": "API thử lại 2 lần khi lỗi, có backoff và jitter.",
     "lesson": "Retry cứu lỗi thoáng qua, nhưng khi quá tải thì nhân tải lên.",
     "effects": [
@@ -84,6 +119,7 @@
     "name": "Circuit Breaker",
     "type": "policy",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Ngắt mạch khi ≥ 50% lời gọi từ API lỗi: trả lỗi nhanh 3 giây. Cẩn thận: khi mạch mở, mọi request đều lỗi.",
     "lesson": "Fail fast để downstream có thời gian hồi phục.",
     "effects": [
@@ -105,6 +141,7 @@
     "name": "Rate Limit theo IP",
     "type": "action",
     "cost": 1,
+    "rarity": "common",
     "text": "Lượt này lọc 50% traffic bot. Bot bị chặn gây sát thương lên botnet.",
     "lesson": "Token bucket mỗi IP: kẻ spam bị 429, người dùng thật gần như không bị ảnh hưởng.",
     "effects": [
@@ -119,6 +156,7 @@
     "name": "Burst Scale",
     "type": "action",
     "cost": 1,
+    "rarity": "common",
     "text": "Lượt này +3 instance API (vẫn tính tiền lượt này).",
     "lesson": "Autoscale tạm thời: đỡ được spike, nhưng DB phía sau vẫn vậy.",
     "effects": [
@@ -135,6 +173,7 @@
     "name": "Serve Stale",
     "type": "action",
     "cost": 1,
+    "rarity": "common",
     "text": "+7 Headroom: hấp thụ sát thương lượt này.",
     "lesson": "Trả dữ liệu cũ còn hơn trả lỗi (stale-while-revalidate).",
     "effects": [
@@ -149,6 +188,7 @@
     "name": "Hotfix",
     "type": "action",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Rút 1 lá.",
     "lesson": "Đôi khi cách nhanh nhất là sửa đúng chỗ đang cháy.",
     "effects": [
@@ -166,6 +206,7 @@
     "name": "Runbook",
     "type": "action",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Rút 2 lá.",
     "lesson": "Có sẵn quy trình thì xử lý sự cố nhanh hơn.",
     "effects": [
@@ -180,6 +221,7 @@
     "name": "Cà phê 3h sáng",
     "type": "action",
     "cost": 0,
+    "rarity": "common",
     "text": "+1 Ops. Tiêu hao.",
     "lesson": "On-call cũng là con người.",
     "effects": [
@@ -195,6 +237,7 @@
     "name": "Chặn dải IP",
     "type": "attack",
     "cost": 1,
+    "rarity": "common",
     "text": "Gây 6 sát thương lên botnet.",
     "lesson": "Chặn ở tầng mạng: rẻ, nhưng botnet đổi IP rất nhanh.",
     "effects": [
@@ -209,6 +252,7 @@
     "name": "WAF Rule",
     "type": "attack",
     "cost": 2,
+    "rarity": "rare",
     "text": "Gây 4 sát thương. Từ giờ lọc thêm 25% bot mỗi lượt (tối đa 75%).",
     "lesson": "Luật WAF lọc theo dấu hiệu, có tác dụng lâu dài.",
     "effects": [
@@ -228,6 +272,7 @@
     "name": "Honeypot",
     "type": "attack",
     "cost": 2,
+    "rarity": "rare",
     "text": "Gây 12 sát thương. Tiêu hao.",
     "lesson": "Dụ bot vào endpoint giả để nhận diện và chặn cả cụm.",
     "effects": [
@@ -243,6 +288,7 @@
     "name": "Đánh Index",
     "type": "infra",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Query DB nhanh gấp đôi cho cả trận (latency ×0.5).",
     "lesson": "Query chậm thường do thiếu index: sửa rẻ hơn nhiều so với mua thêm máy.",
     "effects": [
@@ -260,6 +306,7 @@
     "name": "Scale dọc DB",
     "type": "infra",
     "cost": 2,
+    "rarity": "rare",
     "text": "Máy DB to hơn: +50% kết nối đồng thời, giá ×1.6 cho cả trận.",
     "lesson": "Scale dọc đơn giản nhưng có trần, và giá tăng nhanh hơn sức mạnh.",
     "effects": [
@@ -278,6 +325,7 @@
     "name": "Tăng hàng đợi",
     "type": "infra",
     "cost": 0,
+    "rarity": "common",
     "text": "Hàng đợi API ×2 cho cả trận: ít request bị từ chối hơn, nhưng chờ lâu hơn.",
     "lesson": "Queue lớn che được spike ngắn, nhưng khi quá tải kéo dài nó chỉ làm p99 tăng vọt.",
     "effects": [
@@ -295,6 +343,7 @@
     "name": "Load Shedding",
     "type": "policy",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Hàng đợi API còn 30% cho cả trận: từ chối sớm thay vì để request chờ quá hạn.",
     "lesson": "Từ chối nhanh một phần để giữ p99 thấp cho phần còn lại tốt hơn là làm chậm tất cả.",
     "effects": [
@@ -312,6 +361,7 @@
     "name": "Connection Pool",
     "type": "policy",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Mỗi instance API giữ tối đa 8 kết nối tới tầng dưới, chờ pool tối đa 100ms.",
     "lesson": "Giới hạn số kết nối để DB không bị bóp nghẹt khi API scale ra nhiều máy.",
     "effects": [
@@ -329,6 +379,7 @@
     "name": "Retry Budget",
     "type": "policy",
     "cost": 0,
+    "rarity": "rare",
     "text": "API chỉ retry khi số retry dưới 10% traffic. Đi kèm Retry + Backoff.",
     "lesson": "Không giới hạn retry thì lúc sự cố, chính hệ thống của bạn tự DDoS tầng dưới.",
     "effects": [
@@ -348,6 +399,7 @@
     "name": "CAPTCHA",
     "type": "action",
     "cost": 1,
+    "rarity": "common",
     "text": "Lượt này lọc 30% traffic bot và +3 Headroom.",
     "lesson": "Thử thách client đáng ngờ: bot bị loại, người thật vẫn qua được.",
     "effects": [
@@ -366,6 +418,7 @@
     "name": "Refactor",
     "type": "action",
     "cost": 1,
+    "rarity": "uncommon",
     "text": "Loại mọi Tech Debt trên tay khỏi trận, rút 1 lá cho mỗi lá bị loại.",
     "lesson": "Trả nợ kỹ thuật sớm, trước khi nó chiếm hết thời gian của đội.",
     "effects": [
@@ -380,6 +433,7 @@
     "name": "Postmortem",
     "type": "action",
     "cost": 1,
+    "rarity": "common",
     "text": "+3 Headroom. Rút 1 lá.",
     "lesson": "Postmortem không đổ lỗi: hiểu vì sao sự cố xảy ra để lần sau xử lý nhanh hơn.",
     "effects": [
@@ -398,6 +452,7 @@
     "name": "Null-route",
     "type": "attack",
     "cost": 1,
+    "rarity": "common",
     "text": "Gây 3 sát thương. Lượt này lọc thêm 25% bot.",
     "lesson": "Đẩy dải IP xấu vào \"hố đen\" ngay ở biên mạng, trước khi chạm tới hệ thống.",
     "effects": [

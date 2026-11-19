@@ -19,7 +19,7 @@
 
 import { cardDef, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
-import type { BattleSetup, BattleState, Content, MapNode, RunEvent, RunState, Scale, TowerMap } from './types';
+import type { BattleSetup, BattleState, Content, MapNode, RunEvent, RarityWeights, RunState, Scale, TowerMap } from './types';
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
@@ -125,15 +125,21 @@ export function battleTitle(content: Content, run: RunState): string {
   return enemy.name;
 }
 
-/** Cards that can be offered: every playable card. */
-export const rewardPool = (content: Content) => content.cards.filter((c) => !c.unplayable).map((c) => c.id);
+/** Cards that can be offered: every playable card but the starting basics. */
+export const rewardPool = (content: Content) => content.cards.filter((c) => !c.unplayable && c.rarity !== 'basic').map((c) => c.id);
 
-function offer(content: Content, run: RunState, n: number): string[] {
+/** `n` different cards, each drawn by rarity odds first, then evenly within that rarity. */
+function offer(content: Content, run: RunState, n: number, odds: RarityWeights = content.run.rarityWeights.battle): string[] {
   const pool = rewardPool(content);
+  const byRarity = (r: string) => pool.filter((id) => (cardDef(content, id).rarity ?? 'common') === r);
   const picks: string[] = [];
   while (picks.length < Math.min(n, pool.length)) {
-    const id = pool[Math.floor(nextRandom(run) * pool.length)];
-    if (!picks.includes(id)) picks.push(id);
+    const rarities = (Object.keys(odds) as (keyof RarityWeights)[]).filter((r) => byRarity(r).some((id) => !picks.includes(id)));
+    const total = rarities.reduce((sum, r) => sum + odds[r], 0);
+    let roll = nextRandom(run) * total;
+    const rarity = rarities.find((r) => (roll -= odds[r]) < 0) ?? rarities[rarities.length - 1];
+    const left = byRarity(rarity).filter((id) => !picks.includes(id));
+    picks.push(left[Math.floor(nextRandom(run) * left.length)]);
   }
   return picks;
 }
@@ -161,7 +167,7 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
     choices++;
   }
   run.phase = 'reward';
-  run.reward = offer(content, run, choices);
+  run.reward = offer(content, run, choices, content.run.rarityWeights[node.kind === 'elite' ? 'elite' : 'battle']);
   return run;
 }
 

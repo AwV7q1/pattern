@@ -42,5 +42,17 @@
   "actScale": {
     "hp": 0.2,
     "rps": 0.08
+  },
+  "rarityWeights": {
+    "battle": {
+      "common": 60,
+      "uncommon": 33,
+      "rare": 7
+    },
+    "elite": {
+      "common": 40,
+      "uncommon": 42,
+      "rare": 18
+    }
   }
 }

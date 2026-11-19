@@ -399,3 +399,11 @@ test('scoreTurn: the forecast is exactly what resolveTurn applies', () => {
   assert.equal(score.enemyDamage, r.enemyDamage);
   assert.equal(next.hp, s.hp - score.damage.total);
 });
+
+test('rarity: every playable card has one, basics are never offered', () => {
+  for (const c of content.cards) if (!c.unplayable) assert.ok(c.rarity, c.id);
+  const pool = runs.rewardPool(content);
+  assert.ok(pool.length > 10);
+  for (const id of pool) assert.notEqual(content.cards.find((c) => c.id === id)!.rarity, 'basic', id);
+  for (const id of content.battle.startingDeck) assert.ok(content.cards.some((c) => c.id === id));
+});
