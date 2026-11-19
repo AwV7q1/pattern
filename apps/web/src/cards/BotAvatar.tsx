@@ -545,16 +545,22 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <path d="M108 84 Q142 86 134 114 Q128 130 112 130" fill="none" stroke="#52525b" strokeWidth="7" strokeLinecap="round" />
-        <path d="M108 84 Q142 86 134 114 Q128 130 112 130" fill="none" stroke={p.main} strokeOpacity="0.4" strokeWidth="2" strokeDasharray="3 4" />
-        <rect x="90" y="126" width="30" height="9" rx="3" fill={p.main} />
+        <g data-fx="hose" style={{ transformOrigin: '108px 84px' }}>
+          <path d="M108 84 Q142 86 134 114 Q128 130 112 130" fill="none" stroke="#52525b" strokeWidth="7" strokeLinecap="round" />
+          <path d="M108 84 Q142 86 134 114 Q128 130 112 130" fill="none" stroke={p.main} strokeOpacity="0.4" strokeWidth="2" strokeDasharray="3 4" style={{ animation: 'sc-suck 0.6s linear infinite' }} />
+          <rect x="90" y="126" width="30" height="9" rx="3" fill={p.main} />
+        </g>
         {[0, 1, 2].map((i) => (
           <text key={i} x={64 + i * 10} y="144" fontSize="7" fontFamily="monospace" fill={p.light} style={{ animation: `bot-float 1.4s ease-in-out ${i * 0.3}s infinite` }}>
             $
           </text>
         ))}
-        <circle cx="58" cy="110" r="8" fill="#27272a" stroke={p.main} strokeOpacity="0.6" />
-        <circle cx="96" cy="110" r="8" fill="#27272a" stroke={p.main} strokeOpacity="0.6" />
+        {[58, 96].map((x) => (
+          <g key={x} data-fx="wheel" style={{ transformOrigin: `${x}px 110px`, animation: 'sc-wheel 2.4s ease-in-out infinite' }}>
+            <circle cx={x} cy="110" r="8" fill="#27272a" stroke={p.main} strokeOpacity="0.6" />
+            <path d={`M${x - 6} 110 H${x + 6} M${x} 104 V116`} stroke={p.main} strokeOpacity="0.5" strokeWidth="1.5" />
+          </g>
+        ))}
         <rect x="40" y="44" width="70" height="62" rx="20" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <rect x="48" y="64" width="54" height="20" rx="9" fill="#09090b" />
         <g transform="translate(58 42) rotate(-18)">
@@ -580,10 +586,12 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <ellipse cx="36" cy="112" rx="15" ry="18" fill="#44403c" stroke="#78716c" />
-        <text x="36" y="118" textAnchor="middle" fontSize="14" fontFamily="monospace" fontWeight="bold" fill="#fbbf24">
-          $
-        </text>
+        <g data-fx="bag" style={{ transformOrigin: '36px 130px' }}>
+          <ellipse cx="36" cy="112" rx="15" ry="18" fill="#44403c" stroke="#78716c" />
+          <text x="36" y="118" textAnchor="middle" fontSize="14" fontFamily="monospace" fontWeight="bold" fill="#fbbf24">
+            $
+          </text>
+        </g>
         <circle cx="80" cy="84" r="32" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <path d="M46 72 Q46 32 80 32 Q114 32 114 72 Z" fill="#27272a" stroke={p.main} strokeOpacity="0.6" />
         {[54, 66, 78, 90, 102].map((x) => (
@@ -592,12 +600,14 @@ const LOOKS: Record<string, Look> = {
         <circle cx="80" cy="30" r="6" fill="#e11d48" />
         <rect x="44" y="70" width="72" height="18" rx="9" fill="#09090b" />
         <path d="M70 104 Q80 108 90 104" fill="none" stroke="#a1a1aa" strokeWidth="2" strokeLinecap="round" />
-        <circle cx="118" cy="110" r="8" fill="none" stroke="#fbbf24" strokeWidth="2.5" />
-        {[-10, 8, 26].map((rot) => (
-          <g key={rot} transform={`translate(118 118) rotate(${rot})`}>
-            <path d="M0 0 V14 M0 10 H3 M0 14 H3" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
-          </g>
-        ))}
+        <g data-fx="keys" style={{ transformOrigin: '118px 102px', animation: 'cs-jingle 2.2s ease-in-out infinite' }}>
+          <circle cx="118" cy="110" r="8" fill="none" stroke="#fbbf24" strokeWidth="2.5" />
+          {[-10, 8, 26].map((rot) => (
+            <g key={rot} transform={`translate(118 118) rotate(${rot})`}>
+              <path d="M0 0 V14 M0 10 H3 M0 14 H3" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
+            </g>
+          ))}
+        </g>
       </>
     ),
   },
@@ -642,9 +652,11 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        {[78, 92, 106].map((y, i) => (
-          <line key={y} x1={4 + i * 4} y1={y} x2={22 + i * 4} y2={y} stroke={p.light} strokeWidth="2" strokeLinecap="round" opacity="0.6" />
-        ))}
+        <g data-fx="speed">
+          {[78, 92, 106].map((y, i) => (
+            <line key={y} x1={4 + i * 4} y1={y} x2={22 + i * 4} y2={y} stroke={p.light} strokeWidth="2" strokeLinecap="round" opacity="0.6" style={{ animation: `sn-speed 0.5s linear ${i * 0.15}s infinite` }} />
+          ))}
+        </g>
         <path d="M30 112 L134 112 Q140 112 138 120 L136 124 L32 124 Q26 124 28 118 Z" fill="#e5e7eb" stroke="#a1a1aa" />
         <path
           d="M34 112 L38 68 Q42 54 58 58 L74 64 Q90 74 108 84 L128 96 Q138 102 134 112 Z"
@@ -655,9 +667,11 @@ const LOOKS: Record<string, Look> = {
         />
         <ellipse cx="48" cy="60" rx="10" ry="4" fill="#09090b" />
         <rect x="44" y="73" width="48" height="18" rx="9" fill="#09090b" />
-        {[0, 1, 2].map((k) => (
-          <path key={k} d={`M${98 + k * 8} ${80 + k * 4} l6 -6 M${98 + k * 8} ${74 + k * 4} l6 6`} stroke={p.light} strokeWidth="1.5" strokeLinecap="round" />
-        ))}
+        <g data-fx="laces" style={{ transformOrigin: '106px 82px' }}>
+          {[0, 1, 2].map((k) => (
+            <path key={k} d={`M${98 + k * 8} ${80 + k * 4} l6 -6 M${98 + k * 8} ${74 + k * 4} l6 6`} stroke={p.light} strokeWidth="1.5" strokeLinecap="round" />
+          ))}
+        </g>
         <path d="M54 102 L72 96 L70 102 L96 94" fill="none" stroke={p.main} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
       </>
     ),
@@ -677,14 +691,24 @@ const LOOKS: Record<string, Look> = {
             r === 1 && c === 1 ? null : (
               <g key={`${r}${c}`}>
                 <rect x={36 + c * 31} y={36 + r * 33} width="26" height="29" rx="3.5" fill={`url(#${ids.head})`} stroke={p.main} strokeOpacity="0.5" />
-                <rect x={39 + c * 31} y={40 + r * 33} width="20" height="19" rx="1.5" fill={p.main} opacity="0.22" />
+                <rect
+                  data-fx="screen"
+                  x={39 + c * 31}
+                  y={40 + r * 33}
+                  width="20"
+                  height="19"
+                  rx="1.5"
+                  fill={p.main}
+                  opacity="0.22"
+                  style={{ ['--i' as string]: r * 3 + c, animation: `cf-screen 2.4s ease-in-out ${((r * 3 + c) * 0.27).toFixed(2)}s infinite` }}
+                />
                 <circle cx={49 + c * 31} cy={50 + r * 33} r="2.5" fill={p.light} className={(r + c) % 2 ? 'animate-ping' : undefined} />
               </g>
             ),
           ),
         )}
         <rect x="60" y="62" width="40" height="40" rx="5" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
-        <rect x="64" y="69" width="32" height="22" rx="4" fill="#09090b" />
+        <rect data-fx="face" x="64" y="69" width="32" height="22" rx="4" fill="#09090b" />
         <circle cx="80" cy="96" r="2" fill={p.main} />
       </>
     ),
@@ -705,6 +729,8 @@ const LOOKS: Record<string, Look> = {
         {[-1, 1].map((d) => (
           <path
             key={d}
+            data-fx="brace"
+            style={{ ['--d' as string]: d, animation: 'aa-brace 1.8s ease-in-out infinite' }}
             d={`M${80 - d * 34} 34 Q${80 - d * 46} 34 ${80 - d * 46} 48 L${80 - d * 46} 70 Q${80 - d * 46} 80 ${80 - d * 56} 80 Q${80 - d * 46} 80 ${80 - d * 46} 90 L${80 - d * 46} 112 Q${80 - d * 46} 126 ${80 - d * 34} 126`}
             fill="none"
             stroke={p.main}
@@ -715,9 +741,11 @@ const LOOKS: Record<string, Look> = {
         ))}
         <rect x="50" y="46" width="60" height="68" rx="14" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <rect x="56" y="70" width="48" height="20" rx="9" fill="#09090b" />
-        <g transform="translate(80 58)">
-          <circle cx="-6" r="4" fill="none" stroke="#fbbf24" strokeWidth="2" />
-          <path d="M-2 0 H9 M6 0 V3 M9 0 V3" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
+        <g data-fx="key" style={{ transformOrigin: '80px 58px' }}>
+          <g transform="translate(80 58)">
+            <circle cx="-6" r="4" fill="none" stroke="#fbbf24" strokeWidth="2" />
+            <path d="M-2 0 H9 M6 0 V3 M9 0 V3" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
+          </g>
         </g>
         <rect x="65" y="96" width="30" height="12" rx="3" fill={p.main} />
         <text x="80" y="105" textAnchor="middle" fontSize="9" fontFamily="monospace" fontWeight="900" fill="#09090b">

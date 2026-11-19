@@ -570,3 +570,199 @@
 .bot-die-cron [data-fx='bells'] { animation: cron-bells 2.1s ease-out forwards !important; }
 .bot-die-cron [data-fx='display'] { animation: none !important; opacity: 0.15; transition: opacity 300ms 0.3s; }
 .bot-die-cron [data-fx='spring'] { animation: cron-spring 2.1s ease-out forwards; }
+
+/* ---------------------------------------------------------------- floor 2 (floor2.tsx) */
+/* Scraper: rolls back and forth, wheels turning, the hose sucking */
+@keyframes sc-roll {
+  0%, 100% { transform: translateX(-5px); }
+  50% { transform: translateX(5px); }
+}
+@keyframes sc-wheel {
+  0%, 100% { transform: rotate(-80deg); }
+  50% { transform: rotate(80deg); }
+}
+@keyframes sc-suck {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: 14; }
+}
+/* defeat: the bag overloads, loot bursts out, it sputters and stops */
+@keyframes scraper-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes scraper-burst {
+  0%, 10% { transform: none; filter: none; }
+  25% { transform: scale(1.1, 1.06); filter: brightness(1.4); }
+  30% { transform: scale(1.04); }
+  42% { transform: scale(1.16, 1.1); filter: brightness(1.8); }
+  48% { transform: scale(0.94); filter: brightness(1); }
+  56% { transform: translateX(-2px); }
+  60% { transform: translateX(2px); }
+  64%, 100% { transform: translateY(4px) rotate(-6deg); filter: grayscale(1) brightness(0.7); }
+}
+@keyframes scraper-loot {
+  0%, 44% { opacity: 0; transform: none; }
+  50% { opacity: 1; transform: translate(calc(var(--dx) * 0.4), calc(var(--dy) * 0.6)) scale(1.3); }
+  80% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(calc(var(--i) * 80deg)); }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 24px)); }
+}
+.bot-die-scraper { animation: scraper-die 2s linear forwards; }
+.bot-die-scraper [data-fx='core'] { animation: scraper-burst 2s ease-out forwards !important; transform-origin: 80px 118px !important; }
+.bot-die-scraper [data-fx='wheel'],
+.bot-die-scraper [data-fx='hose'] path { animation-play-state: paused !important; }
+.bot-die-scraper [data-fx='loot'] { animation: scraper-loot 2s ease-out forwards; }
+
+/* Credential Stuffer: tiptoes, keys jingling */
+@keyframes cs-tiptoe {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  20% { transform: translateY(-5px) rotate(-3deg); }
+  40% { transform: translateY(-2px) rotate(-1deg); }
+  60% { transform: translateY(-5px) rotate(3deg); }
+  80% { transform: translateY(-2px) rotate(1deg); }
+}
+@keyframes cs-jingle {
+  0%, 60%, 100% { transform: rotate(0deg); }
+  66% { transform: rotate(-14deg); }
+  74% { transform: rotate(10deg); }
+  82% { transform: rotate(-5deg); }
+}
+/* defeat: caught: sirens, hands up, and it slinks off to the right */
+@keyframes stuffer-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes stuffer-caught {
+  0%, 10% { transform: none; filter: none; }
+  20% { transform: translateY(-8px) scale(1.04); }
+  45% { transform: translateY(-8px) scale(1.04); filter: brightness(1.2); }
+  55% { transform: translate(4px, 0) scaleX(-1); }
+  100% { transform: translate(110px, 0) scaleX(-1); filter: grayscale(0.6); opacity: 0; }
+}
+@keyframes stuffer-siren {
+  0%, 8% { opacity: 0; }
+  15%, 75% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.bot-die-stuffer { animation: stuffer-die 2.2s linear forwards; }
+.bot-die-stuffer [data-fx='core'],
+.bot-die-stuffer [data-fx='core'] ~ * { animation: stuffer-caught 2.2s ease-in forwards !important; transform-origin: 80px 120px !important; }
+.bot-die-stuffer [data-fx='siren'] { animation: stuffer-siren 2.2s linear forwards; }
+
+/* Slowloris: hangs on its cable, everything slow */
+@keyframes sl-hang {
+  0%, 100% { transform: rotate(-4deg) translateY(0); }
+  50% { transform: rotate(4deg) translateY(3px); }
+}
+/* defeat: it curls up and falls asleep, Zzz */
+@keyframes loris-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes loris-sleep {
+  0%, 10% { transform: none; filter: none; }
+  40% { transform: translateY(6px) rotate(-10deg) scale(0.92); filter: saturate(0.6); }
+  70%, 100% { transform: translateY(16px) rotate(-18deg) scale(0.84); filter: saturate(0.3) brightness(0.7); }
+}
+@keyframes loris-zzz {
+  0%, 25% { opacity: 0; transform: translate(0, 10px); }
+  45%, 85% { opacity: 1; }
+  100% { opacity: 0; transform: translate(8px, -18px); }
+}
+.bot-die-loris { animation: loris-die 2.4s linear forwards; }
+.bot-die-loris [data-fx='core'] { animation: loris-sleep 2.4s ease-in-out forwards !important; transform-origin: 80px 124px !important; }
+.bot-die-loris [data-fx='zzz'] { animation: loris-zzz 2.4s ease-out forwards; }
+
+/* Bot Săn Sneaker: jogs in place, speed lines streaming */
+@keyframes sn-jog {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-6px) rotate(-4deg); }
+  50% { transform: translateY(0) rotate(0deg) scale(1.03, 0.97); }
+  75% { transform: translateY(-4px) rotate(3deg); }
+}
+@keyframes sn-speed {
+  0% { transform: translateX(10px); opacity: 0; }
+  40% { opacity: 0.8; }
+  100% { transform: translateX(-12px); opacity: 0; }
+}
+/* defeat: kicked up into the air, laces flying, and out of sight */
+@keyframes sneaker-die {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sneaker-kick {
+  0%, 15% { transform: none; }
+  25% { transform: translateY(4px) scale(1.06, 0.92); }
+  60% { transform: translate(24px, -70px) rotate(220deg) scale(0.8); }
+  100% { transform: translate(50px, 40px) rotate(480deg) scale(0.4); opacity: 0; }
+}
+.bot-die-sneaker { animation: sneaker-die 1.7s linear forwards; }
+.bot-die-sneaker [data-fx='core'] { animation: sneaker-kick 1.7s ease-in-out forwards !important; transform-origin: 84px 96px !important; }
+.bot-die-sneaker [data-fx='speed'] { opacity: 0; transition: opacity 200ms; }
+
+/* Trại Click Farm: hums in bursts, screens light up in turn */
+@keyframes cf-hum {
+  0%, 50%, 100% { transform: none; }
+  52%, 60%, 68% { transform: translateX(-1px) rotate(-0.6deg); }
+  56%, 64%, 72% { transform: translateX(1px) rotate(0.6deg); }
+}
+@keyframes cf-screen {
+  0%, 70%, 100% { opacity: 0.22; }
+  80% { opacity: 0.85; }
+}
+/* defeat: power cut, the screens go dark one by one, the rack sags */
+@keyframes farm-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes farm-off {
+  0% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
+@keyframes farm-sag {
+  0%, 55% { transform: none; filter: none; }
+  70%, 100% { transform: translateY(6px) scale(1.02, 0.92) rotate(-2deg); filter: grayscale(1) brightness(0.6); }
+}
+.bot-die-farm { animation: farm-die 2.2s linear forwards; }
+.bot-die-farm [data-fx='screen'] { animation: farm-off 120ms steps(2) calc(var(--i) * 110ms + 100ms) forwards !important; }
+.bot-die-farm [data-fx='face'] { animation: bot-flicker 0.08s steps(1) 1.1s 6 alternate; }
+.bot-die-farm [data-fx='core'] { animation: farm-sag 2.2s ease-in forwards !important; transform-origin: 80px 134px !important; }
+
+/* Kẻ Lạm Dụng API: bounces like a JSON payload, braces breathing */
+@keyframes aa-bob {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(-5px) scale(0.98, 1.02); }
+  80% { transform: translateY(1px) scale(1.03, 0.97); }
+}
+@keyframes aa-brace {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(calc(var(--d) * 4px)); }
+}
+/* defeat: 401, its key snaps off and falls, the braces fall apart */
+@keyframes abuser-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes abuser-key {
+  0%, 15% { transform: none; filter: none; }
+  22% { transform: rotate(20deg); filter: brightness(2); }
+  30% { transform: rotate(-10deg); filter: grayscale(1); }
+  100% { transform: translate(-8px, 90px) rotate(-260deg); opacity: 0.3; filter: grayscale(1); }
+}
+@keyframes abuser-brace {
+  0%, 30% { transform: none; opacity: 1; }
+  100% { transform: translate(calc(var(--d) * 36px), 40px) rotate(calc(var(--d) * 50deg)); opacity: 0; }
+}
+@keyframes abuser-fade {
+  0%, 35% { filter: none; transform: none; }
+  100% { filter: grayscale(1) brightness(0.5); transform: translateY(6px) scale(0.92); }
+}
+@keyframes abuser-401 {
+  0%, 25% { opacity: 0; transform: scale(1.6); }
+  35%, 90% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+.bot-die-abuser { animation: abuser-die 2s linear forwards; }
+.bot-die-abuser [data-fx='core'] { animation: abuser-fade 2s ease-in forwards !important; transform-origin: 80px 120px !important; }
+.bot-die-abuser [data-fx='key'] { animation: abuser-key 2s ease-in forwards; }
+.bot-die-abuser [data-fx='brace'] { animation: abuser-brace 2s ease-in forwards !important; transform-origin: 80px 80px; }
+.bot-die-abuser [data-fx='revoked'] { animation: abuser-401 2s ease-out forwards; transform-box: fill-box; transform-origin: center; }
