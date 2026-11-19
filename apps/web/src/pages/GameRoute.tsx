@@ -171,7 +171,7 @@ export function PlayHome() {
               title={CONTENT.run.title}
               cta={runActive ? 'Leo tiếp' : 'Ca mới'}
             >
-              {runActive ? `Đang ở tầng ${run.act} · ${run.hp}/${run.maxHp} HP` : 'Thẻ bài roguelike: leo tháp, đánh botnet, xây bộ bài.'}
+              {runActive ? `Ca đang dở · ${run.hp}/${run.maxHp} HP` : 'Thẻ bài roguelike: leo tháp, đánh botnet, xây bộ bài.'}
             </HubCard>
             {nextInterview && (
               <HubCard
