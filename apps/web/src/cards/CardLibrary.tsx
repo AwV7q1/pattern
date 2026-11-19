@@ -40,7 +40,7 @@ export function CardLibrary({ cards, deck, onClose }: { cards: CardDef[]; deck: 
         <LibraryBig className="size-5 text-amber-300" />
         <h2 className="text-base font-semibold">Thư viện thẻ bài</h2>
         <span className="text-sm text-muted-foreground">
-          {cards.length} loại · bộ khởi đầu {deck.length} lá
+          {cards.length} loại · bộ bài hiện tại {deck.length} lá
         </span>
         <div className="flex flex-wrap gap-1.5 md:ml-4">
           {chips.map((c) => {

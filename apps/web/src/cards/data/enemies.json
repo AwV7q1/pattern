@@ -61,5 +61,128 @@
         "heal": 10
       }
     ]
+  },
+  {
+    "id": "retry_storm",
+    "name": "Bão Retry",
+    "description": "Một bản cập nhật app lỗi khiến hàng triệu client retry ngay lập tức, không backoff. Mỗi lỗi nhỏ nhân lên thành cơn bão.",
+    "hp": 55,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "drizzle",
+        "label": "Mưa phùn",
+        "icon": "retry",
+        "text": "Bot ~900 rps, client retry 1 lần khi lỗi.",
+        "botRps": 900,
+        "clientRetries": 1
+      },
+      {
+        "id": "flaky_db",
+        "label": "DB chập chờn",
+        "icon": "slow",
+        "text": "Bot ~1100 rps, DB trả lỗi 15% request, client retry 2 lần.",
+        "botRps": 1100,
+        "chaos": {
+          "node": "db",
+          "action": "errors",
+          "value": 0.15
+        },
+        "clientRetries": 2
+      },
+      {
+        "id": "storm",
+        "label": "Bão retry",
+        "icon": "retry",
+        "text": "Bot ~1900 rps, mọi client retry 4 lần ngay khi lỗi.",
+        "botRps": 1900,
+        "clientRetries": 4
+      },
+      {
+        "id": "slow_storm",
+        "label": "Chậm + retry",
+        "icon": "slow",
+        "text": "Bot ~1200 rps, DB chậm ×3, client retry 3 lần. Timeout dài sẽ nhân traffic.",
+        "botRps": 1200,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        },
+        "clientRetries": 3
+      },
+      {
+        "id": "calm",
+        "label": "Lặng gió",
+        "icon": "heal",
+        "text": "Bot ~500 rps, cơn bão hồi 8 máu.",
+        "botRps": 500,
+        "heal": 8
+      }
+    ]
+  },
+  {
+    "id": "herd",
+    "name": "Đàn Thundering Herd",
+    "description": "Trùm cuối: hàng nghìn key cache hết hạn cùng một giây, mọi request cùng lao vào DB. Cache càng tốt thì cú sập càng đau.",
+    "hp": 60,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "graze",
+        "label": "Gặm cỏ",
+        "icon": "probe",
+        "text": "Bot ~700 rps dò đường.",
+        "botRps": 700
+      },
+      {
+        "id": "expire",
+        "label": "Cache hết hạn",
+        "icon": "slow",
+        "text": "Bot ~1500 rps, cache chỉ còn 10% hit rate so với bình thường: gần như mọi request đổ vào DB.",
+        "botRps": 1500,
+        "cacheHitScale": 0.1
+      },
+      {
+        "id": "stampede",
+        "label": "Giẫm đạp",
+        "icon": "spike",
+        "text": "Bot ~2600 rps, client retry 2 lần khi lỗi.",
+        "botRps": 2600,
+        "clientRetries": 2
+      },
+      {
+        "id": "heavy",
+        "label": "Query nặng + nợ",
+        "icon": "debt",
+        "text": "Bot ~1000 rps, DB chậm ×3, cache hit còn 30%. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "botRps": 1000,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        },
+        "cacheHitScale": 0.3,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        }
+      },
+      {
+        "id": "rush",
+        "label": "Cả đàn lao tới",
+        "icon": "spike",
+        "text": "Bot ~3600 rps cùng lúc.",
+        "botRps": 3600
+      },
+      {
+        "id": "regroup",
+        "label": "Tụ đàn",
+        "icon": "heal",
+        "text": "Bot ~500 rps, đàn hồi 12 máu.",
+        "botRps": 500,
+        "heal": 12
+      }
+    ]
   }
 ]

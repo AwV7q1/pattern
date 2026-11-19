@@ -11,7 +11,6 @@ import {
   Users,
   ZapOff,
   Database,
-  Dices,
   Heart,
   HeartPulse,
   Info,
@@ -36,20 +35,16 @@ import {
 import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
-import { useUi } from '@/app/ui-store';
 import type { Design, WindowMetrics } from '@/types';
-import cardsData from './data/cards.json';
-import enemiesData from './data/enemies.json';
-import battleData from './data/battle.json';
 import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn } from './rules';
-import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
+import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport } from './types';
+import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
-const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData } as unknown as Content;
 
 const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
   probe: Radar,
@@ -69,7 +64,6 @@ const TYPE_FX: Record<CardDef['type'], string> = {
   curse: '#a1a1aa',
 };
 
-const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
 const n0 = (v: number) => Math.round(v).toLocaleString('vi-VN');
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
@@ -111,9 +105,23 @@ type Live = {
  * gateway, and the engine's numbers decide the damage on both sides. Rules
  * live in `rules.ts` (pure, seeded); `fx.ts` only illustrates them.
  */
-export function CardBattle() {
-  const [seed, setSeed] = useState(randomSeed);
-  const [state, setState] = useState(() => newBattle(CONTENT, seed));
+export interface CardBattleProps {
+  seed: number;
+  setup: BattleSetup;
+  title: string;
+  /** Run progress shown in the top bar. */
+  progress?: ReactNode;
+  /** The run's current deck (for the library). */
+  deck: string[];
+  /** Label of the end screen's main button. */
+  continueLabel: string;
+  /** The fight is over and the player moved on. Mount a new CardBattle (new `key`) for the next fight. */
+  onFinish: (state: BattleState) => void;
+  onAbandon: () => void;
+}
+
+export function CardBattle({ seed, setup, title, progress, deck, continueLabel, onFinish, onAbandon }: CardBattleProps) {
+  const [state, setState] = useState(() => newBattle(CONTENT, seed, setup));
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
@@ -128,8 +136,6 @@ export function CardBattle() {
   const [dragDef, setDragDef] = useState<CardDef | null>(null);
   /** The hand is flying into the discard pile (end of turn). */
   const [discarding, setDiscarding] = useState(false);
-  /** Bumped on restart so the new hand is dealt again (card uids restart at 1). */
-  const [battleKey, setBattleKey] = useState(0);
   const onDragChange = useCallback((s: 'idle' | 'dragging' | 'over', def: CardDef | null) => {
     setDragState(s);
     setDragDef(def);
@@ -153,23 +159,6 @@ export function CardBattle() {
   const discardRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // a game screen: the app's tab bar steps aside
-  const setImmersive = useUi((s) => s.setImmersive);
-  useEffect(() => {
-    setImmersive(true);
-    return () => setImmersive(false);
-  }, [setImmersive]);
-
-  const restart = (s: number) => {
-    setSeed(s);
-    setState(newBattle(CONTENT, s));
-    setBattleKey((k) => k + 1);
-    setDiscarding(false);
-    setError(null);
-    setFlash(null);
-    setSeenReports(0);
-    setHintOpen(true);
-  };
 
   /** Green bolts from your gateway into the bot. */
   const counterFx = useCallback(async (damage: number) => {
@@ -520,10 +509,10 @@ export function CardBattle() {
             <ArrowLeft /> Thoát
           </Link>
         </Button>
-        <span className="font-semibold">{CONTENT.battle.title}</span>
+        <span className="font-semibold">{title}</span>
         <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-300">Prototype</span>
         <span className="text-muted-foreground">Lượt {state.turn}</span>
-        <span className="font-mono text-xs text-muted-foreground">seed {seed}</span>
+        {progress}
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant={showLog ? 'secondary' : 'ghost'} className="relative" aria-expanded={showLog} onClick={() => setShowLog((v) => !v)}>
             <ScrollText /> Nhật ký
@@ -537,11 +526,14 @@ export function CardBattle() {
           <Button size="sm" variant="ghost" onClick={() => setShowRules((v) => !v)}>
             <Info /> Luật chơi
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => restart(seed)}>
-            <RotateCcw /> Chơi lại
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => restart(randomSeed())}>
-            <Dices /> Seed mới
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              if (window.confirm('Bỏ ca trực này và bắt đầu ca mới? Tiến độ hiện tại sẽ mất.')) onAbandon();
+            }}
+          >
+            <RotateCcw /> Ca mới
           </Button>
         </div>
       </div>
@@ -638,7 +630,7 @@ export function CardBattle() {
 
         <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
 
-        <Hand key={battleKey} cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} deckRef={deckRef} discardRef={discardRef} discarding={discarding} />
+        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} deckRef={deckRef} discardRef={discardRef} discarding={discarding} />
         {hand.length === 0 && !over && !resolving && (
           <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
         )}
@@ -646,9 +638,9 @@ export function CardBattle() {
 
       {splash && <PlayedSplash key={splash.key} def={splash.def} x={splash.x} y={splash.y} onDone={() => setSplash(null)} />}
 
-      {showLibrary && <CardLibrary cards={CONTENT.cards} deck={CONTENT.battle.startingDeck} onClose={() => setShowLibrary(false)} />}
+      {showLibrary && <CardLibrary cards={CONTENT.cards} deck={deck} onClose={() => setShowLibrary(false)} />}
 
-      {over && <EndScreen state={state} seed={seed} onLog={() => setShowLog(true)} onRetry={() => restart(seed)} onNew={() => restart(randomSeed())} />}
+      {over && <EndScreen state={state} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
     </div>
   );
 }
@@ -1256,7 +1248,7 @@ function ReportCard({ report: r, onCollapse }: { report: TurnReport; onCollapse?
           </ul>
         </div>
         <div>
-          <div className="mb-1 text-xs font-medium text-emerald-300">Botnet mất {r.enemyDamage} máu (từ bot bị lọc)</div>
+          <div className="mb-1 text-xs font-medium text-emerald-300">Địch mất {r.enemyDamage} máu (từ bot bị lọc)</div>
           <ul className="space-y-0.5 text-xs text-muted-foreground">
             {r.notes.map((n, i) => (
               <li key={i}>{n}</li>
@@ -1336,7 +1328,21 @@ function LogDrawer({ open, reports, onClose }: { open: boolean; reports: TurnRep
 
 // ---------------------------------------------------------------- overlays
 
-function EndScreen({ state, seed, onLog, onRetry, onNew }: { state: BattleState; seed: number; onLog: () => void; onRetry: () => void; onNew: () => void }) {
+function EndScreen({
+  state,
+  enemyName,
+  seed,
+  continueLabel,
+  onLog,
+  onContinue,
+}: {
+  state: BattleState;
+  enemyName: string;
+  seed: number;
+  continueLabel: string;
+  onLog: () => void;
+  onContinue: () => void;
+}) {
   const won = state.phase === 'won';
   const failed = state.reports.reduce((s, r) => s + r.legitFailed, 0);
   const blocked = state.reports.reduce((s, r) => s + r.botBlockedRps * (CONTENT.battle.turnMs / 1000), 0);
@@ -1346,7 +1352,7 @@ function EndScreen({ state, seed, onLog, onRetry, onNew }: { state: BattleState;
       <div className="w-[420px] rounded-xl border bg-card p-6 shadow-2xl">
         <div className="mb-2 flex items-center gap-2 text-2xl font-bold">
           {won ? <Trophy className="size-7 text-amber-300" /> : <Skull className="size-7 text-rose-400" />}
-          {won ? 'Botnet đã rút lui' : 'Hết Error Budget'}
+          {won ? `${enemyName} đã rút lui` : 'Hết Error Budget'}
         </div>
         <p className="mb-4 text-sm text-muted-foreground">
           {won
@@ -1360,11 +1366,8 @@ function EndScreen({ state, seed, onLog, onRetry, onNew }: { state: BattleState;
           <Stat label="Seed" value={String(seed)} />
         </div>
         <div className="flex gap-2">
-          <Button className="flex-1" onClick={onNew}>
-            <Dices /> Trận mới
-          </Button>
-          <Button variant="outline" onClick={onRetry}>
-            <RotateCcw /> Chơi lại seed này
+          <Button className="flex-1" onClick={onContinue}>
+            {won ? <ArrowRight /> : <Skull />} {won ? continueLabel : 'Xem tổng kết ca'}
           </Button>
           <Button variant="outline" size="icon" aria-label="Mở nhật ký" onClick={onLog}>
             <ScrollText />
@@ -1381,7 +1384,8 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
       ['Mỗi lượt', `Rút ${CONTENT.battle.handSize} lá, có ${CONTENT.battle.opsPerTurn} Ops. Đánh bài rồi bấm Kết thúc lượt.`],
       ['Engine quyết định', `Hệ thống chạy ${CONTENT.battle.turnMs / 1000}s mô phỏng thật: ${CONTENT.battle.legitRps} người dùng/s cộng với bot lọt qua bộ lọc.`],
       ['Bạn mất máu', `1 máu cho mỗi ${CONTENT.battle.failedPerDamage} request người dùng lỗi, ${CONTENT.battle.latencyDamage} máu nếu p99 > ${CONTENT.battle.sloP99Ms}ms, và khi chi phí vượt $${CONTENT.battle.budgetPerHour}/h.`],
-      ['Botnet mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Botnet yếu thì gửi ít traffic hơn.`],
+      ['Địch mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Địch yếu thì gửi ít traffic hơn.`],
+      ['Ca trực', `${CONTENT.run.floors.filter((f) => f.kind === 'battle').length} trận liên tiếp, máu giữ nguyên giữa các trận. Thắng trận được chọn 1 lá thêm vào bộ; ở chỗ nghỉ được hồi máu hoặc bỏ bớt 1 lá.`],
       ['Thẻ bài', 'Hạ tầng và Chính sách tồn tại cả trận (nhưng tốn tiền mỗi giờ). Hành động chỉ có tác dụng trong lượt.'],
     ],
     [],

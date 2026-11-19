@@ -13,18 +13,18 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, TurnPlan, TurnReport } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, TurnPlan, TurnReport } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
-function nextRandom(state: BattleState): number {
+export function nextRandom(state: { rng: number }): number {
   let t = (state.rng = (state.rng + 0x6d2b79f5) >>> 0);
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-function shuffle<T>(state: BattleState, items: T[]): T[] {
+export function shuffle<T>(state: { rng: number }, items: T[]): T[] {
   const a = items.slice();
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(nextRandom(state) * (i + 1));
@@ -110,17 +110,19 @@ function draw(state: BattleState, n: number) {
   }
 }
 
-export function newBattle(content: Content, seed: number): BattleState {
+export function newBattle(content: Content, seed: number, setup: BattleSetup = {}): BattleState {
   const b = content.battle;
-  const enemy = content.enemies.find((e) => e.id === b.enemy);
-  if (!enemy) throw new Error(`unknown enemy ${b.enemy}`);
+  const enemyId = setup.enemy ?? b.enemy;
+  const enemy = content.enemies.find((e) => e.id === enemyId);
+  if (!enemy) throw new Error(`unknown enemy ${enemyId}`);
+  const maxHp = setup.maxHp ?? b.hp;
   const state: BattleState = {
     seed,
     rng: seed >>> 0,
     turn: 1,
     phase: 'player',
-    hp: b.hp,
-    maxHp: b.hp,
+    hp: Math.min(maxHp, setup.hp ?? maxHp),
+    maxHp,
     headroom: 0,
     ops: b.opsPerTurn,
     drawPile: [],
@@ -135,7 +137,7 @@ export function newBattle(content: Content, seed: number): BattleState {
     reports: [],
     nextUid: 1,
   };
-  const deck: CardInst[] = b.startingDeck.map((id) => ({ uid: state.nextUid++, id }));
+  const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));
   state.drawPile = shuffle(state, deck);
   draw(state, b.handSize);
   return state;
@@ -298,7 +300,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
 
   if (plan.intent.heal && state.enemy.hp > 0) {
     state.enemy.hp = Math.min(state.enemy.maxHp, state.enemy.hp + plan.intent.heal);
-    notes.push(`Botnet hồi ${plan.intent.heal} máu`);
+    notes.push(`${enemyDef(content, state).name} hồi ${plan.intent.heal} máu`);
   }
   if (plan.intent.addCards) {
     const { card, n } = plan.intent.addCards;

@@ -113,6 +113,62 @@ export interface Content {
   cards: CardDef[];
   enemies: EnemyDef[];
   battle: BattleConfig;
+  run: RunConfig;
+}
+
+/** What a fight starts from when it is part of a run (defaults: `battle.json`). */
+export interface BattleSetup {
+  enemy?: string;
+  hp?: number;
+  maxHp?: number;
+  deck?: string[];
+}
+
+// ---------------------------------------------------------------- run ("ca trực")
+
+export type Floor =
+  | { kind: 'battle'; enemy: string; title: string; boss?: boolean }
+  | { kind: 'rest'; title: string };
+
+export interface RunConfig {
+  title: string;
+  /** Player max HP for the whole run (a single fight uses `battle.hp`). */
+  hp: number;
+  floors: Floor[];
+  /** Cards offered after each won fight (pick one or skip). */
+  rewardChoices: number;
+  /** Share of max HP restored at a rest stop. */
+  restHeal: number;
+}
+
+export type RunPhase = 'battle' | 'reward' | 'rest' | 'won' | 'lost';
+
+export interface FloorResult {
+  floor: number;
+  enemy: string;
+  won: boolean;
+  turns: number;
+  hpLost: number;
+  /** Card taken after the fight (null: skipped), or removed / healed at a rest. */
+  picked?: string | null;
+  removed?: string;
+  healed?: number;
+}
+
+export interface RunState {
+  version: 1;
+  seed: number;
+  /** RNG for rewards, advanced only by the run rules. */
+  rng: number;
+  floor: number;
+  phase: RunPhase;
+  hp: number;
+  maxHp: number;
+  /** Card ids; curses added during a fight do not stay in the deck. */
+  deck: string[];
+  /** Card ids offered in the `reward` phase. */
+  reward: string[];
+  history: FloorResult[];
 }
 
 export interface CardInst {

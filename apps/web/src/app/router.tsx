@@ -10,7 +10,7 @@ import { SharePage } from '@/pages/SharePage';
 import { ComparePage } from '@/features/compare/ComparePage';
 import { LevelEditor } from '@/features/levels/LevelEditor';
 import { InterviewList, InterviewRoute } from '@/features/interview/InterviewPages';
-import { CardBattle } from '@/cards/CardBattle';
+import { CardRun } from '@/cards/CardRun';
 import { GlossaryPage } from '@/learn/Glossary';
 
 export const router = createBrowserRouter([
@@ -23,7 +23,7 @@ export const router = createBrowserRouter([
       { path: 'glossary', element: <GlossaryPage /> },
       { path: 'play', element: <PlayHome /> },
       { path: 'play/*', element: <GameRoute /> },
-      { path: 'cards', element: <CardBattle /> },
+      { path: 'cards', element: <CardRun /> },
       { path: 'interview', element: <InterviewList /> },
       { path: 'interview/:promptId', element: <InterviewRoute /> },
       { path: 'levels/new', element: <LevelEditor /> },

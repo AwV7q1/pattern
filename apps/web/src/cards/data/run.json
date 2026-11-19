@@ -1,0 +1,28 @@
+{
+  "title": "Ca trực đêm",
+  "hp": 80,
+  "rewardChoices": 3,
+  "restHeal": 0.5,
+  "floors": [
+    {
+      "kind": "battle",
+      "enemy": "swarm",
+      "title": "Trận 1: Đêm botnet"
+    },
+    {
+      "kind": "battle",
+      "enemy": "retry_storm",
+      "title": "Trận 2: Bão retry"
+    },
+    {
+      "kind": "rest",
+      "title": "Nghỉ giữa ca"
+    },
+    {
+      "kind": "battle",
+      "enemy": "herd",
+      "title": "Trận cuối: Thundering Herd",
+      "boss": true
+    }
+  ]
+}
