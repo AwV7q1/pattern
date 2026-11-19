@@ -142,13 +142,20 @@ export const battleSeed = (run: RunState) => (Math.imul(run.seed, 31) + run.clim
 
 export const bossOf = (content: Content, act: number) => content.run.bosses[(act - 1) % content.run.bosses.length];
 
+/** Enemies a floor's normal (or elite) fights draw from. */
+export function poolOf(content: Content, act: number, kind: 'battle' | 'elite'): string[] {
+  const lists = kind === 'elite' ? content.run.elites : content.run.normal;
+  return lists[(act - 1) % lists.length];
+}
+
 function enemyOf(content: Content, run: RunState, node: MapNode): string {
   if (node.kind === 'boss') return bossOf(content, run.act);
-  const boss = bossOf(content, run.act);
-  const pool = content.run.normal.filter((id) => id !== boss);
-  const list = pool.length ? pool : content.run.normal;
+  const list = poolOf(content, run.act, node.kind === 'elite' ? 'elite' : 'battle');
   const r = { rng: (battleSeed(run) ^ 0x5bd1e995) >>> 0 };
-  return list[Math.floor(nextRandom(r) * list.length)];
+  // the fight just before on this floor was against someone else, if the pool allows
+  const last = run.history.filter((h) => h.act === run.act && h.kind === node.kind).at(-1)?.enemy;
+  const options = list.length > 1 ? list.filter((id) => id !== last) : list;
+  return options[Math.floor(nextRandom(r) * options.length)];
 }
 
 function scaleOf(content: Content, run: RunState, node: MapNode): Scale {

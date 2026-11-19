@@ -18,9 +18,38 @@
     }
   },
   "normal": [
-    "swarm",
-    "retry_storm",
-    "herd"
+    [
+      "swarm",
+      "retry_storm",
+      "herd",
+      "crawler"
+    ],
+    [
+      "scraper",
+      "cred_stuffer",
+      "slowloris",
+      "sneaker_bot"
+    ],
+    [
+      "iot_botnet",
+      "amplifier",
+      "worm",
+      "ransom_gang"
+    ]
+  ],
+  "elites": [
+    [
+      "memory_leak",
+      "cron_storm"
+    ],
+    [
+      "click_farm",
+      "api_abuser"
+    ],
+    [
+      "apt_group",
+      "hydra"
+    ]
   ],
   "bosses": [
     "cache_poisoner",

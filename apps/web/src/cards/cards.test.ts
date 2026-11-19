@@ -33,7 +33,7 @@ test('content: every id referenced exists', () => {
   const enemies = new Set(content.enemies.map((e) => e.id));
   for (const id of content.battle.startingDeck) assert.ok(cards.has(id), id);
   assert.ok(enemies.has(content.battle.enemy));
-  for (const id of [...content.run.normal, ...content.run.bosses]) assert.ok(enemies.has(id), id);
+  for (const id of [...content.run.normal.flat(), ...content.run.elites.flat(), ...content.run.bosses]) assert.ok(enemies.has(id), id);
   for (const ev of content.events) for (const o of ev.options) for (const e of o.effects) if (e.op === 'addCard') assert.ok(cards.has(e.card), e.card);
   for (const e of content.enemies) for (const i of e.intents) if (i.addCards) assert.ok(cards.has(i.addCards.card));
 });
@@ -258,7 +258,7 @@ test('run: starts on the map; only reachable nodes can be chosen', () => {
 test('run: fight, reward, back to the map with the hp carried over', () => {
   let run = runs.chooseNode(content, runs.newRun(content, 11), runs.reachable(content, runs.newRun(content, 11))[0]);
   const setup = runs.battleSetup(content, run);
-  assert.ok(content.run.normal.includes(setup.enemy!));
+  assert.ok(runs.poolOf(content, 1, 'battle').includes(setup.enemy!));
   assert.notEqual(setup.enemy, runs.bossOf(content, 1), 'the boss is not met before the top');
   run = runs.finishBattle(content, run, win(run, 50));
   assert.equal(run.phase, 'reward');
@@ -279,6 +279,7 @@ test('run: elites and higher floors scale the enemy', () => {
   let run = climbTo(runs.newRun(content, 21), 'elite');
   assert.equal(run.phase, 'battle');
   const setup = runs.battleSetup(content, run);
+  assert.ok(runs.poolOf(content, run.act, 'elite').includes(setup.enemy!), 'elites have their own pool');
   const def = content.enemies.find((e) => e.id === setup.enemy)!;
   const up = 1 + content.run.actScale.hp * (run.act - 1);
   const upRps = 1 + content.run.actScale.rps * (run.act - 1);
@@ -546,4 +547,55 @@ test('bosses: weighted intents, second phase, passives', () => {
   const plan = rules.planTurn(content, rules.playCard(content, withCache, uid));
   const cache = plan.input.design.nodes.find((n) => n.id === 'cache')!;
   assert.equal(cache.config!.hitRate, 0.7 * content.enemies.find((e) => e.id === 'cache_poisoner')!.passive!.cacheHitScale!);
+});
+
+test('run: every floor has its own normal and elite enemies', () => {
+  const seen = new Set<string>();
+  for (let act = 1; act <= content.run.acts; act++) {
+    for (const kind of ['battle', 'elite'] as const) {
+      const pool = runs.poolOf(content, act, kind);
+      assert.ok(pool.length >= 2, `floor ${act} ${kind}`);
+      for (const id of pool) {
+        assert.ok(!seen.has(id), `${id} appears on two floors or kinds`);
+        seen.add(id);
+      }
+    }
+  }
+  // a floor's fights land on that floor's pool
+  for (const act of [1, 2, 3]) {
+    const run = { ...runs.newRun(content, 5), act };
+    const node = runs.towerMap(content, run).nodes.find((n) => n.row === 0)!;
+    const setup = runs.battleSetup(content, { ...run, node: node.id, phase: 'battle' });
+    assert.ok(runs.poolOf(content, act, 'battle').includes(setup.enemy!), `floor ${act}: ${setup.enemy}`);
+  }
+});
+
+test('enemies: bypass, wafStrip, drainOps and regen', () => {
+  const vs = (id: string) => rules.newBattle(content, 3, { enemy: id });
+  const at = (s: BattleState, intentId: string) => {
+    const i = rules.intentsNow(content, s).findIndex((it) => it.id === intentId);
+    return { ...s, enemy: { ...s.enemy, step: i, pick: i } };
+  };
+
+  // bypass: the bots slip past part of the WAF; Hotfix does not help
+  const stuff = at({ ...vs('cred_stuffer'), waf: 0.5 }, 'stuff');
+  const plan = rules.planTurn(content, { ...stuff, temp: { ...stuff.temp, hotfix: true } });
+  assert.equal(plan.botBlockedRps, plan.botRps - Math.round(plan.botRps * (1 - 0.5 * (1 - 0.4))));
+  // passive bypass stacks with the intent's
+  const farm = vs('click_farm');
+  assert.equal(rules.bypassNow(content, farm), 1 - (1 - (rules.currentIntent(content, farm).bypass ?? 0)) * 0.8);
+
+  // wafStrip: WAF lost after the turn
+  assert.equal(endTurn(at({ ...vs('scraper'), waf: 0.5 }, 'proxy_rotate')).waf, 0.35);
+
+  // drainOps: fewer Ops next turn only
+  const drained = endTurn(at(vs('slowloris'), 'trickle'));
+  assert.equal(drained.ops, content.battle.opsPerTurn - 1);
+  assert.equal(endTurn({ ...drained, hp: 999 }).ops, content.battle.opsPerTurn);
+
+  // regen: heals every turn, never above max
+  const worm = vs('worm');
+  const hurt = endTurn({ ...worm, enemy: { ...worm.enemy, hp: 20 } });
+  assert.equal(hurt.enemy.hp, 23);
+  assert.equal(endTurn(worm).enemy.hp, worm.enemy.maxHp);
 });

@@ -103,9 +103,16 @@ export function botRpsNow(content: Content, state: BattleState): number {
   return Math.round(currentIntent(content, state).botRps * (0.6 + 0.4 * ratio));
 }
 
-/** Share of bot traffic filtered this turn (WAF and rate limit stack multiplicatively). */
-export function botCutNow(state: BattleState): number {
-  return 1 - (1 - state.waf) * (1 - state.temp.botCut);
+/** Share of the filtering the bots slip past this turn (intent and passive stack multiplicatively). */
+export function bypassNow(content: Content, state: BattleState): number {
+  const a = currentIntent(content, state).bypass ?? 0;
+  const b = enemyDef(content, state).passive?.bypass ?? 0;
+  return 1 - (1 - a) * (1 - b);
+}
+
+/** Share of bot traffic filtered this turn (WAF and rate limit stack multiplicatively; `bypass` slips past part of it). */
+export function botCutNow(state: BattleState, bypass = 0): number {
+  return (1 - (1 - state.waf) * (1 - state.temp.botCut)) * (1 - bypass);
 }
 
 export function canPlay(content: Content, state: BattleState, uid: number): boolean {
@@ -300,7 +307,7 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   const b = content.battle;
   const intent = currentIntent(content, state);
   const raw = botRpsNow(content, state);
-  const cut = botCutNow(state);
+  const cut = botCutNow(state, bypassNow(content, state));
   const botPassed = Math.round(raw * (1 - cut));
 
   const design = clone(state.design);
@@ -391,6 +398,16 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     for (let i = 0; i < n; i++) state.discard.push({ uid: state.nextUid++, id: card });
     notes.push(`${n} lá ${cardDef(content, card).name} bị nhét vào bộ bài`);
   }
+  const regen = enemyDef(content, state).passive?.regen;
+  if (regen && state.enemy.hp > 0 && state.enemy.hp < state.enemy.maxHp) {
+    state.enemy.hp = Math.min(state.enemy.maxHp, state.enemy.hp + regen);
+    notes.push(`${enemyDef(content, state).passive!.label}: hồi ${regen} máu`);
+  }
+  if (plan.intent.wafStrip && state.waf > 0) {
+    state.waf = Math.max(0, Math.round((state.waf - plan.intent.wafStrip) * 100) / 100);
+    notes.push(`${plan.intent.label}: WAF còn ${Math.round(state.waf * 100)}%`);
+  }
+  if (plan.intent.bypass) notes.push(`${Math.round(plan.intent.bypass * 100)}% bộ lọc bị lách`);
 
   const report: TurnReport = {
     turn: state.turn,
@@ -439,7 +456,8 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     report.notes.push(`${def.passive.label}: WAF còn ${Math.round(state.waf * 100)}%`);
   }
   pickIntent(content, state);
-  state.ops = b.opsPerTurn;
+  state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0));
+  if (plan.intent.drainOps) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
   draw(state, b.handSize);
   state.phase = 'player';
   fireRelics(content, state, 'turnStart');

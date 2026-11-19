@@ -82,6 +82,12 @@ export interface Intent {
   /** Curse cards shuffled into the discard pile after the turn. */
   addCards?: { card: string; n: number };
   heal?: number;
+  /** Share of the filtering (WAF + rate limit) the bots slip past this turn. Hotfix does not stop it. */
+  bypass?: number;
+  /** Ops taken away next turn (connections held open, people paged). */
+  drainOps?: number;
+  /** WAF lost right after this turn (rotating proxies, new IPs). */
+  wafStrip?: number;
   /** weighted enemies: odds of this intent (default 1). */
   weight?: number;
 }
@@ -98,7 +104,7 @@ export interface EnemyDef {
   pattern?: 'cycle' | 'weighted';
   /** Below `at` × max HP, the next turn switches to these intents (bosses). */
   phase2?: { at: number; label: string; text: string; intents: Intent[] };
-  /** Always on for the whole fight (bosses). */
+  /** Always on for the whole fight (bosses, some elites). */
   passive?: {
     label: string;
     text: string;
@@ -108,6 +114,10 @@ export interface EnemyDef {
     legitRpsMul?: number;
     /** Cache hit rate multiplier, every turn (stacks with intents). */
     cacheHitScale?: number;
+    /** Share of the filtering bots always slip past (stacks with intents). */
+    bypass?: number;
+    /** HP the enemy regains at the end of every turn. */
+    regen?: number;
   };
 }
 
@@ -236,8 +246,10 @@ export interface RunConfig {
   /** Share of max HP restored when climbing to the next floor. */
   actHeal: number;
   map: { rows: number; width: number; paths: number; weights: Record<'battle' | 'event' | 'elite' | 'rest' | 'shop', number> };
-  /** Enemies met in normal and elite fights. */
-  normal: string[];
+  /** Enemies met in normal fights, one list per floor (wraps around). */
+  normal: string[][];
+  /** Enemies met in elite fights, one list per floor (wraps around). */
+  elites: string[][];
   /** Boss of each floor, in order (wraps around). */
   bosses: string[];
   /** Enemy multipliers by node kind (before the floor multiplier). */

@@ -2,6 +2,7 @@
 // through the real engine (Node WASM build) and report win rate, turns and HP.
 // Usage: node --experimental-strip-types apps/web/scripts/cards-balance.mjs [fights=20] [--log] [--run]
 // --run: climb the whole tower (map paths, fights, rewards, rests, events) instead of the single first fight.
+// --by-enemy (with --run): also list win rate and HP lost per enemy.
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -20,6 +21,7 @@ const content = { cards: data('cards.json'), enemies: data('enemies.json'), batt
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
 const runMode = process.argv.includes('--run');
+const byEnemy = process.argv.includes('--by-enemy');
 const run = (input) => JSON.parse(wasm.run_headless(JSON.stringify(input)));
 
 // Policies: which card to play next (uid) or null to end the turn.
@@ -135,6 +137,7 @@ if (runMode) {
     const cleared = Array(content.run.acts).fill(0);
     const stat = Object.fromEntries(kinds.map((k) => [k, { n: 0, won: 0, hp: 0 }]));
     const deaths = {};
+    const foes = {};
     for (let seed = 1; seed <= fights; seed++) {
       const run = playRun(policy, seed);
       if (run.phase === 'won') wins++;
@@ -144,6 +147,11 @@ if (runMode) {
       for (const h of run.history) {
         if (h.kind === 'boss' && h.won) cleared[h.act - 1]++;
         if (!stat[h.kind]) continue;
+        const f = (foes[`T${h.act} ${h.kind.padEnd(6)} ${h.enemy}`] ??= { n: 0, won: 0, hp: 0, turns: 0 });
+        f.n++;
+        f.won += h.won ? 1 : 0;
+        f.hp += h.hpLost;
+        f.turns += h.turns;
         stat[h.kind].n++;
         if (h.won) stat[h.kind].won++;
         stat[h.kind].hp += h.hpLost;
@@ -154,6 +162,9 @@ if (runMode) {
     const per = kinds.map((k) => `${k} ${stat[k].n ? Math.round((stat[k].won / stat[k].n) * 100) : '-'}%/-${stat[k].n ? (stat[k].hp / stat[k].n).toFixed(0) : '-'}hp`).join('  ');
     const died = Object.entries(deaths).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ');
     console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}${died ? `   chết: ${died}` : ''}`);
+    if (byEnemy && policy !== 'idle')
+      for (const [k, f] of Object.entries(foes).sort())
+        console.log(`    ${k.padEnd(34)} ${String(f.n).padStart(3)} trận  thắng ${String(Math.round((f.won / f.n) * 100)).padStart(3)}%  -${(f.hp / f.n).toFixed(0).padStart(2)}hp  ${(f.turns / f.n).toFixed(1)} lượt`);
   }
   process.exit(0);
 }

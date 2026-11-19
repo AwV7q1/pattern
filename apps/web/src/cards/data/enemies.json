@@ -124,7 +124,7 @@
   {
     "id": "herd",
     "name": "Đàn Thundering Herd",
-    "description": "Trùm cuối: hàng nghìn key cache hết hạn cùng một giây, mọi request cùng lao vào DB. Cache càng tốt thì cú sập càng đau.",
+    "description": "Hàng nghìn key cache hết hạn cùng một giây, mọi request cùng lao vào DB. Cache càng tốt thì cú sập càng đau.",
     "hp": 60,
     "escalation": 0.3,
     "intents": [
@@ -182,6 +182,846 @@
         "text": "Bot ~500 rps, đàn hồi 12 máu.",
         "botRps": 500,
         "heal": 12
+      }
+    ]
+  },
+  {
+    "id": "crawler",
+    "name": "Crawler Tham Lam",
+    "description": "Bot của một công cụ tìm kiếm nhỏ, không tôn trọng robots.txt. Nó cào từng trang hiếm ai mở, nên cache gần như vô dụng.",
+    "hp": 50,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "crawl",
+        "label": "Cào trang",
+        "icon": "probe",
+        "text": "Bot ~700 rps cào trang lạ: cache hit chỉ còn 60%.",
+        "botRps": 700,
+        "cacheHitScale": 0.6
+      },
+      {
+        "id": "deep_crawl",
+        "label": "Cào sâu",
+        "icon": "slow",
+        "text": "Bot ~1000 rps vào trang cũ không ai cache: cache hit chỉ còn 30%.",
+        "botRps": 1000,
+        "cacheHitScale": 0.3
+      },
+      {
+        "id": "sitemap",
+        "label": "Đọc sitemap",
+        "icon": "spike",
+        "text": "Bot ~2200 rps theo sitemap, cùng lúc.",
+        "botRps": 2200
+      },
+      {
+        "id": "recrawl",
+        "label": "Cào lại",
+        "icon": "retry",
+        "text": "Bot ~1200 rps, gặp lỗi là cào lại 1 lần.",
+        "botRps": 1200,
+        "clientRetries": 1
+      },
+      {
+        "id": "pause",
+        "label": "Nghỉ",
+        "icon": "heal",
+        "text": "Bot ~300 rps, crawler hồi 8 máu.",
+        "botRps": 300,
+        "heal": 8
+      }
+    ]
+  },
+  {
+    "id": "memory_leak",
+    "name": "Rò Rỉ Bộ Nhớ",
+    "description": "Tinh anh: một bản deploy rò rỉ bộ nhớ. API chậm dần, rồi bị GC dừng hình, rồi chết vì hết RAM.",
+    "hp": 55,
+    "escalation": 0.3,
+    "passive": {
+      "label": "Rò rỉ tích tụ",
+      "text": "Bộ nhớ không bao giờ được trả lại: hồi 2 máu mỗi lượt.",
+      "regen": 2
+    },
+    "intents": [
+      {
+        "id": "leak",
+        "label": "Rò rỉ",
+        "icon": "slow",
+        "text": "Bot ~900 rps, API chậm ×1.5 vì heap phình to.",
+        "botRps": 900,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 1.5
+        }
+      },
+      {
+        "id": "gc_pause",
+        "label": "GC dừng hình",
+        "icon": "slow",
+        "text": "Bot ~1200 rps, API chậm ×2.5: garbage collector dừng cả thế giới.",
+        "botRps": 1200,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 2.5
+        }
+      },
+      {
+        "id": "oom",
+        "label": "Hết RAM",
+        "icon": "spike",
+        "text": "Bot ~2400 rps, API lỗi 6% vì pod bị OOM kill.",
+        "botRps": 2400,
+        "chaos": {
+          "node": "api",
+          "action": "errors",
+          "value": 0.06
+        }
+      },
+      {
+        "id": "swap",
+        "label": "Dùng swap",
+        "icon": "debt",
+        "text": "Bot ~1300 rps. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "botRps": 1300,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        }
+      },
+      {
+        "id": "restart",
+        "label": "Pod khởi động lại",
+        "icon": "heal",
+        "text": "Bot ~400 rps, chỗ rò hồi 10 máu.",
+        "botRps": 400,
+        "heal": 10
+      }
+    ]
+  },
+  {
+    "id": "cron_storm",
+    "name": "Cron Nửa Đêm",
+    "description": "Tinh anh: mọi cron job trong công ty cùng hẹn giờ 00:00. Yên ắng vài lượt, rồi tất cả chạy cùng một giây.",
+    "hp": 65,
+    "escalation": 0.35,
+    "intents": [
+      {
+        "id": "tick",
+        "label": "Tích tắc",
+        "icon": "probe",
+        "text": "Bot ~500 rps, mấy job lặt vặt.",
+        "botRps": 500
+      },
+      {
+        "id": "tock",
+        "label": "Sắp nửa đêm",
+        "icon": "probe",
+        "text": "Bot ~700 rps, job đang xếp hàng.",
+        "botRps": 700
+      },
+      {
+        "id": "midnight",
+        "label": "00:00",
+        "icon": "spike",
+        "text": "Bot ~3800 rps cùng lúc, DB chậm ×2: mọi job chạy một lượt.",
+        "botRps": 3800,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 2
+        }
+      },
+      {
+        "id": "backfill",
+        "label": "Chạy bù",
+        "icon": "retry",
+        "text": "Bot ~1500 rps, job lỗi tự chạy lại 2 lần.",
+        "botRps": 1500,
+        "clientRetries": 2
+      },
+      {
+        "id": "report",
+        "label": "Job báo cáo",
+        "icon": "slow",
+        "text": "Bot ~1200 rps quét toàn bảng: cache hit chỉ còn 40%.",
+        "botRps": 1200,
+        "cacheHitScale": 0.4
+      }
+    ]
+  },
+  {
+    "id": "scraper",
+    "name": "Scraper Đối Thủ",
+    "description": "Đối thủ cào giá sản phẩm mỗi phút qua hàng nghìn proxy. Chặn IP này thì nó đổi sang IP khác.",
+    "hp": 55,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "price_check",
+        "label": "Dò giá",
+        "icon": "probe",
+        "text": "Bot ~900 rps. Xoay proxy: sau lượt này WAF mất 10%.",
+        "botRps": 900,
+        "wafStrip": 0.1
+      },
+      {
+        "id": "full_scrape",
+        "label": "Cào toàn bộ",
+        "icon": "slow",
+        "text": "Bot ~1500 rps vào mọi trang sản phẩm: cache hit chỉ còn 40%.",
+        "botRps": 1500,
+        "cacheHitScale": 0.4
+      },
+      {
+        "id": "proxy_rotate",
+        "label": "Đổi proxy",
+        "icon": "spike",
+        "text": "Bot ~2200 rps. Sau lượt này WAF mất 15%.",
+        "botRps": 2200,
+        "wafStrip": 0.15
+      },
+      {
+        "id": "headless",
+        "label": "Trình duyệt ẩn",
+        "icon": "retry",
+        "text": "Bot ~1300 rps, trình duyệt headless retry 2 lần khi lỗi.",
+        "botRps": 1300,
+        "clientRetries": 2
+      },
+      {
+        "id": "cooldown",
+        "label": "Hạ nhiệt",
+        "icon": "heal",
+        "text": "Bot ~500 rps, scraper hồi 8 máu.",
+        "botRps": 500,
+        "heal": 8
+      }
+    ]
+  },
+  {
+    "id": "cred_stuffer",
+    "name": "Credential Stuffer",
+    "description": "Thử hàng triệu cặp email/mật khẩu bị lộ vào trang đăng nhập, qua IP dân cư trông y như người thật.",
+    "hp": 50,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "combo_list",
+        "label": "Danh sách lộ",
+        "icon": "probe",
+        "text": "Bot ~800 rps qua IP dân cư: lách 30% bộ lọc.",
+        "botRps": 800,
+        "bypass": 0.3
+      },
+      {
+        "id": "bcrypt",
+        "label": "Băm mật khẩu",
+        "icon": "slow",
+        "text": "Bot ~1100 rps vào /login: API chậm ×2 vì bcrypt.",
+        "botRps": 1100,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 2
+        }
+      },
+      {
+        "id": "stuff",
+        "label": "Nhồi mật khẩu",
+        "icon": "spike",
+        "text": "Bot ~2400 rps, lách 40% bộ lọc.",
+        "botRps": 2400,
+        "bypass": 0.4
+      },
+      {
+        "id": "lockout",
+        "label": "Khoá tài khoản",
+        "icon": "retry",
+        "text": "Bot ~1200 rps, tài khoản bị khoá, người dùng thật bấm lại 3 lần.",
+        "botRps": 1200,
+        "clientRetries": 3
+      },
+      {
+        "id": "new_list",
+        "label": "Mua list mới",
+        "icon": "heal",
+        "text": "Bot ~400 rps, kẻ tấn công hồi 8 máu.",
+        "botRps": 400,
+        "heal": 8
+      }
+    ]
+  },
+  {
+    "id": "slowloris",
+    "name": "Slowloris",
+    "description": "Mở hàng nghìn kết nối rồi gửi từng byte một, giữ chúng mở mãi. Ít traffic, nhưng làm cạn cả server lẫn sức của đội on-call.",
+    "hp": 55,
+    "escalation": 0.25,
+    "intents": [
+      {
+        "id": "trickle",
+        "label": "Nhỏ giọt",
+        "icon": "slow",
+        "text": "Bot ~500 rps giữ kết nối mở: API chậm ×2, lượt sau mất 1 Ops.",
+        "botRps": 500,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 2
+        },
+        "drainOps": 1
+      },
+      {
+        "id": "hold",
+        "label": "Giữ kết nối",
+        "icon": "slow",
+        "text": "Bot ~700 rps, API chậm ×2.5.",
+        "botRps": 700,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 2.5
+        }
+      },
+      {
+        "id": "burst",
+        "label": "Bung kết nối",
+        "icon": "spike",
+        "text": "Bot ~2000 rps cùng lúc.",
+        "botRps": 2000
+      },
+      {
+        "id": "starve",
+        "label": "Cạn connection",
+        "icon": "debt",
+        "text": "Bot ~900 rps, API lỗi 6%, lượt sau mất 1 Ops.",
+        "botRps": 900,
+        "chaos": {
+          "node": "api",
+          "action": "errors",
+          "value": 0.06
+        },
+        "drainOps": 1
+      },
+      {
+        "id": "idle",
+        "label": "Im lặng",
+        "icon": "heal",
+        "text": "Bot ~300 rps, Slowloris hồi 10 máu.",
+        "botRps": 300,
+        "heal": 10
+      }
+    ]
+  },
+  {
+    "id": "sneaker_bot",
+    "name": "Bot Săn Sneaker",
+    "description": "Canh từng đợt mở bán giày giới hạn. Im lặng chờ, rồi cả nghìn bot cùng bấm mua trong một giây.",
+    "hp": 50,
+    "escalation": 0.35,
+    "intents": [
+      {
+        "id": "watch",
+        "label": "Canh hàng",
+        "icon": "probe",
+        "text": "Bot ~600 rps, F5 trang sản phẩm.",
+        "botRps": 600
+      },
+      {
+        "id": "drop",
+        "label": "Mở bán",
+        "icon": "spike",
+        "text": "Bot ~3200 rps cùng lúc.",
+        "botRps": 3200
+      },
+      {
+        "id": "cart_hold",
+        "label": "Giữ giỏ hàng",
+        "icon": "slow",
+        "text": "Bot ~1400 rps giữ hàng trong giỏ: DB chậm ×2 vì khoá tồn kho.",
+        "botRps": 1400,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 2
+        }
+      },
+      {
+        "id": "checkout",
+        "label": "Thanh toán dồn",
+        "icon": "retry",
+        "text": "Bot ~1800 rps, retry 3 lần ngay khi lỗi.",
+        "botRps": 1800,
+        "clientRetries": 3
+      },
+      {
+        "id": "resell",
+        "label": "Bán lại",
+        "icon": "heal",
+        "text": "Bot ~400 rps, bot săn hàng hồi 8 máu.",
+        "botRps": 400,
+        "heal": 8
+      }
+    ]
+  },
+  {
+    "id": "click_farm",
+    "name": "Trại Click Farm",
+    "description": "Tinh anh: hàng trăm điện thoại thật xếp trên giá, người thật được thuê bấm. Không bộ lọc nào phân biệt hết được.",
+    "hp": 70,
+    "escalation": 0.3,
+    "pattern": "weighted",
+    "passive": {
+      "label": "Người thật bấm thuê",
+      "text": "Điện thoại thật, người thật: WAF và rate limit luôn bỏ sót 20%.",
+      "bypass": 0.2
+    },
+    "intents": [
+      {
+        "id": "click",
+        "label": "Bấm thuê",
+        "icon": "probe",
+        "text": "Bot ~1200 rps click quảng cáo.",
+        "botRps": 1200,
+        "weight": 2
+      },
+      {
+        "id": "surge",
+        "label": "Ca đông",
+        "icon": "spike",
+        "text": "Bot ~2800 rps cùng lúc.",
+        "botRps": 2800,
+        "weight": 2
+      },
+      {
+        "id": "ad_fraud",
+        "label": "Gian lận quảng cáo",
+        "icon": "slow",
+        "text": "Bot ~1500 rps vào trang đích: cache hit chỉ còn 50%.",
+        "botRps": 1500,
+        "cacheHitScale": 0.5,
+        "weight": 2
+      },
+      {
+        "id": "fake_reviews",
+        "label": "Review ảo",
+        "icon": "debt",
+        "text": "Bot ~1600 rps. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "botRps": 1600,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        },
+        "weight": 1
+      },
+      {
+        "id": "shift",
+        "label": "Đổi ca",
+        "icon": "heal",
+        "text": "Bot ~500 rps, trại hồi 10 máu.",
+        "botRps": 500,
+        "heal": 10,
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "id": "api_abuser",
+    "name": "Kẻ Lạm Dụng API",
+    "description": "Tinh anh: dùng một API key bị lộ để gọi những query đắt nhất bạn có. Thu hồi key này, nó có key khác.",
+    "hp": 70,
+    "escalation": 0.3,
+    "passive": {
+      "label": "Key bị lộ",
+      "text": "Request mang key hợp lệ: WAF mất 5% hiệu lực mỗi lượt.",
+      "wafDecay": 0.05
+    },
+    "intents": [
+      {
+        "id": "graphql",
+        "label": "Query lồng nhau",
+        "icon": "slow",
+        "text": "Bot ~1100 rps gửi query lồng 10 tầng: DB chậm ×3, cache hit chỉ còn 50%.",
+        "botRps": 1100,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        },
+        "cacheHitScale": 0.5
+      },
+      {
+        "id": "paginate",
+        "label": "Lật trang vô tận",
+        "icon": "probe",
+        "text": "Bot ~1300 rps gọi ?page=1..99999: cache hit chỉ còn 30%.",
+        "botRps": 1300,
+        "cacheHitScale": 0.3
+      },
+      {
+        "id": "burst",
+        "label": "Gọi dồn",
+        "icon": "spike",
+        "text": "Bot ~2800 rps cùng lúc.",
+        "botRps": 2800
+      },
+      {
+        "id": "batch",
+        "label": "Batch retry",
+        "icon": "retry",
+        "text": "Bot ~1600 rps, SDK retry 2 lần khi lỗi.",
+        "botRps": 1600,
+        "clientRetries": 2
+      },
+      {
+        "id": "new_key",
+        "label": "Key mới",
+        "icon": "heal",
+        "text": "Bot ~500 rps, hồi 10 máu. Sau lượt này WAF mất 10%.",
+        "botRps": 500,
+        "heal": 10,
+        "wafStrip": 0.1
+      }
+    ]
+  },
+  {
+    "id": "iot_botnet",
+    "name": "Botnet Camera IoT",
+    "description": "Hàng trăm nghìn camera và router mật khẩu mặc định. Số lượng khổng lồ, và luôn có máy mới bị nhiễm thay chỗ máy bị chặn.",
+    "hp": 60,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "wake",
+        "label": "Thức dậy",
+        "icon": "probe",
+        "text": "Bot ~1000 rps.",
+        "botRps": 1000
+      },
+      {
+        "id": "flood",
+        "label": "Lũ request",
+        "icon": "spike",
+        "text": "Bot ~3400 rps cùng lúc.",
+        "botRps": 3400
+      },
+      {
+        "id": "reinfect",
+        "label": "Nhiễm thêm máy",
+        "icon": "debt",
+        "text": "Bot ~1500 rps. IP mới: sau lượt này WAF mất 15%.",
+        "botRps": 1500,
+        "wafStrip": 0.15
+      },
+      {
+        "id": "syn",
+        "label": "SYN flood",
+        "icon": "slow",
+        "text": "Bot ~1600 rps nửa kết nối: API chậm ×2.",
+        "botRps": 1600,
+        "chaos": {
+          "node": "api",
+          "action": "latency",
+          "value": 2
+        }
+      },
+      {
+        "id": "recruit",
+        "label": "Tuyển quân",
+        "icon": "heal",
+        "text": "Bot ~500 rps, botnet hồi 12 máu.",
+        "botRps": 500,
+        "heal": 12
+      }
+    ]
+  },
+  {
+    "id": "amplifier",
+    "name": "Khuếch Đại DNS",
+    "description": "Gửi query nhỏ với IP giả là bạn, server DNS mở trả về gói lớn gấp 50 lần. Traffic đến từ server hợp lệ, khó lọc.",
+    "hp": 55,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "spoof",
+        "label": "Giả IP",
+        "icon": "probe",
+        "text": "Bot ~800 rps từ server hợp lệ: lách 20% bộ lọc.",
+        "botRps": 800,
+        "bypass": 0.2
+      },
+      {
+        "id": "amplify",
+        "label": "Khuếch đại",
+        "icon": "retry",
+        "text": "Bot ~1800 rps, mọi client retry 4 lần ngay khi lỗi.",
+        "botRps": 1800,
+        "clientRetries": 4
+      },
+      {
+        "id": "reflect",
+        "label": "Phản xạ",
+        "icon": "spike",
+        "text": "Bot ~3000 rps, lách 30% bộ lọc.",
+        "botRps": 3000,
+        "bypass": 0.3
+      },
+      {
+        "id": "saturate",
+        "label": "Nghẽn đường truyền",
+        "icon": "slow",
+        "text": "Bot ~1400 rps, API lỗi 12% vì nghẽn băng thông.",
+        "botRps": 1400,
+        "chaos": {
+          "node": "api",
+          "action": "errors",
+          "value": 0.12
+        }
+      },
+      {
+        "id": "recharge",
+        "label": "Tìm resolver mới",
+        "icon": "heal",
+        "text": "Bot ~400 rps, hồi 10 máu.",
+        "botRps": 400,
+        "heal": 10
+      }
+    ]
+  },
+  {
+    "id": "worm",
+    "name": "Sâu Zero-day",
+    "description": "Khai thác một lỗ hổng chưa có bản vá, tự lây từ máy này sang máy khác và để lại cửa hậu khắp nơi.",
+    "hp": 55,
+    "escalation": 0.25,
+    "passive": {
+      "label": "Tự nhân bản",
+      "text": "Sâu lây sang máy mới: hồi 3 máu mỗi lượt.",
+      "regen": 3
+    },
+    "intents": [
+      {
+        "id": "spread",
+        "label": "Lây lan",
+        "icon": "debt",
+        "text": "Bot ~1200 rps. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "botRps": 1200,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        }
+      },
+      {
+        "id": "exploit",
+        "label": "Khai thác",
+        "icon": "slow",
+        "text": "Bot ~1300 rps, DB lỗi 12%, client retry 1 lần.",
+        "botRps": 1300,
+        "chaos": {
+          "node": "db",
+          "action": "errors",
+          "value": 0.12
+        },
+        "clientRetries": 1
+      },
+      {
+        "id": "burst",
+        "label": "Bùng phát",
+        "icon": "spike",
+        "text": "Bot ~2600 rps cùng lúc.",
+        "botRps": 2600
+      },
+      {
+        "id": "payload",
+        "label": "Kích hoạt payload",
+        "icon": "debt",
+        "text": "Bot ~1600 rps. Sau lượt này nhét 2 Tech Debt vào bộ bài.",
+        "botRps": 1600,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 2
+        }
+      },
+      {
+        "id": "dormant",
+        "label": "Ngủ đông",
+        "icon": "probe",
+        "text": "Bot ~600 rps, sâu ẩn mình.",
+        "botRps": 600
+      }
+    ]
+  },
+  {
+    "id": "ransom_gang",
+    "name": "Băng Tống Tiền",
+    "description": "Mã hoá dữ liệu, rồi vừa DDoS vừa đòi tiền chuộc. Cả công ty phải họp khẩn, không ai còn thời gian sửa hệ thống.",
+    "hp": 60,
+    "escalation": 0.3,
+    "intents": [
+      {
+        "id": "recon",
+        "label": "Do thám",
+        "icon": "probe",
+        "text": "Bot ~800 rps.",
+        "botRps": 800
+      },
+      {
+        "id": "encrypt",
+        "label": "Mã hoá",
+        "icon": "slow",
+        "text": "Bot ~1200 rps, DB chậm ×3 vì ổ đĩa bị mã hoá.",
+        "botRps": 1200,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        }
+      },
+      {
+        "id": "extort",
+        "label": "Đòi tiền chuộc",
+        "icon": "debt",
+        "text": "Bot ~1500 rps. Họp khẩn: lượt sau mất 1 Ops.",
+        "botRps": 1500,
+        "drainOps": 1
+      },
+      {
+        "id": "ddos",
+        "label": "DDoS gây sức ép",
+        "icon": "spike",
+        "text": "Bot ~3000 rps cùng lúc.",
+        "botRps": 3000
+      },
+      {
+        "id": "negotiate",
+        "label": "Đàm phán",
+        "icon": "heal",
+        "text": "Bot ~400 rps, băng nhóm hồi 10 máu.",
+        "botRps": 400,
+        "heal": 10
+      }
+    ]
+  },
+  {
+    "id": "apt_group",
+    "name": "Nhóm APT",
+    "description": "Tinh anh: nhóm tấn công có tổ chức, kiên nhẫn hàng tháng. Traffic của chúng giống hệt người dùng thật.",
+    "hp": 80,
+    "escalation": 0.25,
+    "pattern": "weighted",
+    "passive": {
+      "label": "Ẩn mình",
+      "text": "Traffic giả dạng người thật: bộ lọc luôn bỏ sót 25%.",
+      "bypass": 0.25
+    },
+    "intents": [
+      {
+        "id": "lateral",
+        "label": "Di chuyển ngang",
+        "icon": "probe",
+        "text": "Bot ~1400 rps. Sau lượt này WAF mất 10%.",
+        "botRps": 1400,
+        "wafStrip": 0.1,
+        "weight": 2
+      },
+      {
+        "id": "exfil",
+        "label": "Rút dữ liệu",
+        "icon": "slow",
+        "text": "Bot ~1800 rps tải dữ liệu lạ: cache hit chỉ còn 40%.",
+        "botRps": 1800,
+        "cacheHitScale": 0.4,
+        "weight": 2
+      },
+      {
+        "id": "strike",
+        "label": "Ra đòn",
+        "icon": "spike",
+        "text": "Bot ~3200 rps cùng lúc.",
+        "botRps": 3200,
+        "weight": 2
+      },
+      {
+        "id": "backdoor",
+        "label": "Cửa hậu",
+        "icon": "debt",
+        "text": "Bot ~1800 rps. Nhét 1 Tech Debt, lượt sau mất 1 Ops.",
+        "botRps": 1800,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        },
+        "drainOps": 1,
+        "weight": 1
+      },
+      {
+        "id": "persist",
+        "label": "Bám trụ",
+        "icon": "heal",
+        "text": "Bot ~600 rps, nhóm APT hồi 12 máu.",
+        "botRps": 600,
+        "heal": 12,
+        "weight": 1
+      }
+    ]
+  },
+  {
+    "id": "hydra",
+    "name": "Botnet Hydra",
+    "description": "Tinh anh: botnet nhiều đầu điều khiển. Chặt một nhánh, hai nhánh khác mọc lên.",
+    "hp": 85,
+    "escalation": 0.3,
+    "passive": {
+      "label": "Mọc đầu mới",
+      "text": "Chặt một nhánh, mọc hai nhánh: hồi 4 máu mỗi lượt.",
+      "regen": 4
+    },
+    "intents": [
+      {
+        "id": "grow",
+        "label": "Mọc đầu",
+        "icon": "probe",
+        "text": "Bot ~1100 rps.",
+        "botRps": 1100
+      },
+      {
+        "id": "bite",
+        "label": "Cắn",
+        "icon": "spike",
+        "text": "Bot ~3000 rps cùng lúc.",
+        "botRps": 3000
+      },
+      {
+        "id": "coil",
+        "label": "Siết",
+        "icon": "retry",
+        "text": "Bot ~2000 rps, mọi client retry 3 lần ngay khi lỗi.",
+        "botRps": 2000,
+        "clientRetries": 3
+      },
+      {
+        "id": "venom",
+        "label": "Nọc độc",
+        "icon": "slow",
+        "text": "Bot ~1600 rps, DB chậm ×3.",
+        "botRps": 1600,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        }
+      },
+      {
+        "id": "regrow",
+        "label": "Tái sinh",
+        "icon": "heal",
+        "text": "Bot ~700 rps, Hydra hồi 14 máu.",
+        "botRps": 700,
+        "heal": 14
       }
     ]
   },

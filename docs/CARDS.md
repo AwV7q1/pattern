@@ -47,6 +47,26 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
 | Vàng | Bắt đầu 40, mỗi trận thắng cộng thêm (thường 16, tinh anh 32, trùm 60, ±5). Một số sự cố cho hoặc lấy vàng |
 | Cửa hàng | Mỗi tầng ít nhất một. Bán 5 lá (giá theo độ hiếm), 2 relic, và dịch vụ bỏ 1 lá (50 vàng, tăng 25 mỗi lần dùng trong run) |
 
+### Địch theo tầng
+
+Mỗi tầng có nhóm địch thường và tinh anh riêng (`run.json` `normal` và `elites`, mỗi tầng một danh sách), theo chủ đề sự cố leo thang dần. Ô trận bốc ngẫu nhiên trong nhóm của tầng, không gặp lại đúng con vừa đánh ở trận cùng loại trước đó.
+
+| Tầng | Chủ đề | Địch thường | Tinh anh |
+|---|---|---|---|
+| 1 | Sự cố thường ngày | Botnet Bầy Kiến, Bão Retry, Đàn Thundering Herd, Crawler Tham Lam | Rò Rỉ Bộ Nhớ, Cron Nửa Đêm |
+| 2 | Tấn công có chủ đích | Scraper Đối Thủ, Credential Stuffer, Slowloris, Bot Săn Sneaker | Trại Click Farm, Kẻ Lạm Dụng API |
+| 3 | Tấn công phân tán | Botnet Camera IoT, Khuếch Đại DNS, Sâu Zero-day, Băng Tống Tiền | Nhóm APT, Botnet Hydra |
+
+Ngoài traffic, retry, chaos (`api` hoặc `db`), cache và thẻ nợ, ý định của địch còn có thể:
+
+| Trường | Hiệu ứng | Hotfix gỡ được? |
+|---|---|---|
+| `bypass` | Bot lách một phần bộ lọc (WAF + rate limit) lượt này | Không |
+| `wafStrip` | WAF mất ngay một phần sau lượt (xoay proxy, IP mới) | Không |
+| `drainOps` | Lượt sau bớt Ops (giữ kết nối, họp khẩn), tối thiểu 1 | Không |
+
+Nội tại (`passive`) không chỉ dành cho trùm: một số tinh anh có `bypass` (luôn lách bộ lọc), `regen` (hồi máu mỗi lượt) hoặc `wafDecay`.
+
 ### Trùm
 
 Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế mà địch thường không có:
@@ -70,6 +90,21 @@ Mỗi địch có thân và bảng màu riêng (`BotAvatar.tsx`, bảng `LOOKS`,
 | Botnet Bầy Kiến | Kiến máy đỏ, râu và hàm, bầy kiến nhỏ bay quanh |
 | Bão Retry | Đám mây xanh có sét, mũi tên retry bay quanh |
 | Đàn Thundering Herd | Đầu bò cam có sừng và khoen mũi, đàn bò nhỏ chạy vòng |
+| Crawler Tham Lam | Nhện máy treo trên sợi tơ, nhện nhỏ bò quanh |
+| Rò Rỉ Bộ Nhớ | Thanh RAM "99% RAM" nhỏ giọt xuống vũng, số 0/1 bay quanh |
+| Cron Nửa Đêm | Đồng hồ báo thức chuông rung, màn hình "00:00" |
+| Scraper Đối Thủ | Robot hút bụi hút thẻ giá |
+| Credential Stuffer | Kẻ trộm mũ len, bịt mắt, chùm chìa khoá và túi tiền |
+| Slowloris | Cu li mắt to ôm dây cáp, chữ "z" bay quanh |
+| Bot Săn Sneaker | Giày chạy có vệt tốc độ, hộp giày bay quanh |
+| Trại Click Farm | Giá 9 điện thoại đang bị bấm, con trỏ chuột bay quanh |
+| Kẻ Lạm Dụng API | Robot giữa hai dấu ngoặc `{ }`, đeo chìa khoá API |
+| Botnet Camera IoT | Camera an ninh "REC" trên router nhấp nháy |
+| Khuếch Đại DNS | Loa phóng thanh "×50" phát sóng âm |
+| Sâu Zero-day | Sâu nhiều đốt có râu, sâu con bò quanh |
+| Băng Tống Tiền | Ổ khoá đỏ có giấy đòi tiền chuộc |
+| Nhóm APT | Bóng người trùm mũ, mặt là khoảng tối, cầm dao |
+| Botnet Hydra | Rắn ba đầu |
 | Kẻ Đầu Độc Cache | Áo choàng mặt nạ phòng độc, nhỏ giọt độc, cầm lọ thuốc |
 | Black Friday | Thẻ giá đen "-70%", túi mua sắm và đồng xu bay quanh |
 | Lãnh Chúa DDoS | Đội vương miện, mắt thứ ba, áo choàng, đạo quân bot nhỏ |
@@ -110,6 +145,7 @@ Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có s�
 pnpm balance:cards            # 20 trận mỗi chiến thuật (idle, random, greedy)
 pnpm balance:cards 50 --log   # in diễn biến từng lượt
 pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng và nơi bot chết
+pnpm balance:cards 40 --run --by-enemy  # thêm tỉ lệ thắng, máu mất, số lượt theo từng địch
 ```
 
 Mục tiêu hiện tại cho trận đầu:

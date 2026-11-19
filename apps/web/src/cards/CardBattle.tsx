@@ -10,6 +10,9 @@ import {
   User,
   Users,
   ZapOff,
+  EyeOff,
+  ShieldOff,
+  Unplug,
   Database,
   Heart,
   HeartPulse,
@@ -36,7 +39,7 @@ import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import type { Design, WindowMetrics } from '@/types';
-import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, intentsNow, legitRpsNow, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
+import { apiOut, botCutNow, botRpsNow, bypassNow, canPlay, cardDef, currentIntent, intentsNow, legitRpsNow, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
 import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
@@ -942,8 +945,11 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
 }
 
 /** What an intent does beyond raw traffic, as icon chips. */
-function intentEffects(intent: Intent): { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal' }[] {
-  const out: { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal' }[] = [];
+/** `lasting`: not an incident, so Hotfix does not cancel it. */
+type IntentEffect = { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal'; lasting?: boolean };
+
+function intentEffects(intent: Intent): IntentEffect[] {
+  const out: IntentEffect[] = [];
   const node = (n: string) => (n === 'db' ? 'DB' : 'API');
   if (intent.chaos)
     out.push(
@@ -953,7 +959,10 @@ function intentEffects(intent: Intent): { icon: typeof Zap; text: string; tone: 
     );
   if (intent.clientRetries) out.push({ icon: Repeat, text: `retry ×${intent.clientRetries}`, tone: 'bad' });
   if (intent.cacheHitScale !== undefined) out.push({ icon: ZapOff, text: `cache hit ×${intent.cacheHitScale}`, tone: 'warn' });
-  if (intent.addCards) out.push({ icon: Bug, text: `+${intent.addCards.n} thẻ nợ`, tone: 'warn' });
+  if (intent.addCards) out.push({ icon: Bug, text: `+${intent.addCards.n} thẻ nợ`, tone: 'warn', lasting: true });
+  if (intent.bypass) out.push({ icon: EyeOff, text: `lách ${Math.round(intent.bypass * 100)}% bộ lọc`, tone: 'bad', lasting: true });
+  if (intent.wafStrip) out.push({ icon: ShieldOff, text: `WAF −${Math.round(intent.wafStrip * 100)}%`, tone: 'warn', lasting: true });
+  if (intent.drainOps) out.push({ icon: Unplug, text: `lượt sau −${intent.drainOps} Ops`, tone: 'warn', lasting: true });
   if (intent.heal) out.push({ icon: HeartPulse, text: `hồi ${intent.heal} máu`, tone: 'heal' });
   return out;
 }
@@ -992,7 +1001,7 @@ function IntentTrack({ intents, step, pick }: { intents: Intent[]; step: number;
   );
 }
 
-/** A boss's passive and phase, as small badges under its intents. */
+/** An enemy's passive (bosses, some elites) and a boss's phase, as small badges under its intents. */
 function BossTraits({ state }: { state: BattleState }) {
   const def = CONTENT.enemies.find((e) => e.id === state.enemy.id);
   if (!def?.passive && !def?.phase2) return null;
@@ -1037,10 +1046,10 @@ function BotSide({
 }) {
   const Icon = INTENT_ICON[intent.icon];
   const raw = botRpsNow(CONTENT, state);
-  const cut = botCutNow(state);
+  const cut = botCutNow(state, bypassNow(CONTENT, state));
   const effects = intentEffects(intent);
-  const hotfixed = (e: (typeof effects)[number]) => state.temp.hotfix && e.tone !== 'heal' && e.icon !== Bug;
-  const tone = (e: (typeof effects)[number]) =>
+  const hotfixed = (e: IntentEffect) => state.temp.hotfix && e.tone !== 'heal' && !e.lasting;
+  const tone = (e: IntentEffect) =>
     hotfixed(e)
       ? 'bg-muted text-muted-foreground'
       : e.tone === 'bad'
