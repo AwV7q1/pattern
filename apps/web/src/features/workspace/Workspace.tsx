@@ -123,6 +123,9 @@ export type WorkspaceProps =
       lessonId?: string | null;
       onBackToPath?: () => void;
       onLevelChange: (key: string) => void;
+      /** Leave the game (back to its home page): shown at the start of the toolbar. */
+      onExit?: () => void;
+      exitLabel?: string;
       /** Replaces the level picker in the toolbar (interviews). */
       title?: ReactNode;
       /** Replaces the Level tab content (interviews): gets the current design. */
@@ -1083,6 +1086,11 @@ export function Workspace(props: WorkspaceProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+        {props.mode === 'game' && props.onExit && (
+          <Button size="sm" variant="ghost" className="-ml-2 h-7 px-2 text-muted-foreground" onClick={props.onExit}>
+            <ChevronLeft /> {props.exitLabel ?? 'Game'}
+          </Button>
+        )}
         {props.mode === 'game' && props.title ? (
           props.title
         ) : mode === 'game' ? (

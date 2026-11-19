@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router';
-import { EyeOff, Eye, Gamepad2, Pencil, Plus, Star, Trash2, Users } from 'lucide-react';
-import { LEARN_LEVELS, LEVELS } from '@/presets';
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { EyeOff, Eye, Gamepad2, Layers, MessagesSquare, Pencil, Plus, Star, Swords, Trash2, Trophy, Users } from 'lucide-react';
+import { INTERVIEWS, LEARN_LEVELS, LEVELS } from '@/presets';
 import { Workspace } from '@/features/workspace/Workspace';
 import { api } from '@/app/api';
 import { useAuth } from '@/app/auth-store';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { HubCard } from '@/components/BackLink';
+import { CONTENT, loadRun } from '@/cards/content';
+import { INTERVIEW_HOME, InterviewGrid, InterviewHistory, bestScore, useAttempts } from '@/features/interview/InterviewPages';
 import type { Level } from '@/types';
 
 interface CommunityLevel {
@@ -105,23 +108,89 @@ function CommunityLevels() {
 
 const bestKey = (id: string) => `pattern.best.${id}`;
 
-/** `/play`: the official levels with the best rating reached on this device. */
+const bestOf = (id: string) => Number(localStorage.getItem(bestKey(id)) ?? 0);
+
+/** Section title on the Game home page. */
+function SectionTitle({ icon: Icon, children, id }: { icon: typeof Star; children: React.ReactNode; id?: string }) {
+  return (
+    <h2 id={id} className="flex scroll-mt-6 items-center gap-2 font-medium">
+      <Icon className="size-4" /> {children}
+    </h2>
+  );
+}
+
+/**
+ * `/play`: Game home. "Chơi ngay" cards jump straight into a game (next level,
+ * the card tower, next interview); below, every level and interview prompt.
+ */
 export function PlayHome() {
+  const { hash } = useLocation();
+  const attempts = useAttempts();
+  // read once per visit: best stars and the saved card run
+  const [levels] = useState(() => Object.entries(LEVELS).map(([key, l]) => ({ key, level: l, best: bestOf(l.id) })));
+  const [run] = useState(loadRun);
+  useEffect(() => {
+    if (hash) document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'start' });
+  }, [hash]);
+
+  const nextLevel = levels.find((l) => l.best < 3) ?? levels[0];
+  const stars = levels.reduce((n, l) => n + l.best, 0);
+  const runActive = run !== null && run.phase !== 'won' && run.phase !== 'lost';
+  const nextInterview = INTERVIEWS.find((p) => bestScore(attempts, p.id) < 0) ?? INTERVIEWS[0];
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto grid max-w-5xl gap-6 px-6 py-8">
+      <div className="mx-auto grid max-w-5xl gap-8 px-6 py-8">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <Gamepad2 className="size-5" /> Game
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            <Gamepad2 className="size-6 text-primary" /> Game
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-muted-foreground">
             Mỗi level là một sự cố có thật thu nhỏ: ngân sách, kịch bản chaos và 3 tiêu chí sao. Server chấm lại bằng đúng engine.
           </p>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {Object.entries(LEVELS).map(([key, l]) => {
-            const best = Number(localStorage.getItem(bestKey(l.id)) ?? 0);
-            return (
+
+        <section className="grid gap-3">
+          <SectionTitle icon={Swords}>Chơi ngay</SectionTitle>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {nextLevel && (
+              <HubCard
+                to={`/play/${nextLevel.key}`}
+                icon={Trophy}
+                accent="text-warning"
+                title={nextLevel.best > 0 ? `Tiếp tục: ${nextLevel.level.title}` : nextLevel.level.title}
+                cta={nextLevel.best > 0 ? 'Chơi tiếp' : 'Chơi ngay'}
+              >
+                Level · {stars}/{levels.length * 3} sao đã đạt
+              </HubCard>
+            )}
+            <HubCard
+              to="/cards"
+              icon={Layers}
+              accent="text-violet-400"
+              title={CONTENT.run.title}
+              cta={runActive ? 'Leo tiếp' : 'Ca mới'}
+            >
+              {runActive ? `Đang ở tầng ${run.act} · ${run.hp}/${run.maxHp} HP` : 'Thẻ bài roguelike: leo tháp, đánh botnet, xây bộ bài.'}
+            </HubCard>
+            {nextInterview && (
+              <HubCard
+                to={`/interview/${nextInterview.id}`}
+                icon={MessagesSquare}
+                accent="text-sky-400"
+                title={nextInterview.title}
+                cta="Vào phỏng vấn"
+              >
+                Phỏng vấn · {nextInterview.timeMinutes} phút · {nextInterview.difficulty}
+              </HubCard>
+            )}
+          </div>
+        </section>
+
+        <section className="grid gap-3">
+          <SectionTitle icon={Trophy}>Level</SectionTitle>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {levels.map(({ key, level: l, best }) => (
               <Link key={key} to={`/play/${key}`} className="grid gap-2 rounded-lg border p-4 transition-colors hover:bg-accent/50">
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium">{l.title}</span>
@@ -133,9 +202,21 @@ export function PlayHome() {
                 </div>
                 <p className="line-clamp-3 text-sm text-muted-foreground">{l.brief}</p>
               </Link>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="grid gap-3">
+          <SectionTitle icon={MessagesSquare} id={INTERVIEW_HOME.split('#')[1]}>
+            Phỏng vấn system design
+          </SectionTitle>
+          <p className="-mt-1 text-sm text-muted-foreground">
+            Đọc đề, thiết kế trên canvas trong thời gian giới hạn, rồi nộp. Engine chấm SLO, khả năng chịu lỗi, chi phí và độ sạch.
+          </p>
+          <InterviewGrid attempts={attempts} />
+          <InterviewHistory attempts={attempts} />
+        </section>
+
         <CommunityLevels />
       </div>
     </div>
@@ -171,6 +252,8 @@ export function GameRoute() {
       lessonId={lesson}
       onBackToPath={() => navigate('/learn')}
       onLevelChange={(k) => navigate(`/play/${k}`)}
+      onExit={() => navigate(lesson ? '/learn' : '/play')}
+      exitLabel={lesson ? 'Lộ trình' : 'Game'}
     />
   );
 }

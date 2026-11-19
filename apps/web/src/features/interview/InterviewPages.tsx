@@ -15,6 +15,9 @@ import type { Design } from '@/types';
 import { gradeLocally, levelOf, type Graded } from './grade';
 import { Report, VERDICT } from './Report';
 
+/** The prompts list lives on the Game home page. */
+export const INTERVIEW_HOME = '/play#interview';
+
 const DIFFICULTY_CLASS: Record<InterviewPrompt['difficulty'], string> = {
   Dễ: 'text-success',
   'Trung bình': 'text-warning',
@@ -29,7 +32,7 @@ interface AttemptRow {
   createdAt: string;
 }
 
-function useAttempts() {
+export function useAttempts() {
   const signedIn = useAuth((s) => s.status === 'signed-in');
   const [rows, setRows] = useState<AttemptRow[]>([]);
   useEffect(() => {
@@ -38,60 +41,54 @@ function useAttempts() {
   return rows;
 }
 
-/** `/interview`: the prompts, with your best score on each. */
-export function InterviewList() {
-  const attempts = useAttempts();
-  const best = (id: string) => Math.max(-1, ...attempts.filter((a) => a.promptId === id).map((a) => a.total));
+/** Best score per prompt (-1: never attempted). */
+export const bestScore = (attempts: AttemptRow[], id: string) =>
+  Math.max(-1, ...attempts.filter((a) => a.promptId === id).map((a) => a.total));
+
+/** The interview prompts, with your best score on each (part of the Game home page). */
+export function InterviewGrid({ attempts }: { attempts: AttemptRow[] }) {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto grid max-w-5xl gap-6 px-6 py-8">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <MessagesSquare className="size-5" /> Phỏng vấn system design
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Đọc đề, thiết kế trên canvas trong thời gian giới hạn, rồi nộp. Engine chạy design qua tải bình thường, cao điểm và sự cố; bộ
-            luật kiểm tra thiết kế; điểm gồm SLO, khả năng chịu lỗi, chi phí và độ sạch. Không có nhận xét bằng AI: mọi con số đều đo được.
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {INTERVIEWS.map((p) => {
-            const b = best(p.id);
-            return (
-              <Link key={p.id} to={`/interview/${p.id}`} className="grid gap-2 rounded-lg border p-4 transition-colors hover:bg-accent/50">
-                <div className="flex items-center gap-2">
-                  <span className="mr-auto font-medium">{p.title}</span>
-                  {b >= 0 && <Badge variant="secondary">tốt nhất {b}</Badge>}
-                </div>
-                <p className="line-clamp-3 text-sm text-muted-foreground">{p.brief}</p>
-                <div className="flex gap-3 text-xs text-muted-foreground">
-                  <span className={DIFFICULTY_CLASS[p.difficulty]}>{p.difficulty}</span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="size-3" /> {p.timeMinutes} phút
-                  </span>
-                  <span>{p.grading.length} kịch bản chấm</span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-        {attempts.length > 0 && (
-          <section className="grid gap-2">
-            <h2 className="text-sm font-medium">Lịch sử bài làm</h2>
-            <ul className="grid gap-1 text-sm">
-              {attempts.slice(0, 20).map((a) => (
-                <li key={a.id} className="flex gap-3">
-                  <span className="w-10 text-right font-mono">{a.total}</span>
-                  <span className="flex-1">{INTERVIEWS.find((p) => p.id === a.promptId)?.title ?? a.promptId}</span>
-                  <span className="text-muted-foreground">{Math.round(a.durationMs / 60000)} phút</span>
-                  <span className="text-muted-foreground">{new Date(a.createdAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
+    <div className="grid gap-3 sm:grid-cols-2">
+      {INTERVIEWS.map((p) => {
+        const b = bestScore(attempts, p.id);
+        return (
+          <Link key={p.id} to={`/interview/${p.id}`} className="grid gap-2 rounded-lg border p-4 transition-colors hover:bg-accent/50">
+            <div className="flex items-center gap-2">
+              <span className="mr-auto font-medium">{p.title}</span>
+              {b >= 0 && <Badge variant="secondary">tốt nhất {b}</Badge>}
+            </div>
+            <p className="line-clamp-3 text-sm text-muted-foreground">{p.brief}</p>
+            <div className="flex gap-3 text-xs text-muted-foreground">
+              <span className={DIFFICULTY_CLASS[p.difficulty]}>{p.difficulty}</span>
+              <span className="flex items-center gap-1">
+                <Clock className="size-3" /> {p.timeMinutes} phút
+              </span>
+              <span>{p.grading.length} kịch bản chấm</span>
+            </div>
+          </Link>
+        );
+      })}
     </div>
+  );
+}
+
+/** Your latest interview attempts. */
+export function InterviewHistory({ attempts }: { attempts: AttemptRow[] }) {
+  if (attempts.length === 0) return null;
+  return (
+    <details className="grid gap-2">
+      <summary className="cursor-pointer text-sm font-medium text-muted-foreground">Lịch sử bài làm ({attempts.length})</summary>
+      <ul className="mt-2 grid gap-1 text-sm">
+        {attempts.slice(0, 20).map((a) => (
+          <li key={a.id} className="flex gap-3">
+            <span className="w-10 text-right font-mono">{a.total}</span>
+            <span className="flex-1">{INTERVIEWS.find((p) => p.id === a.promptId)?.title ?? a.promptId}</span>
+            <span className="text-muted-foreground">{Math.round(a.durationMs / 60000)} phút</span>
+            <span className="text-muted-foreground">{new Date(a.createdAt).toLocaleString('vi-VN', { dateStyle: 'short', timeStyle: 'short' })}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -146,7 +143,7 @@ export function InterviewRoute() {
   const submitted = useRef<Design | null>(null);
   const level = useMemo(() => (prompt ? levelOf(prompt) : null), [prompt]);
 
-  if (!prompt || !level) return <Navigate to="/interview" replace />;
+  if (!prompt || !level) return <Navigate to={INTERVIEW_HOME} replace />;
 
   const submit = async (design: Design) => {
     setBusy(true);
@@ -188,6 +185,8 @@ export function InterviewRoute() {
         level={level}
         levelKey={level.id}
         onLevelChange={() => {}}
+        onExit={() => setPhase('brief')}
+        exitLabel="Đề bài"
         title={
           <div className="flex items-center gap-2 text-sm">
             <MessagesSquare className="size-4" /> <span className="font-medium">{prompt.title}</span>
@@ -208,7 +207,7 @@ export function InterviewRoute() {
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto grid max-w-3xl gap-6 px-6 py-8">
         <Button asChild size="sm" variant="ghost" className="justify-self-start">
-          <Link to="/interview">
+          <Link to={INTERVIEW_HOME}>
             <ArrowLeft /> Các đề
           </Link>
         </Button>

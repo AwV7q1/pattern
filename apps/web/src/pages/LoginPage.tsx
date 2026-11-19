@@ -6,6 +6,7 @@ import { ApiError } from '@/app/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { BackLink } from '@/components/BackLink';
 
 /** `/login?next=/path`: sign in, or create an account when the server allows it. */
 export function LoginPage() {
@@ -38,7 +39,8 @@ export function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+    <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6">
+      <BackLink label="Quay lại" className="absolute top-4 left-4" />
       <form onSubmit={onSubmit} className="grid w-full max-w-sm gap-4 rounded-xl border bg-card/40 p-6">
         <div className="flex items-center gap-2">
           <span className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">

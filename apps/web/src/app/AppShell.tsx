@@ -1,27 +1,17 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router';
-import { BookA, Gamepad2, Gauge, GraduationCap, LayoutGrid, Shapes } from 'lucide-react';
+import { LayoutGrid } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { GlossaryProvider } from '@/learn/Glossary';
 import { TechDialogs } from '@/tech/TechDialogs';
-import { BottomTabBar, type TabItem } from '@/components/BottomTabBar';
+import { BottomTabBar } from '@/components/BottomTabBar';
 import { useUi } from './ui-store';
 import { CommandPalette } from './CommandPalette';
 import { useAuth } from './auth-store';
+import { TABS, isHomePath } from './nav';
 
-const TABS: TabItem[] = [
-  { to: '/learn', label: 'Học', icon: GraduationCap },
-  { to: '/play', label: 'Game', icon: Gamepad2, match: ['/play', '/cards', '/interview', '/levels'] },
-  { to: '/studio', label: 'Studio', icon: Shapes, match: ['/studio', '/library', '/cases', '/s'] },
-  { to: '/capacity/sizing', label: 'Công suất', icon: Gauge, match: ['/capacity'] },
-  { to: '/glossary', label: 'Từ điển', icon: BookA },
-];
-
-/**
- * Pages whose scroll area already leaves room for the floating tab bar, and
- * canvases that should run underneath it. Every other page gets bottom padding.
- */
-const UNDER_TAB_BAR = [/^\/learn(\/|$)/, /^\/glossary$/, /^\/capacity\//, /^\/studio(\/[^/]+)?$/, /^\/play\/.+/, /^\/s\//];
+/** Home pages whose scroll area already leaves room for the floating tab bar. */
+const SELF_PADDED = ['/learn', '/glossary', '/studio'];
 
 /** Layout of every page: page content, floating tab bar, command palette and global dialogs. */
 export function AppShell() {
@@ -47,16 +37,16 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [setCommandOpen]);
 
-  const padded = !immersive && !UNDER_TAB_BAR.some((r) => r.test(pathname));
+  // first layer (home) shows the tab bar; second layer (detail, or a lesson open full screen) hides it
+  const detail = immersive || !isHomePath(pathname);
+  const padded = !detail && !SELF_PADDED.includes(pathname.replace(/\/+$/, ''));
 
   return (
     <GlossaryProvider>
       <main className={cn('flex h-screen min-w-0 flex-col', padded && 'pb-24')}>
         <Outlet />
       </main>
-      {!immersive && (
-        <BottomTabBar items={TABS} more={{ label: 'Thêm', icon: LayoutGrid, onClick: () => setCommandOpen(true) }} />
-      )}
+      <BottomTabBar items={TABS} hidden={detail} more={{ label: 'Thêm', icon: LayoutGrid, onClick: () => setCommandOpen(true) }} />
       <CommandPalette />
       <TechDialogs />
     </GlossaryProvider>

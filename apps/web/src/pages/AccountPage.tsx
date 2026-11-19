@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { BackLink } from '@/components/BackLink';
 
 interface SessionRow {
   id: string;
@@ -55,6 +56,7 @@ export function AccountPage() {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto grid max-w-2xl gap-6 px-6 py-8">
+        <BackLink label="Quay lại" className="-mb-4 -ml-3 justify-self-start" />
         <div className="flex items-center gap-3">
           <UserRound className="size-6" />
           <div className="mr-auto">

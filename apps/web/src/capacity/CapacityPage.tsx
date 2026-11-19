@@ -4,6 +4,7 @@ import type { Design, SizingReport } from '@/types';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SizingPanel } from './SizingPanel';
 import { CalibratePanel, type DesignSource } from './CalibratePanel';
+import { BackLink } from '@/components/BackLink';
 
 type Props = {
   sandboxDesign: Design | null;
@@ -27,6 +28,7 @@ export function CapacityPage({ sandboxDesign, onOpenSizing, onOpenCalibrated, ta
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-4 border-b px-4 py-2">
+        <BackLink to="/capacity" label="Công suất" className="-ml-2" />
         <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
           <TabsList>
             <TabsTrigger value="sizing">

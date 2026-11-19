@@ -5,7 +5,8 @@ import { ProjectsHome } from '@/projects/ProjectsHome';
 import { projectFromPreset, store, type Project } from '@/projects/store';
 import { Workspace } from '@/features/workspace/Workspace';
 import { Button } from '@/components/ui/button';
-import { CloudUpload } from 'lucide-react';
+import { BookOpen, CloudUpload, Library } from 'lucide-react';
+import { HubCard } from '@/components/BackLink';
 import { useAuth } from '@/app/auth-store';
 import { uploadLocalProjects, useSync } from '@/projects/sync';
 
@@ -35,6 +36,20 @@ function UploadBanner() {
   );
 }
 
+/** Entries to the Studio's other sections (detail pages). */
+function StudioEntries() {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <HubCard to="/library" icon={Library} accent="text-sky-400" title="Thư viện công nghệ" className="p-4">
+        Redis, Kafka, Postgres, Nginx… thông số, điểm mạnh yếu và so sánh.
+      </HubCard>
+      <HubCard to="/cases" icon={BookOpen} accent="text-amber-400" title="Case study" className="p-4">
+        Kiến trúc thật của Discord, Slack, Netflix… mở thành dự án để thử.
+      </HubCard>
+    </div>
+  );
+}
+
 /** `/studio`: saved projects and templates. `?template=<key>` creates a project from a template. */
 export function StudioHome() {
   const navigate = useNavigate();
@@ -51,7 +66,12 @@ export function StudioHome() {
   }, [template, navigate]);
   return (
     <ProjectsHome
-      banner={<UploadBanner />}
+      banner={
+        <>
+          <StudioEntries />
+          <UploadBanner />
+        </>
+      }
       presets={PRESETS}
       onOpen={(p) => navigate(`/studio/${p.id}`)}
       tab={tab}

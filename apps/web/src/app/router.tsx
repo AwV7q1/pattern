@@ -3,13 +3,13 @@ import { AppShell } from './AppShell';
 import { LearnRoute } from '@/pages/LearnRoute';
 import { GameRoute, PlayHome } from '@/pages/GameRoute';
 import { StudioHome, StudioProjectRoute } from '@/pages/StudioRoutes';
-import { CapacityRoute, CasesRoute, LibraryRoute, NotFound } from '@/pages/MiscRoutes';
+import { CapacityHome, CapacityRoute, CasesRoute, LibraryRoute, NotFound } from '@/pages/MiscRoutes';
 import { LoginPage } from '@/pages/LoginPage';
 import { AccountPage } from '@/pages/AccountPage';
 import { SharePage } from '@/pages/SharePage';
 import { ComparePage } from '@/features/compare/ComparePage';
 import { LevelEditor } from '@/features/levels/LevelEditor';
-import { InterviewList, InterviewRoute } from '@/features/interview/InterviewPages';
+import { INTERVIEW_HOME, InterviewRoute } from '@/features/interview/InterviewPages';
 import { CardRun } from '@/cards/CardRun';
 import { GlossaryPage } from '@/learn/Glossary';
 
@@ -24,7 +24,7 @@ export const router = createBrowserRouter([
       { path: 'play', element: <PlayHome /> },
       { path: 'play/*', element: <GameRoute /> },
       { path: 'cards', element: <CardRun /> },
-      { path: 'interview', element: <InterviewList /> },
+      { path: 'interview', element: <Navigate to={INTERVIEW_HOME} replace /> },
       { path: 'interview/:promptId', element: <InterviewRoute /> },
       { path: 'levels/new', element: <LevelEditor /> },
       { path: 'levels/:id/edit', element: <LevelEditor /> },
@@ -33,7 +33,7 @@ export const router = createBrowserRouter([
       { path: 'studio/:projectId/compare', element: <ComparePage /> },
       { path: 'cases', element: <CasesRoute /> },
       { path: 'library', element: <LibraryRoute /> },
-      { path: 'capacity', element: <Navigate to="/capacity/sizing" replace /> },
+      { path: 'capacity', element: <CapacityHome /> },
       { path: 'capacity/:tab', element: <CapacityRoute /> },
       { path: 's/:slug', element: <SharePage /> },
       { path: 'login', element: <LoginPage /> },

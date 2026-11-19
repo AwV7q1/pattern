@@ -7,6 +7,7 @@ import { compute } from '@/sim/compute';
 import { KIND_META } from '@/lib/meta';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { BackLink } from '@/components/BackLink';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -148,6 +149,7 @@ export function LevelEditor() {
   if (!fromProject && !editId)
     return (
       <div className="mx-auto grid w-full max-w-2xl gap-3 p-6 text-sm">
+        <BackLink to="/play" label="Game" className="-ml-3 justify-self-start" />
         <h1 className="flex items-center gap-2 text-xl font-semibold">
           <Wrench className="size-5" /> Tạo level
         </h1>
@@ -251,6 +253,7 @@ export function LevelEditor() {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto grid max-w-4xl gap-6 px-6 py-8">
+        <BackLink to="/play" label="Game" className="-mb-4 -ml-3 justify-self-start" />
         <div>
           <h1 className="flex items-center gap-2 text-xl font-semibold">
             <Wrench className="size-5" /> {editId ? 'Sửa level' : 'Tạo level từ dự án'}

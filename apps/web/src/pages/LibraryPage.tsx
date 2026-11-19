@@ -8,6 +8,7 @@ import { TECHS } from '@/tech/catalog';
 import { TechLogo } from '@/tech/TechLogo';
 import { CATEGORIES } from '@/tech/types';
 import { MAX_COMPARE, techUi, useTechUi } from '@/tech/ui-store';
+import { BackLink } from '@/components/BackLink';
 
 /** `/library`: every technology of the catalog, with details and comparison. */
 export function LibraryPage() {
@@ -27,6 +28,7 @@ export function LibraryPage() {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8">
+        <BackLink to="/studio" label="Studio" className="-mb-4 -ml-3 justify-self-start" />
         <div className="flex flex-wrap items-end gap-3">
           <div className="mr-auto">
             <h1 className="flex items-center gap-2 text-xl font-semibold">
