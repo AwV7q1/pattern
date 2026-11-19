@@ -775,14 +775,14 @@ const LOOKS: Record<string, Look> = {
         <rect x="22" y="58" width="18" height="36" rx="4" fill="#27272a" stroke={p.main} strokeOpacity="0.5" />
         <rect x="36" y="56" width="80" height="40" rx="8" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <rect x="46" y="65" width="52" height="20" rx="9" fill="#09090b" />
-        <circle cx="106" cy="66" r="3.5" fill="#ef4444" filter={`url(#${ids.glow})`} className="animate-pulse" />
+        <circle data-fx="rec" cx="106" cy="66" r="3.5" fill="#ef4444" filter={`url(#${ids.glow})`} className="animate-pulse" style={{ transformOrigin: '106px 66px' }} />
         <text x="106" y="90" textAnchor="middle" fontSize="6" fontFamily="monospace" fill={p.light}>
           REC
         </text>
         <path d="M50 114 L38 100 M110 114 L122 100" stroke="#71717a" strokeWidth="3" strokeLinecap="round" />
         <rect x="44" y="110" width="72" height="18" rx="4" fill="#27272a" stroke={p.main} strokeOpacity="0.5" />
         {[0, 1, 2, 3, 4].map((i) => (
-          <circle key={i} cx={58 + i * 11} cy="119" r="2.2" fill="#4ade80" style={{ animation: `bot-flicker 0.5s ease-in-out ${i * 0.15}s infinite alternate` }} />
+          <circle key={i} data-fx="led" cx={58 + i * 11} cy="119" r="2.2" fill="#4ade80" style={{ animation: `bot-flicker 0.5s ease-in-out ${i * 0.15}s infinite alternate` }} />
         ))}
       </>
     ),
@@ -796,23 +796,25 @@ const LOOKS: Record<string, Look> = {
     minion: (p, i) => <path d="M-2 -4 Q2 0 -2 4 M1 -6 Q7 0 1 6" fill="none" stroke={i % 2 ? p.light : p.main} strokeWidth="1.2" strokeLinecap="round" />,
     body: (p, ids) => (
       <>
-        {[0, 1, 2].map((i) => (
-          <path
-            key={i}
-            d={`M${134 + i * 9} ${62 - i * 10} Q${144 + i * 12} 80 ${134 + i * 9} ${98 + i * 10}`}
-            fill="none"
-            stroke={p.main}
-            strokeWidth="3"
-            strokeLinecap="round"
-            style={{ animation: `bot-flicker 0.6s ease-in-out ${i * 0.2}s infinite alternate` }}
-          />
-        ))}
+        <g data-fx="waves">
+          {[0, 1, 2].map((i) => (
+            <path
+              key={i}
+              d={`M${134 + i * 9} ${62 - i * 10} Q${144 + i * 12} 80 ${134 + i * 9} ${98 + i * 10}`}
+              fill="none"
+              stroke={p.main}
+              strokeWidth="3"
+              strokeLinecap="round"
+              style={{ animation: `bot-flicker 0.6s ease-in-out ${i * 0.2}s infinite alternate` }}
+            />
+          ))}
+        </g>
         <path d="M58 100 L52 126 L66 126 L72 104 Z" fill="#27272a" stroke={p.main} strokeOpacity="0.5" />
         <rect x="32" y="62" width="22" height="36" rx="6" fill="#3f3f46" stroke={p.main} strokeOpacity="0.6" />
         <path d="M52 60 L118 34 Q126 32 126 40 L126 120 Q126 128 118 126 L52 100 Z" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeLinejoin="round" />
-        <ellipse cx="124" cy="80" rx="7" ry="44" fill="#18181b" stroke={p.main} strokeWidth="2" />
+        <ellipse data-fx="mouth" cx="124" cy="80" rx="7" ry="44" fill="#18181b" stroke={p.main} strokeWidth="2" style={{ transformOrigin: '124px 80px' }} />
         <rect x="54" y="70" width="44" height="20" rx="9" fill="#09090b" />
-        <text x="90" y="110" textAnchor="middle" fontSize="10" fontFamily="monospace" fontWeight="bold" fill={p.light}>
+        <text data-fx="x50" x="90" y="110" textAnchor="middle" fontSize="10" fontFamily="monospace" fontWeight="bold" fill={p.light}>
           ×50
         </text>
       </>
@@ -842,8 +844,8 @@ const LOOKS: Record<string, Look> = {
       ];
       return (
         <>
-          {segs.map(([x, y, r]) => (
-            <g key={x}>
+          {segs.map(([x, y, r], i) => (
+            <g key={x} data-fx="seg" style={{ ['--i' as string]: segs.length - i, transformOrigin: `${x}px ${y}px`, animation: `wm-seg 1.6s ease-in-out ${(-i * 0.18).toFixed(2)}s infinite` }}>
               <circle cx={x} cy={y} r={r} fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="1.5" />
               <path d={`M${x - r * 0.6} ${y - r * 0.4} Q${x} ${y + r * 0.3} ${x + r * 0.6} ${y - r * 0.4}`} fill="none" stroke={p.main} strokeOpacity="0.6" strokeWidth="1.5" />
             </g>
@@ -853,7 +855,7 @@ const LOOKS: Record<string, Look> = {
           <circle cx="122" cy="26" r="3.5" fill={p.main} filter={`url(#${ids.glow})`} />
           <circle cx="105" cy="64" r="24" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
           <rect x="86" y="54" width="38" height="18" rx="9" fill="#09090b" />
-          <path d="M96 80 L101 86 L105 80 L109 86 L114 80" fill="none" stroke={p.light} strokeWidth="1.8" strokeLinejoin="round" />
+          <path data-fx="jaw" d="M96 80 L101 86 L105 80 L109 86 L114 80" fill="none" stroke={p.light} strokeWidth="1.8" strokeLinejoin="round" style={{ transformOrigin: '105px 80px' }} />
           <text x="62" y="128" textAnchor="middle" fontSize="6" fontFamily="monospace" fontWeight="bold" fill={p.light}>
             0day
           </text>
@@ -877,7 +879,8 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <path d="M54 66 L54 46 Q54 22 80 22 Q106 22 106 46 L106 66" fill="none" stroke="#a1a1aa" strokeWidth="10" strokeLinecap="round" />
+        <path data-fx="shackle" d="M54 66 L54 46 Q54 22 80 22 Q106 22 106 46 L106 66" fill="none" stroke="#a1a1aa" strokeWidth="10" strokeLinecap="round" style={{ transformOrigin: '106px 66px' }} />
+        <g data-fx="note" style={{ transformOrigin: '110px 42px', animation: 'rg-note 2.6s ease-in-out infinite' }}>
         <path d="M106 40 Q122 40 124 52" fill="none" stroke="#a1a1aa" strokeWidth="1" />
         <g transform="translate(126 62) rotate(10)">
           <rect x="-12" y="-9" width="24" height="18" rx="1.5" fill="#fef3c7" />
@@ -887,6 +890,7 @@ const LOOKS: Record<string, Look> = {
           <text x="0" y="6" textAnchor="middle" fontSize="5.5" fontFamily="monospace" fontWeight="bold" fill="#991b1b">
             $$$
           </text>
+        </g>
         </g>
         <rect x="40" y="62" width="80" height="68" rx="12" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <rect x="50" y="80" width="60" height="20" rx="9" fill="#09090b" />
@@ -917,8 +921,10 @@ const LOOKS: Record<string, Look> = {
         <path d="M80 22 Q120 28 122 80 Q120 106 80 112 Q40 106 38 80 Q40 28 80 22 Z" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.8" />
         <ellipse cx="80" cy="84" rx="25" ry="22" fill="#020202" />
         <path d="M66 96 h6 M76 96 h10 M90 96 h4" stroke={p.light} strokeOpacity="0.5" strokeWidth="1.5" />
-        <path d="M120 112 L136 128 L132 132 L116 116 Z" fill="#a1a1aa" />
-        <rect x="112" y="108" width="8" height="8" rx="1" transform="rotate(45 116 112)" fill="#3f3f46" />
+        <g data-fx="dagger" style={{ transformOrigin: '118px 114px' }}>
+          <path d="M120 112 L136 128 L132 132 L116 116 Z" fill="#a1a1aa" />
+          <rect x="112" y="108" width="8" height="8" rx="1" transform="rotate(45 116 112)" fill="#3f3f46" />
+        </g>
       </>
     ),
   },
@@ -937,7 +943,7 @@ const LOOKS: Record<string, Look> = {
     body: (p, ids) => (
       <>
         {[-1, 1].map((d) => (
-          <g key={d}>
+          <g key={d} data-fx="head" style={{ ['--d' as string]: d, transformOrigin: `${80 + d * 12}px 128px`, animation: `hy-sway 2.8s ease-in-out ${d > 0 ? -1.4 : 0}s infinite` }}>
             <path d={`M${80 + d * 12} 128 Q${80 + d * 36} 112 ${80 + d * 44} 70`} fill="none" stroke={p.dark} strokeWidth="12" strokeLinecap="round" />
             <path d={`M${80 + d * 12} 128 Q${80 + d * 36} 112 ${80 + d * 44} 70`} fill="none" stroke={p.main} strokeWidth="2" strokeOpacity="0.6" strokeDasharray="4 5" />
             <ellipse cx={80 + d * 46} cy="60" rx="16" ry="13" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="1.5" />

@@ -7,11 +7,13 @@ import { WARMUP } from './warmup';
 import { BOSSES } from './bosses';
 import { FLOOR1 } from './floor1';
 import { FLOOR2 } from './floor2';
+import { FLOOR3 } from './floor3';
 
 export const MOVES: Record<string, MoveSet> = {
   ...WARMUP,
   ...FLOOR1,
   ...FLOOR2,
+  ...FLOOR3,
   ...BOSSES,
   [LORD]: lordMoves,
 };

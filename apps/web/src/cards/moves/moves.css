@@ -766,3 +766,203 @@
 .bot-die-abuser [data-fx='key'] { animation: abuser-key 2s ease-in forwards; }
 .bot-die-abuser [data-fx='brace'] { animation: abuser-brace 2s ease-in forwards !important; transform-origin: 80px 80px; }
 .bot-die-abuser [data-fx='revoked'] { animation: abuser-401 2s ease-out forwards; transform-box: fill-box; transform-origin: center; }
+
+/* ---------------------------------------------------------------- floor 3 (floor3.tsx) */
+/* Botnet Camera IoT: pans like a security camera on its mount */
+@keyframes iot-pan {
+  0%, 15%, 100% { transform: rotate(-5deg); }
+  45%, 60% { transform: rotate(4deg); }
+}
+/* defeat: NO SIGNAL test card, the LEDs die, it droops on its mount */
+@keyframes iot-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes iot-bars {
+  0%, 10% { opacity: 0; }
+  14% { opacity: 1; }
+  17% { opacity: 0.3; }
+  20%, 70% { opacity: 1; }
+  80%, 100% { opacity: 0; }
+}
+@keyframes iot-droop {
+  0%, 45% { transform: none; filter: none; }
+  60% { transform: rotate(26deg); animation-timing-function: ease-out; }
+  66% { transform: rotate(20deg); }
+  72%, 100% { transform: rotate(24deg); filter: grayscale(1) brightness(0.6); }
+}
+.bot-die-iot { animation: iot-die 2.2s linear forwards; }
+.bot-die-iot [data-fx='core'] { animation: iot-droop 2.2s ease-in forwards !important; transform-origin: 119px 40px !important; }
+.bot-die-iot [data-fx='bars'] { animation: iot-bars 2.2s linear forwards; }
+.bot-die-iot [data-fx='led'],
+.bot-die-iot [data-fx='rec'] { animation: farm-off 100ms steps(2) calc(0.5s + var(--i, 0) * 80ms) forwards !important; }
+
+/* Khuếch Đại DNS: a kick with every shout */
+@keyframes amp-kick {
+  0%, 60%, 100% { transform: none; }
+  64% { transform: translateX(-4px) rotate(-3deg) scale(1.03); }
+  72% { transform: translateX(1px) rotate(1deg); }
+  80% { transform: none; }
+}
+/* defeat: the waves die, it deflates and tips down, ×0 */
+@keyframes amp-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes amp-deflate {
+  0%, 20% { transform: none; filter: none; }
+  30% { transform: scale(1.06); }
+  60% { transform: translateY(10px) rotate(24deg) scale(0.9, 0.7); }
+  100% { transform: translateY(16px) rotate(30deg) scale(0.86, 0.6); filter: grayscale(1) brightness(0.6); }
+}
+@keyframes amp-waves {
+  0%, 15% { opacity: 1; transform: none; }
+  40%, 100% { opacity: 0; transform: translateX(-10px) scale(0.4); }
+}
+@keyframes amp-mute {
+  0%, 40% { opacity: 0; transform: translateY(6px); }
+  55%, 90% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+.bot-die-amp { animation: amp-die 2s linear forwards; }
+.bot-die-amp [data-fx='core'] { animation: amp-deflate 2s ease-in forwards !important; transform-origin: 60px 120px !important; }
+.bot-die-amp [data-fx='waves'] { animation: amp-waves 2s ease-out forwards; transform-origin: 134px 80px; }
+.bot-die-amp [data-fx='waves'] * { animation: none !important; }
+.bot-die-amp [data-fx='mute'] { animation: amp-mute 2s ease-out forwards; }
+
+/* Sâu Zero-day: inches along, a wave running through its segments */
+@keyframes wm-inch {
+  0%, 100% { transform: scaleX(1) translateX(0); }
+  40% { transform: scaleX(0.94) scaleY(1.04) translateX(2px); }
+  70% { transform: scaleX(1.02) translateX(-2px); }
+}
+@keyframes wm-seg {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+/* defeat: it falls apart, tail first, one segment at a time */
+@keyframes worm-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes worm-seg {
+  0% { transform: none; opacity: 1; }
+  30% { transform: translateY(-6px); }
+  100% { transform: translate(calc(var(--i) * 3px), 30px) rotate(calc(var(--i) * 25deg)) scale(0.6); opacity: 0; filter: grayscale(1); }
+}
+@keyframes worm-head {
+  0%, 55% { transform: none; filter: none; }
+  75% { transform: translate(-6px, 30px) rotate(-30deg); animation-timing-function: ease-out; }
+  82% { transform: translate(-6px, 24px) rotate(-26deg); }
+  90%, 100% { transform: translate(-6px, 30px) rotate(-30deg); filter: grayscale(1); }
+}
+.bot-die-worm { animation: worm-die 2.2s linear forwards; }
+.bot-die-worm [data-fx='seg'] { animation: worm-seg 0.6s ease-in calc((7 - var(--i)) * 0.15s) forwards !important; }
+.bot-die-worm [data-fx='core'] { animation: worm-head 2.2s ease-in forwards !important; transform-origin: 105px 88px !important; }
+
+/* Băng Tống Tiền: rattles as if someone keeps trying it; the note flutters */
+@keyframes rg-rattle {
+  0%, 55%, 100% { transform: none; }
+  60%, 70%, 80% { transform: translateX(-2px) rotate(-2deg); }
+  65%, 75%, 85% { transform: translateX(2px) rotate(2deg); }
+  90% { transform: none; }
+}
+@keyframes rg-note {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-6deg); }
+}
+/* defeat: decrypted: the key turns, the shackle springs open, the note flies away */
+@keyframes ransom-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ransom-key {
+  0% { opacity: 0; transform: translate(-90px, 0); }
+  10% { opacity: 1; }
+  28% { opacity: 1; transform: translate(0, 0); }
+  36%, 60% { opacity: 1; transform: translate(0, 0) rotate(90deg); transform-origin: 80px 114px; }
+  75%, 100% { opacity: 0; transform: translate(0, 0) rotate(90deg); transform-origin: 80px 114px; }
+}
+@keyframes ransom-shackle {
+  0%, 36% { transform: none; }
+  44% { transform: translateY(-16px); }
+  52%, 100% { transform: translateY(-16px) rotate(36deg); }
+}
+@keyframes ransom-note {
+  0%, 40% { transform: none; opacity: 1; }
+  100% { transform: translate(40px, -80px) rotate(160deg); opacity: 0; }
+}
+@keyframes ransom-body {
+  0%, 50% { transform: none; filter: none; }
+  70%, 100% { transform: translateY(6px) scale(1.02, 0.94); filter: grayscale(0.8) brightness(0.8); }
+}
+.bot-die-ransom { animation: ransom-die 2.3s linear forwards; }
+.bot-die-ransom [data-fx='core'] { animation: ransom-body 2.3s ease-in forwards !important; transform-origin: 80px 130px !important; }
+.bot-die-ransom [data-fx='shackle'] { animation: ransom-shackle 2.3s ease-out forwards; }
+.bot-die-ransom [data-fx='note'] { animation: ransom-note 2.3s ease-in forwards !important; }
+.bot-die-ransom [data-fx='dkey'] { animation: ransom-key 2.3s ease-out forwards; }
+
+/* Nhóm APT: lurks, flickering in and out of sight */
+@keyframes apt-lurk {
+  0%, 100% { transform: translateX(0) rotate(0deg); opacity: 1; }
+  30% { transform: translateX(-3px) rotate(-1.5deg); opacity: 0.7; }
+  60% { transform: translateX(3px) rotate(1.5deg); opacity: 0.9; }
+  80% { opacity: 0.6; }
+}
+/* defeat: dissolves into smoke; only the dagger is left, clattering down */
+@keyframes apt-die {
+  0%, 90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes apt-dissolve {
+  0%, 15% { opacity: 1; filter: blur(0); transform: none; }
+  60% { opacity: 0.3; filter: blur(5px); transform: translateY(-8px) scale(1.06); }
+  80%, 100% { opacity: 0; filter: blur(10px); transform: translateY(-16px) scale(1.12); }
+}
+@keyframes apt-smoke {
+  0%, 15% { opacity: 0; transform: none; }
+  30% { opacity: 0.8; transform: translate(calc(var(--dx) * 0.3), calc(var(--dy) * 0.3)) scale(1.2); }
+  100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(2.6); }
+}
+@keyframes apt-dagger {
+  0%, 35% { transform: none; }
+  55% { transform: translate(-10px, 22px) rotate(-150deg); animation-timing-function: ease-out; }
+  62% { transform: translate(-12px, 16px) rotate(-170deg); animation-timing-function: ease-in; }
+  70%, 100% { transform: translate(-14px, 22px) rotate(-180deg); }
+}
+.bot-die-apt { animation: apt-die 2.3s linear forwards; }
+.bot-die-apt [data-fx='core'] > :not([data-fx='dagger']),
+.bot-die-apt [data-fx='core'] ~ * { animation: apt-dissolve 2.3s ease-out forwards !important; }
+.bot-die-apt [data-fx='dagger'] { animation: apt-dagger 2.3s linear forwards; }
+.bot-die-apt [data-fx='smoke'] { animation: apt-smoke 2.3s ease-out forwards; }
+
+/* Botnet Hydra: the coil sways, each side head on its own rhythm */
+@keyframes hy-coil {
+  0%, 100% { transform: rotate(-2deg) scaleY(1); }
+  50% { transform: rotate(2deg) scaleY(1.03); }
+}
+@keyframes hy-sway {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(calc(var(--d) * 7deg)); }
+}
+/* defeat: the heads droop one by one, then the middle one sinks */
+@keyframes hydra-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes hydra-head {
+  0% { transform: none; }
+  60% { transform: rotate(calc(var(--d) * 70deg)) translateY(10px); animation-timing-function: ease-out; }
+  75% { transform: rotate(calc(var(--d) * 62deg)) translateY(8px); }
+  100% { transform: rotate(calc(var(--d) * 70deg)) translateY(10px); filter: grayscale(1); }
+}
+@keyframes hydra-sink {
+  0%, 55% { transform: none; filter: none; }
+  80% { transform: translateY(18px) rotate(-8deg) scale(0.96, 0.84); }
+  100% { transform: translateY(20px) rotate(-10deg) scale(0.96, 0.8); filter: grayscale(1) brightness(0.7); }
+}
+.bot-die-hydra { animation: hydra-die 2.3s linear forwards; }
+.bot-die-hydra [data-fx='head'] { animation: hydra-head 0.8s ease-in forwards !important; }
+.bot-die-hydra [data-fx='head']:first-of-type { animation-delay: 0.2s !important; }
+.bot-die-hydra [data-fx='head'] + [data-fx='head'] { animation-delay: 0.6s !important; }
+.bot-die-hydra [data-fx='core'] { animation: hydra-sink 2.3s ease-in forwards !important; transform-origin: 80px 136px !important; }
