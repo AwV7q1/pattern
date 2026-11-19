@@ -13,6 +13,8 @@ import type { Content, MapNode, NodeKind, TowerMap } from './types';
 
 /** First row where elites and rest stops may appear. */
 export const ELITE_ROW = 3;
+/** First row where shops may appear. */
+export const SHOP_ROW = 2;
 
 export function generateMap(content: Content, seed: number, act: number): TowerMap {
   const { rows, width, paths, weights } = content.run.map;
@@ -54,28 +56,32 @@ export function generateMap(content: Content, seed: number, act: number): TowerM
   for (const [from, tos] of next) for (const to of tos) parents.set(to, [...(parents.get(to) ?? []), from]);
 
   const kinds = new Map<number, NodeKind>();
-  const total = weights.battle + weights.event + weights.elite + weights.rest;
+  const dealt = ['battle', 'event', 'elite', 'rest', 'shop'] as const;
+  const total = dealt.reduce((sum, k) => sum + (weights[k] ?? 0), 0);
   const deal = (): NodeKind => {
     let r = nextRandom(rng) * total;
-    for (const k of ['battle', 'event', 'elite', 'rest'] as const) if ((r -= weights[k]) < 0) return k;
+    for (const k of dealt) if ((r -= weights[k] ?? 0) < 0) return k;
     return 'battle';
   };
   const sorted = [...ids].sort((a, b) => a - b);
   for (const n of sorted) {
     const row = Math.floor(n / width);
     let kind: NodeKind = row === 0 ? 'battle' : row === rows - 1 ? 'rest' : deal();
-    const special = kind === 'elite' || kind === 'rest';
-    // no elites or rests early, none twice in a row, and no rest right before the rest row
-    if (row > 0 && row < rows - 1 && special && (row < ELITE_ROW || (kind === 'rest' && row === rows - 2) || (parents.get(n) ?? []).some((p) => kinds.get(p) === kind)))
+    const special = kind === 'elite' || kind === 'rest' || kind === 'shop';
+    // no elites, rests or shops early, none twice in a row, and no rest right before the rest row
+    const early = kind === 'shop' ? row < SHOP_ROW : row < ELITE_ROW;
+    if (row > 0 && row < rows - 1 && special && (early || (kind === 'rest' && row === rows - 2) || (parents.get(n) ?? []).some((p) => kinds.get(p) === kind)))
       kind = 'battle';
     kinds.set(n, kind);
   }
-  if (![...kinds.values()].includes('elite')) {
+  // every floor has at least one elite and one shop
+  for (const [kind, from] of [['elite', ELITE_ROW], ['shop', SHOP_ROW]] as const) {
+    if ([...kinds.values()].includes(kind)) continue;
     const spots = sorted.filter((n) => {
       const row = Math.floor(n / width);
-      return kinds.get(n) === 'battle' && row >= ELITE_ROW && row < rows - 1;
+      return kinds.get(n) === 'battle' && row >= from && row < rows - 1 && !(parents.get(n) ?? []).some((p) => kinds.get(p) === kind);
     });
-    if (spots.length) kinds.set(spots[rand(spots.length)], 'elite');
+    if (spots.length) kinds.set(spots[rand(spots.length)], kind);
   }
 
   const nodes: MapNode[] = sorted.map((n) => ({

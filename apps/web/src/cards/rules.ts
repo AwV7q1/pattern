@@ -63,12 +63,38 @@ export function enemyDef(content: Content, state: BattleState): EnemyDef {
   return def;
 }
 
+/** Intents the enemy draws from now (a boss's second phase has its own). */
+export function intentsNow(content: Content, state: BattleState): Intent[] {
+  const def = enemyDef(content, state);
+  return state.enemy.phase === 2 && def.phase2 ? def.phase2.intents : def.intents;
+}
+
 /** The attacker's plan for the current turn, with escalation per loop. */
 export function currentIntent(content: Content, state: BattleState): Intent {
   const def = enemyDef(content, state);
-  const loop = Math.floor(state.enemy.step / def.intents.length);
-  const base = def.intents[state.enemy.step % def.intents.length];
+  const list = intentsNow(content, state);
+  const loop = Math.floor(state.enemy.step / list.length);
+  const base = def.pattern === 'weighted' ? list[state.enemy.pick ?? 0] : list[state.enemy.step % list.length];
   return { ...base, botRps: Math.round(base.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
+}
+
+/** Real users' traffic this fight (a boss passive can raise it). */
+export function legitRpsNow(content: Content, state: BattleState): number {
+  return Math.round(content.battle.legitRps * (enemyDef(content, state).passive?.legitRpsMul ?? 1));
+}
+
+/** weighted enemies: draw this turn's intent, never the same one three turns running. */
+function pickIntent(content: Content, state: BattleState) {
+  if (enemyDef(content, state).pattern !== 'weighted') return;
+  const list = intentsNow(content, state);
+  const recent = state.enemy.recent ?? [];
+  const banned = recent.length >= 2 && recent.at(-1) === recent.at(-2) ? recent.at(-1) : undefined;
+  const options = list.map((it, i) => ({ i, w: i === banned ? 0 : (it.weight ?? 1) }));
+  const total = options.reduce((sum, o) => sum + o.w, 0);
+  let roll = nextRandom(state) * total;
+  const pick = options.find((o) => o.w > 0 && (roll -= o.w) < 0)?.i ?? [...options].reverse().find((o) => o.w > 0)!.i;
+  state.enemy.pick = pick;
+  state.enemy.recent = [...recent, pick].slice(-2);
 }
 
 /** A weaker botnet sends less traffic: 60% at 0 HP, 100% at full HP. */
@@ -159,6 +185,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
   const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));
   state.drawPile = shuffle(state, deck);
   draw(state, b.handSize);
+  pickIntent(content, state);
   fireRelics(content, state, 'battleStart');
   fireRelics(content, state, 'turnStart');
   if (state.enemy.hp <= 0) state.phase = 'won';
@@ -291,9 +318,14 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
     const cache = nodeOf(design, 'cache');
     if (cache && intent.cacheHitScale !== undefined) cache.config!.hitRate = (cache.config!.hitRate ?? 0) * intent.cacheHitScale;
   }
+  // a boss passive is not an incident: Hotfix does not cancel it
+  const passive = enemyDef(content, state).passive;
+  const cache = nodeOf(design, 'cache');
+  if (cache && passive?.cacheHitScale !== undefined) cache.config!.hitRate = (cache.config!.hitRate ?? 0) * passive.cacheHitScale;
+  const legitRps = legitRpsNow(content, state);
   return {
     intent,
-    legitRps: b.legitRps,
+    legitRps,
     botRps: raw,
     botBlockedRps: raw - botPassed,
     input: {
@@ -302,7 +334,7 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
         seed: state.seed * 1000 + state.turn,
         durationMs: b.turnMs,
         timeoutMs: 1000,
-        traffic: [{ atMs: 0, rps: b.legitRps + botPassed }],
+        traffic: [{ atMs: 0, rps: legitRps + botPassed }],
         slo: { p99Ms: b.sloP99Ms, errorRate: 0.01 },
         events,
       },
@@ -395,6 +427,18 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   state.played = [];
   state.enemy.step++;
   state.turn++;
+  const def = enemyDef(content, state);
+  if (def.phase2 && state.enemy.phase !== 2 && state.enemy.hp <= def.phase2.at * state.enemy.maxHp) {
+    state.enemy.phase = 2;
+    state.enemy.step = 0;
+    state.enemy.recent = [];
+    report.notes.push(`${def.name} chuyển pha: ${def.phase2.label}`);
+  }
+  if (def.passive?.wafDecay && state.waf > 0) {
+    state.waf = Math.max(0, Math.round((state.waf - def.passive.wafDecay) * 100) / 100);
+    report.notes.push(`${def.passive.label}: WAF còn ${Math.round(state.waf * 100)}%`);
+  }
+  pickIntent(content, state);
   state.ops = b.opsPerTurn;
   draw(state, b.handSize);
   state.phase = 'player';

@@ -2,7 +2,7 @@
 
 Tab **Game → Thẻ bài (beta)**. Một trận đánh theo lượt kiểu deckbuilder roguelike: bạn giữ một hệ thống nhỏ sống sót trước botnet đang spam request. Mỗi lượt bạn đánh bài để đổi kiến trúc, sau đó **engine thật chạy 10 giây traffic** và số liệu mô phỏng quyết định sát thương của cả hai bên.
 
-Đây là prototype bước 0, dùng để thử cảm giác chơi. Chưa có bản đồ, shop, relic hay nhiều trận nối tiếp.
+Chế độ chính là **Tháp On-Call**: leo 3 tầng, mỗi tầng một bản đồ nhiều nhánh có trận thường, tinh anh, sự cố, nghỉ, cửa hàng và trùm ở đỉnh. Cách chơi theo khuôn deckbuilder roguelike (kiểu Slay the Spire): bộ bài đầu nhỏ, mạnh lên nhờ phần thưởng, nâng cấp, relic và cửa hàng.
 
 ## Luật chơi
 
@@ -28,11 +28,38 @@ Mỗi lượt diễn ra như sau:
 
 Thẻ **Hạ tầng** và **Chính sách** giữ tác dụng cả trận, nhưng tốn tiền mỗi giờ. Thẻ **Hành động** chỉ có tác dụng trong lượt đánh ra.
 
+Cạnh nút **Kết thúc lượt** có ô **Dự kiến**: sau mỗi lá đánh ra, engine chạy thử lượt với bài đã đánh và hiện số máu bạn sẽ mất, botnet sẽ mất. `scoreTurn` dùng chung cho dự báo và `resolveTurn`, cùng seed, nên dự báo đúng bằng kết quả thật.
+
 Một số tình huống được dạy qua cơ chế, không cần viết kịch bản:
 - Redis đỡ được spike, nhưng "Truy vấn nặng" né cache.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.
 - Retry flood khuếch đại lỗi.
+
+## Tháp: xây bộ bài
+
+| Cơ chế | Chi tiết |
+|---|---|
+| Bộ bài đầu | 14 lá: 4 Vá nóng, 4 Buffer (lá **Cơ bản**), Scale Out API, Rate limit, Redis, Timeout, Index |
+| Độ hiếm | Cơ bản (không bao giờ được thưởng), Thường, Ít gặp, Hiếm. Phần thưởng bốc theo `run.json` `rarityWeights`; tinh anh nghiêng về Hiếm |
+| Nâng cấp | Điểm nghỉ có 3 lựa chọn: hồi máu, bỏ 1 lá, nâng cấp 1 lá. Lá nâng cấp có id `<id>+`; `cardDef` dựng nó từ trường `upgrade` (giá và/hoặc hiệu ứng mới) |
+| Relic | `data/relics.json`. Kích hoạt lúc bắt đầu trận (`battleStart`), đầu mỗi lượt (`turnStart`), hoặc sau mỗi lá / mỗi lá thứ n của một loại (`cardPlayed`). Hiệu ứng dùng lại các `effects` của lá bài. Tinh anh rơi 1 relic; trùm (trừ trùm cuối) cho chọn 1 trong 3 relic **Trùm** |
+| Vàng | Bắt đầu 40, mỗi trận thắng cộng thêm (thường 16, tinh anh 32, trùm 60, ±5). Một số sự cố cho hoặc lấy vàng |
+| Cửa hàng | Mỗi tầng ít nhất một. Bán 5 lá (giá theo độ hiếm), 2 relic, và dịch vụ bỏ 1 lá (50 vàng, tăng 25 mỗi lần dùng trong run) |
+
+### Trùm
+
+Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế mà địch thường không có:
+
+- **Ý định ngẫu nhiên có trọng số** (`pattern: "weighted"`, `weight` trên từng ý định): không biết trước lượt sau, nhưng không bao giờ lặp một ý định 3 lượt liền.
+- **Pha 2** (`phase2`): khi máu xuống dưới `at` × máu tối đa, từ lượt sau chuyển sang bộ ý định khác.
+- **Nội tại** (`passive`), luôn bật, Hotfix không gỡ được:
+
+| Trùm | Tầng | Nội tại |
+|---|---|---|
+| Kẻ Đầu Độc Cache | 1 | Cache hit luôn ×0.7 |
+| Black Friday | 2 | Người dùng thật ×1.6 |
+| Lãnh Chúa DDoS | 3 | WAF mất 10% mỗi lượt |
 
 ## Cấu trúc code
 
@@ -40,6 +67,9 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
 |---|---|
 | `apps/web/src/cards/data/cards.json` | Định nghĩa lá bài: chi phí, hiệu ứng (`effects`), mô tả, bài học thực tế |
 | `apps/web/src/cards/data/enemies.json` | Địch: máu, chuỗi ý định, mức leo thang mỗi vòng |
+| `apps/web/src/cards/data/relics.json` | Relic: độ hiếm, lúc kích hoạt, hiệu ứng |
+| `apps/web/src/cards/data/run.json` | Tháp: số tầng, bản đồ, hệ số địch, vàng, cửa hàng, tỉ lệ độ hiếm |
+| `apps/web/src/cards/run.ts` | **Luật của tháp**: bản đồ, phần thưởng, nghỉ, sự cố, cửa hàng, relic, lên tầng |
 | `apps/web/src/cards/data/battle.json` | Thiết lập trận: máu, Ops, traffic, SLO, ngân sách, hệ số sát thương, bộ bài đầu, design ban đầu |
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
@@ -52,12 +82,17 @@ Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có s�
 ```bash
 pnpm balance:cards            # 20 trận mỗi chiến thuật (idle, random, greedy)
 pnpm balance:cards 50 --log   # in diễn biến từng lượt
+pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng và nơi bot chết
 ```
 
 Mục tiêu hiện tại cho trận đầu:
 - Không làm gì: thua.
 - Đánh ngẫu nhiên: thắng khoảng 60%, còn ít máu.
 - Đánh có chiến thuật: thắng khoảng 90%, còn khoảng 25–30 máu, trận dài khoảng 7 lượt.
+
+Mục tiêu cho cả tháp (`--run`, 30 run):
+- Đánh ngẫu nhiên: vượt tầng 1 khoảng 50%, vượt cả tháp khoảng 10–15%.
+- Đánh có chiến thuật: vượt tầng 1 gần như chắc chắn, vượt cả tháp khoảng 40%.
 
 Mỗi trận chạy khoảng 0.15s nên có thể sweep tham số thoải mái.
 

@@ -19,7 +19,7 @@
 
 import { canUpgrade, cardDef, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
-import type { BattleSetup, BattleState, Content, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, TowerMap } from './types';
+import type { BattleSetup, BattleState, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
@@ -38,6 +38,9 @@ export function newRun(content: Content, seed: number): RunState {
     deck: [...content.battle.startingDeck],
     reward: [],
     event: null,
+    gold: content.run.startGold,
+    removals: 0,
+    shop: null,
     relics: [],
     relicOffer: [],
     history: [],
@@ -113,7 +116,10 @@ export function chooseNode(content: Content, prev: RunState, id: number): RunSta
   run.path.push(id);
   run.climbed++;
   if (node.kind === 'rest') run.phase = 'rest';
-  else if (node.kind === 'event') {
+  else if (node.kind === 'shop') {
+    run.phase = 'shop';
+    run.shop = stock(content, run);
+  } else if (node.kind === 'event') {
     run.phase = 'event';
     run.event = pickEvent(content, run).id;
   } else run.phase = 'battle';
@@ -198,6 +204,9 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
     run.phase = 'lost';
     return run;
   }
+  const gold = Math.max(0, content.run.gold[node.kind as 'battle' | 'elite' | 'boss'] + Math.floor((nextRandom(run) * 2 - 1) * (content.run.goldJitter + 1)));
+  run.gold += gold;
+  run.history.at(-1)!.gold = gold;
   if (node.kind === 'boss') {
     run.phase = run.act >= content.run.acts ? 'won' : 'cleared';
     if (run.phase === 'cleared') run.relicOffer = bossOffer(content, run);
@@ -267,7 +276,7 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
   if (prev.phase !== 'event' || !event || !opt) return prev;
   if (opt.effects.some((e) => e.op === 'removeCard') && (removeIndex === undefined || !canRemove(content, prev, removeIndex))) return prev;
   const run = clone(prev);
-  const entry = { act: run.act, kind: 'event' as const, enemy: event.id, won: true, turns: 0, hpLost: 0, option: opt.label, added: [] as string[], healed: 0, removed: undefined as string | undefined };
+  const entry: FloorResult & { added: string[]; healed: number } = { act: run.act, kind: 'event', enemy: event.id, won: true, turns: 0, hpLost: 0, option: opt.label, added: [], healed: 0, removed: undefined };
   let pick = false;
   for (const e of opt.effects) {
     if (e.op === 'heal') {
@@ -292,6 +301,10 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
       entry.added.push(id);
     } else if (e.op === 'removeCard') {
       entry.removed = run.deck.splice(removeIndex!, 1)[0];
+    } else if (e.op === 'gold') {
+      const n = Math.max(-run.gold, e.n);
+      run.gold += n;
+      entry.gold = (entry.gold ?? 0) + n;
     } else if (e.op === 'pickCard') pick = true;
   }
   run.history.push(entry);
@@ -301,6 +314,77 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
     run.reward = offer(content, run, content.run.rewardChoices);
   } else run.phase = 'map';
   return run;
+}
+
+// ---------------------------------------------------------------- shop
+
+const jitterPrice = (run: RunState, price: number) => Math.round(price * (0.9 + nextRandom(run) * 0.2));
+
+/** What a shop sells: cards by rarity odds, relics, each with a slightly varied price. */
+function stock(content: Content, run: RunState): ShopStock {
+  const { shop } = content.run;
+  const cards = offer(content, run, shop.cards).map((id) => ({ id, price: jitterPrice(run, shop.cardPrice[(cardDef(content, id).rarity ?? 'common') as keyof typeof shop.cardPrice]) }));
+  const relics: ShopStock['relics'] = [];
+  for (let i = 0; i < shop.relics; i++) {
+    const probe = { ...run, relics: [...run.relics, ...relics.map((r) => r.id)] };
+    const id = rollRelic(content, probe);
+    run.rng = probe.rng;
+    if (id) relics.push({ id, price: jitterPrice(run, shop.relicPrice[content.relics.find((r) => r.id === id)!.rarity as keyof typeof shop.relicPrice]) });
+  }
+  return { cards, relics, removed: false };
+}
+
+/** Price of the card removal service at this point of the run. */
+export const removePriceOf = (content: Content, run: RunState) => content.run.shop.removePrice + content.run.shop.removeStep * run.removals;
+
+/** Buy a card or a relic of the shop (by its index in the stock). */
+export function buy(content: Content, prev: RunState, item: { card: number } | { relic: number }): RunState {
+  if (prev.phase !== 'shop' || !prev.shop) return prev;
+  const slot = 'card' in item ? prev.shop.cards[item.card] : prev.shop.relics[item.relic];
+  if (!slot || slot.sold || slot.price > prev.gold) return prev;
+  const run = clone(prev);
+  const shop = run.shop!;
+  const bought = 'card' in item ? shop.cards[item.card] : shop.relics[item.relic];
+  bought.sold = true;
+  run.gold -= bought.price;
+  if ('card' in item) run.deck.push(bought.id);
+  else gainRelic(content, run, bought.id);
+  shopEntry(run).bought!.push(bought.id);
+  shopEntry(run).gold! -= bought.price;
+  return run;
+}
+
+/** Remove a card of the deck (by index), once per shop. */
+export function shopRemove(content: Content, prev: RunState, index: number): RunState {
+  if (prev.phase !== 'shop' || !prev.shop || prev.shop.removed) return prev;
+  const price = removePriceOf(content, prev);
+  if (price > prev.gold || !canRemove(content, prev, index)) return prev;
+  const run = clone(prev);
+  run.gold -= price;
+  run.removals++;
+  run.shop!.removed = true;
+  const entry = shopEntry(run);
+  entry.removed = run.deck.splice(index, 1)[0];
+  entry.gold! -= price;
+  return run;
+}
+
+export function leaveShop(_content: Content, prev: RunState): RunState {
+  if (prev.phase !== 'shop') return prev;
+  const run = clone(prev);
+  shopEntry(run);
+  run.shop = null;
+  run.phase = 'map';
+  return run;
+}
+
+/** The history entry of the shop the player stands in (created on the first purchase). */
+function shopEntry(run: RunState): FloorResult {
+  const last = run.history.at(-1);
+  if (last?.kind === 'shop' && last.node === run.node && last.act === run.act) return last;
+  const entry: FloorResult = { act: run.act, kind: 'shop', enemy: '', won: true, turns: 0, hpLost: 0, node: run.node ?? undefined, gold: 0, bought: [] };
+  run.history.push(entry);
+  return entry;
 }
 
 /** After a boss: take one of the offered boss relics (or none) and climb to the next floor, healing a share of max HP. */
@@ -344,11 +428,14 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
       r.act >= 1 &&
       r.act <= content.run.acts &&
       Number.isInteger(r.climbed) &&
-      ['map', 'battle', 'reward', 'rest', 'event', 'cleared', 'won', 'lost'].includes(r.phase) &&
+      ['map', 'battle', 'reward', 'rest', 'event', 'shop', 'cleared', 'won', 'lost'].includes(r.phase) &&
       Array.isArray(r.deck) &&
       r.deck.every(isCard) &&
       Array.isArray(r.reward) &&
       r.reward.every(isCard) &&
+      Number.isInteger(r.gold) &&
+      Number.isInteger(r.removals) &&
+      (r.shop === null || (typeof r.shop === 'object' && r.shop.cards.every((c) => isCard(c.id)) && r.shop.relics.every((x) => isRelic(x.id)))) &&
       Array.isArray(r.relics) &&
       r.relics.every(isRelic) &&
       Array.isArray(r.relicOffer) &&
@@ -366,6 +453,7 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
   const kind = mapNode(map, r.node)?.kind;
   if (r.phase === 'battle' && kind !== 'battle' && kind !== 'elite' && kind !== 'boss') return false;
   if (r.phase === 'rest' && kind !== 'rest') return false;
+  if (r.phase === 'shop' && (kind !== 'shop' || !r.shop)) return false;
   if (r.phase === 'event' && !content.events.some((e) => e.id === r.event)) return false;
   if ((r.phase === 'cleared' || r.phase === 'won') && kind !== 'boss') return false;
   return true;

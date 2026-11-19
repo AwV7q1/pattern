@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { CircleHelp, Coffee, Crown, Skull, Swords } from 'lucide-react';
+import { CircleHelp, Coffee, Crown, Skull, Store, Swords } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Content, NodeKind, RunState } from './types';
@@ -7,9 +7,10 @@ import { bossOf, reachable, towerMap } from './run';
 
 export const NODE_INFO: Record<NodeKind, { icon: LucideIcon; label: string; tone: string }> = {
   battle: { icon: Swords, label: 'Trận thường', tone: 'text-sky-200 border-sky-300/50 bg-sky-500/10' },
-  elite: { icon: Skull, label: 'Tinh anh: địch mạnh hơn, thưởng thêm 1 lựa chọn và máu tối đa', tone: 'text-rose-200 border-rose-400/60 bg-rose-500/15' },
-  rest: { icon: Coffee, label: 'Nghỉ: hồi máu hoặc bỏ bớt lá', tone: 'text-emerald-200 border-emerald-300/50 bg-emerald-500/10' },
+  elite: { icon: Skull, label: 'Tinh anh: địch mạnh hơn, thưởng relic, thêm 1 lựa chọn và máu tối đa', tone: 'text-rose-200 border-rose-400/60 bg-rose-500/15' },
+  rest: { icon: Coffee, label: 'Nghỉ: hồi máu, bỏ bớt hoặc nâng cấp lá', tone: 'text-emerald-200 border-emerald-300/50 bg-emerald-500/10' },
   event: { icon: CircleHelp, label: 'Sự cố: một lựa chọn bất ngờ', tone: 'text-violet-200 border-violet-300/50 bg-violet-500/10' },
+  shop: { icon: Store, label: 'Cửa hàng: mua lá, relic, bỏ bớt lá bằng vàng', tone: 'text-yellow-200 border-yellow-300/60 bg-yellow-500/10' },
   boss: { icon: Crown, label: 'Trùm của tầng', tone: 'text-amber-200 border-amber-300/70 bg-amber-400/15' },
 };
 
@@ -60,7 +61,7 @@ export function TowerMap({ content, run, onChoose }: { content: Content; run: Ru
         </p>
       </div>
       <ul className="flex flex-wrap justify-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-        {(['battle', 'elite', 'event', 'rest', 'boss'] as const).map((k) => {
+        {(['battle', 'elite', 'event', 'rest', 'shop', 'boss'] as const).map((k) => {
           const Icon = NODE_INFO[k].icon;
           return (
             <li key={k} className="flex items-center gap-1" title={NODE_INFO[k].label}>

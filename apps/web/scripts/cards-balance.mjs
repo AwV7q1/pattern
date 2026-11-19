@@ -106,6 +106,22 @@ function playRun(policy, seed) {
       const ev = runs.currentEvent(content, run);
       const i = ev.options.findIndex((o) => !o.effects.some((e) => e.op === 'removeCard'));
       run = runs.chooseEvent(content, run, i);
+    } else if (run.phase === 'shop') {
+      // greedy: relics first, then wanted cards, then a Tech Debt removal; random: one random affordable thing
+      if (policy === 'greedy') {
+        let i;
+        while ((i = run.shop.relics.findIndex((r) => !r.sold && r.price <= run.gold)) >= 0) run = runs.buy(content, run, { relic: i });
+        for (const id of WANT) {
+          const k = run.shop.cards.findIndex((c) => c.id === id && !c.sold && c.price <= run.gold);
+          if (k >= 0) run = runs.buy(content, run, { card: k });
+        }
+        const debt = run.deck.indexOf('tech_debt');
+        if (debt >= 0) run = runs.shopRemove(content, run, debt);
+      } else if (policy === 'random') {
+        const k = run.shop.cards.findIndex((c) => c.price <= run.gold);
+        if (k >= 0) run = runs.buy(content, run, { card: k });
+      }
+      run = runs.leaveShop(content, run);
     } else if (run.phase === 'cleared') run = runs.nextAct(content, run, policy === 'idle' ? null : (run.relicOffer[0] ?? null));
   }
   return run;
@@ -118,9 +134,12 @@ if (runMode) {
     let actSum = 0;
     const cleared = Array(content.run.acts).fill(0);
     const stat = Object.fromEntries(kinds.map((k) => [k, { n: 0, won: 0, hp: 0 }]));
+    const deaths = {};
     for (let seed = 1; seed <= fights; seed++) {
       const run = playRun(policy, seed);
       if (run.phase === 'won') wins++;
+      const end = run.history.at(-1);
+      if (run.phase === 'lost' && end) deaths[`${end.kind}@T${end.act}`] = (deaths[`${end.kind}@T${end.act}`] ?? 0) + 1;
       actSum += run.act;
       for (const h of run.history) {
         if (h.kind === 'boss' && h.won) cleared[h.act - 1]++;
@@ -133,7 +152,8 @@ if (runMode) {
     const pct = (x) => `${String(Math.round((x / fights) * 100)).padStart(3)}%`;
     const acts = cleared.map((c, i) => `T${i + 1} ${pct(c)}`).join(' ');
     const per = kinds.map((k) => `${k} ${stat[k].n ? Math.round((stat[k].won / stat[k].n) * 100) : '-'}%/-${stat[k].n ? (stat[k].hp / stat[k].n).toFixed(0) : '-'}hp`).join('  ');
-    console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}`);
+    const died = Object.entries(deaths).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ');
+    console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}${died ? `   chết: ${died}` : ''}`);
   }
   process.exit(0);
 }

@@ -82,6 +82,8 @@ export interface Intent {
   /** Curse cards shuffled into the discard pile after the turn. */
   addCards?: { card: string; n: number };
   heal?: number;
+  /** weighted enemies: odds of this intent (default 1). */
+  weight?: number;
 }
 
 export interface EnemyDef {
@@ -92,6 +94,21 @@ export interface EnemyDef {
   /** Played in order, then repeated with `escalation` more traffic per loop. */
   intents: Intent[];
   escalation: number;
+  /** cycle (default): intents in order. weighted: drawn by `weight`, never the same one 3 turns running. */
+  pattern?: 'cycle' | 'weighted';
+  /** Below `at` × max HP, the next turn switches to these intents (bosses). */
+  phase2?: { at: number; label: string; text: string; intents: Intent[] };
+  /** Always on for the whole fight (bosses). */
+  passive?: {
+    label: string;
+    text: string;
+    /** WAF loses this much each turn. */
+    wafDecay?: number;
+    /** Real users' traffic multiplier. */
+    legitRpsMul?: number;
+    /** Cache hit rate multiplier, every turn (stacks with intents). */
+    cacheHitScale?: number;
+  };
 }
 
 export interface BattleConfig {
@@ -163,7 +180,7 @@ export interface BattleSetup {
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
 
-export type NodeKind = 'battle' | 'elite' | 'rest' | 'event' | 'boss';
+export type NodeKind = 'battle' | 'elite' | 'rest' | 'event' | 'shop' | 'boss';
 
 export interface MapNode {
   id: number;
@@ -194,6 +211,20 @@ export interface RunConfig {
   hp: number;
   /** Cards offered after each won fight (pick one or skip); elites offer one more. */
   rewardChoices: number;
+  /** Gold at the start of a run, and won per fight (± `goldJitter`). */
+  startGold: number;
+  gold: { battle: number; elite: number; boss: number };
+  goldJitter: number;
+  shop: {
+    /** Cards for sale, and their price by rarity. */
+    cards: number;
+    cardPrice: Record<'common' | 'uncommon' | 'rare', number>;
+    relics: number;
+    relicPrice: Record<'common' | 'uncommon' | 'rare', number>;
+    /** Removing a card: first price, then this much more each time in the run. */
+    removePrice: number;
+    removeStep: number;
+  };
   /** Odds of each rarity of the relic an elite drops. */
   relicWeights: Record<'common' | 'uncommon' | 'rare', number>;
   /** Boss relics offered after each boss but the last. */
@@ -204,7 +235,7 @@ export interface RunConfig {
   restHeal: number;
   /** Share of max HP restored when climbing to the next floor. */
   actHeal: number;
-  map: { rows: number; width: number; paths: number; weights: Record<'battle' | 'event' | 'elite' | 'rest', number> };
+  map: { rows: number; width: number; paths: number; weights: Record<'battle' | 'event' | 'elite' | 'rest' | 'shop', number> };
   /** Enemies met in normal and elite fights. */
   normal: string[];
   /** Boss of each floor, in order (wraps around). */
@@ -223,6 +254,7 @@ export type EventEffect =
   | { op: 'maxHp'; n: number }
   | { op: 'addCard'; card: string }
   | { op: 'randomCard' }
+  | { op: 'gold'; n: number }
   | { op: 'pickCard' }
   | { op: 'removeCard' };
 
@@ -233,7 +265,14 @@ export interface RunEvent {
   options: { label: string; effects: EventEffect[] }[];
 }
 
-export type RunPhase = 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'cleared' | 'won' | 'lost';
+export type RunPhase = 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'shop' | 'cleared' | 'won' | 'lost';
+
+export interface ShopStock {
+  cards: { id: string; price: number; sold?: boolean }[];
+  relics: { id: string; price: number; sold?: boolean }[];
+  /** Whether the card removal service was used here (once per shop). */
+  removed: boolean;
+}
 
 export type RestChoice = { heal: true } | { remove: number } | { upgrade: number };
 
@@ -248,6 +287,12 @@ export interface FloorResult {
   /** Card taken after the fight (null: skipped), or removed / healed at a rest. */
   picked?: string | null;
   removed?: string;
+  /** Map node (shops: so purchases in one shop share an entry). */
+  node?: number;
+  /** Gold won (fights, events) or spent (shops). */
+  gold?: number;
+  /** Shop purchases. */
+  bought?: string[];
   /** Relic taken (elite drop, boss pick). */
   relic?: string;
   /** Card upgraded at a rest (its base id). */
@@ -279,6 +324,11 @@ export interface RunState {
   reward: string[];
   /** Event shown in the `event` phase. */
   event: string | null;
+  gold: number;
+  /** Cards removed at shops so far (each removal costs more). */
+  removals: number;
+  /** Stock of the shop the player stands in (`shop` phase). */
+  shop: ShopStock | null;
   /** Relics held (ids), in the order they were taken. */
   relics: string[];
   /** Boss relics offered in the `cleared` phase (pick one when climbing). */
@@ -331,7 +381,19 @@ export interface BattleState {
   design: Design;
   waf: number;
   temp: { api: number; db: number; botCut: number; hotfix: boolean };
-  enemy: { id: string; hp: number; maxHp: number; step: number; /** Traffic multiplier (default 1). */ rps?: number };
+  enemy: {
+    id: string;
+    hp: number;
+    maxHp: number;
+    step: number;
+    /** Traffic multiplier (default 1). */
+    rps?: number;
+    /** Set once a boss has switched to its second phase. */
+    phase?: 2;
+    /** weighted enemies: index of this turn's intent, and the ones before (newest last). */
+    pick?: number;
+    recent?: number[];
+  };
   /** Cards played this turn (for the log). */
   played: string[];
   reports: TurnReport[];

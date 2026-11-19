@@ -36,7 +36,7 @@ import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import type { Design, WindowMetrics } from '@/types';
-import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
+import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, intentsNow, legitRpsNow, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
 import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
@@ -595,7 +595,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
             <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
               {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
-              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} usersRef={usersRef} attacking={resolving} />
+              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={intentsNow(CONTENT, state)} intent={intent} botRef={botRef} usersRef={usersRef} attacking={resolving} />
                 <HpBar
                   icon={<Skull />}
                   label={enemy.name}
@@ -959,20 +959,21 @@ function intentEffects(intent: Intent): { icon: typeof Zap; text: string; tone: 
   return out;
 }
 
-/** The botnet's intent cycle: done (dim), now (lit), coming (outlined). */
-function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
+/** The botnet's intent cycle: done (dim), now (lit), coming (outlined). Weighted enemies: the pool, this turn's lit. */
+function IntentTrack({ intents, step, pick }: { intents: Intent[]; step: number; pick?: number }) {
   const n = intents.length;
-  const at = step % n;
+  const weighted = pick !== undefined;
+  const at = weighted ? pick : step % n;
   return (
     <div className="flex items-center justify-center gap-1" aria-label="Chu kỳ ý định của botnet">
       {intents.map((it, i) => {
         const I = INTENT_ICON[it.icon];
         const now = i === at;
-        const past = i < at;
+        const past = !weighted && i < at;
         return (
           <span
             key={it.id}
-            title={`${now ? 'Lượt này' : i === (at + 1) % n ? 'Lượt sau' : past ? 'Đã qua' : 'Sắp tới'}: ${it.label}`}
+            title={`${now ? 'Lượt này' : weighted ? 'Có thể xảy ra' : i === (at + 1) % n ? 'Lượt sau' : past ? 'Đã qua' : 'Sắp tới'}: ${it.label}`}
             className={cn(
               'flex size-8 items-center justify-center rounded-full border transition-colors [&_svg]:size-4.5',
               now
@@ -986,7 +987,32 @@ function IntentTrack({ intents, step }: { intents: Intent[]; step: number }) {
           </span>
         );
       })}
+      {weighted && <span className="ml-1 text-[10px] text-muted-foreground">ngẫu nhiên</span>}
       {step >= n && <span className="ml-1 font-mono text-xs text-rose-300">vòng {Math.floor(step / n) + 1}</span>}
+    </div>
+  );
+}
+
+/** A boss's passive and phase, as small badges under its intents. */
+function BossTraits({ state }: { state: BattleState }) {
+  const def = CONTENT.enemies.find((e) => e.id === state.enemy.id);
+  if (!def?.passive && !def?.phase2) return null;
+  const phase2 = state.enemy.phase === 2;
+  return (
+    <div className="flex flex-wrap justify-center gap-1.5 text-[11px]">
+      {def.passive && (
+        <span className="rounded-full border border-violet-400/50 bg-violet-500/15 px-2 py-0.5 text-violet-200" title={def.passive.text}>
+          Nội tại: {def.passive.label}
+        </span>
+      )}
+      {def.phase2 && (
+        <span
+          className={cn('rounded-full border px-2 py-0.5', phase2 ? 'border-rose-400/60 bg-rose-500/20 text-rose-200' : 'border-border text-muted-foreground')}
+          title={def.phase2.text}
+        >
+          {phase2 ? `Pha 2: ${def.phase2.label}` : `Pha 2 khi còn ${Math.round(def.phase2.at * 100)}% máu`}
+        </span>
+      )}
     </div>
   );
 }
@@ -1023,7 +1049,8 @@ function BotSide({
           : 'bg-emerald-500/20 text-emerald-300';
   return (
     <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
-      <IntentTrack intents={intents} step={state.enemy.step} />
+      <IntentTrack intents={intents} step={state.enemy.step} pick={state.enemy.pick} />
+      <BossTraits state={state} />
       {/* what it is about to do: one compact badge, the details on hover / focus */}
       <div className="group relative">
         <button
@@ -1055,7 +1082,7 @@ function BotSide({
             <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
             <Row lg icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
             <Row lg icon={<ShieldAlert className="text-amber-300" />} label="Lọt vào hệ thống" value={`${n0(raw * (1 - cut))} rps`} />
-            <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(CONTENT.battle.legitRps)} rps`} />
+            <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(legitRpsNow(CONTENT, state))} rps`} />
           </div>
           {effects.length > 0 && (
             <div className="mt-2 flex flex-col gap-1 border-t pt-2">
@@ -1433,7 +1460,7 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
 function Forecast({ score }: { score: TurnScore | null }) {
   return (
     <div
-      className={`absolute bottom-full right-0 mb-1 whitespace-nowrap rounded-md border border-border/60 bg-background/80 px-2 py-1 text-right text-[11px] leading-tight backdrop-blur transition-opacity ${score ? '' : 'opacity-50'}`}
+      className={`absolute bottom-full right-0 mb-1 w-[168px] rounded-md border border-border/60 bg-background/80 px-2 py-1 text-right text-[11px] leading-tight backdrop-blur transition-opacity ${score ? '' : 'opacity-50'}`}
       title="Engine chạy thử lượt này với bài đã đánh. Kết quả thật giống hệt nếu bạn kết thúc lượt ngay."
     >
       <div className="text-muted-foreground">Dự kiến nếu kết thúc lượt</div>

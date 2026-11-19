@@ -13,7 +13,8 @@
       "battle": 45,
       "event": 25,
       "elite": 14,
-      "rest": 16
+      "rest": 16,
+      "shop": 8
     }
   },
   "normal": [
@@ -22,26 +23,26 @@
     "herd"
   ],
   "bosses": [
-    "swarm",
-    "retry_storm",
-    "herd"
+    "cache_poisoner",
+    "black_friday",
+    "ddos_lord"
   ],
   "fight": {
     "hp": 0.45,
     "rps": 0.6
   },
   "elite": {
-    "hp": 0.9,
-    "rps": 0.85,
+    "hp": 0.8,
+    "rps": 0.8,
     "maxHp": 5
   },
   "boss": {
     "hp": 1.0,
-    "rps": 0.9
+    "rps": 1.0
   },
   "actScale": {
-    "hp": 0.2,
-    "rps": 0.08
+    "hp": 0.35,
+    "rps": 0.22
   },
   "rarityWeights": {
     "battle": {
@@ -60,5 +61,28 @@
     "uncommon": 33,
     "rare": 17
   },
-  "bossRelicChoices": 3
+  "bossRelicChoices": 3,
+  "startGold": 40,
+  "gold": {
+    "battle": 16,
+    "elite": 32,
+    "boss": 60
+  },
+  "goldJitter": 5,
+  "shop": {
+    "cards": 5,
+    "cardPrice": {
+      "common": 30,
+      "uncommon": 50,
+      "rare": 80
+    },
+    "relics": 2,
+    "relicPrice": {
+      "common": 70,
+      "uncommon": 100,
+      "rare": 140
+    },
+    "removePrice": 50,
+    "removeStep": 25
+  }
 }

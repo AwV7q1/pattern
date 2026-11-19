@@ -229,6 +229,7 @@ function climbTo(run: RunState, kind: string): RunState {
     else if (run.phase === 'reward') run = runs.pickReward(content, run, null);
     else if (run.phase === 'rest') run = runs.rest(content, run, { heal: true });
     else if (run.phase === 'event') run = runs.chooseEvent(content, run, runs.currentEvent(content, run)!.options.findIndex((o) => !o.effects.some((e) => e.op === 'removeCard')));
+    else if (run.phase === 'shop') run = runs.leaveShop(content, run);
     else if (run.phase === 'cleared') run = runs.nextAct(content, run);
     else break;
   }
@@ -472,4 +473,77 @@ test('relics: elites drop one, bosses offer a pick, pickups apply once', () => {
   assert.deepEqual(up.relicOffer, []);
   if (pick === 'multi_region') assert.equal(up.maxHp, boss.maxHp + 10);
   assert.deepEqual(runs.battleSetup(content, climbTo(up, 'battle')).relics, up.relics);
+});
+
+test('gold and shops: fights pay, shops sell cards, relics and one removal', () => {
+  let run = climbTo(runs.newRun(content, 11), 'battle');
+  assert.equal(run.gold, content.run.startGold);
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  const won = run.gold - content.run.startGold;
+  assert.ok(Math.abs(won - content.run.gold.battle) <= content.run.goldJitter + 1, `won ${won}`);
+  assert.equal(run.history.at(-1)!.gold, won);
+
+  // every floor has a shop
+  for (let act = 1; act <= content.run.acts; act++) assert.ok(generateMap(content, 11, act).nodes.some((n) => n.kind === 'shop'), `act ${act}`);
+  let shop = climbTo({ ...runs.newRun(content, 11), gold: 500 }, 'shop');
+  assert.equal(shop.phase, 'shop');
+  assert.equal(shop.shop!.cards.length, content.run.shop.cards);
+  assert.ok(runs.isValidRun(content, shop));
+
+  const card = shop.shop!.cards[0];
+  const gold = shop.gold;
+  shop = runs.buy(content, shop, { card: 0 });
+  assert.equal(shop.gold, gold - card.price);
+  assert.ok(shop.deck.includes(card.id));
+  assert.equal(runs.buy(content, shop, { card: 0 }), shop, 'sold out');
+  const relic = shop.shop!.relics[0];
+  shop = runs.buy(content, shop, { relic: 0 });
+  assert.ok(shop.relics.includes(relic.id));
+
+  const price = runs.removePriceOf(content, shop);
+  const size = shop.deck.length;
+  shop = runs.shopRemove(content, shop, 0);
+  assert.equal(shop.deck.length, size - 1);
+  assert.equal(runs.shopRemove(content, shop, 0), shop, 'once per shop');
+  assert.equal(runs.removePriceOf(content, shop), price + content.run.shop.removeStep);
+  assert.equal(runs.buy(content, { ...shop, gold: 0 }, { card: 1 }).gold, 0, 'too poor');
+
+  const left = runs.leaveShop(content, shop);
+  assert.equal(left.phase, 'map');
+  assert.equal(left.shop, null);
+  const entry = left.history.at(-1)!;
+  assert.equal(entry.kind, 'shop');
+  assert.deepEqual(entry.bought, [card.id, relic.id]);
+  assert.equal(entry.gold, -(card.price + relic.price + price));
+});
+
+test('bosses: weighted intents, second phase, passives', () => {
+  const boss = (id: string) => rules.newBattle(content, 9, { enemy: id });
+  // weighted: never the same intent three turns running
+  let s = boss('ddos_lord');
+  const picks: number[] = [];
+  for (let t = 0; t < 40 && s.phase === 'player'; t++) {
+    picks.push(s.enemy.pick!);
+    s = endTurn({ ...s, hp: 999, enemy: { ...s.enemy, hp: s.enemy.maxHp } });
+  }
+  for (let i = 2; i < picks.length; i++) assert.ok(!(picks[i] === picks[i - 1] && picks[i] === picks[i - 2]), `turn ${i}`);
+  assert.ok(new Set(picks).size > 1);
+
+  // phase 2 below half HP, from the next turn
+  const ddos = content.enemies.find((e) => e.id === 'ddos_lord')!;
+  const hurt = boss('ddos_lord');
+  const half = { ...hurt, enemy: { ...hurt.enemy, hp: Math.floor(hurt.enemy.maxHp * ddos.phase2!.at) } };
+  const p2 = endTurn(half);
+  assert.equal(p2.enemy.phase, 2);
+  assert.ok(ddos.phase2!.intents.some((i) => i.id === rules.currentIntent(content, p2).id));
+
+  // passives: WAF decays, real users are many more, cache is poisoned (even with Hotfix)
+  const waf = endTurn({ ...boss('ddos_lord'), waf: 0.5 });
+  assert.equal(waf.waf, 0.4);
+  assert.equal(rules.planTurn(content, boss('black_friday')).legitRps, Math.round(content.battle.legitRps * 1.6));
+  const poisoned = boss('cache_poisoner');
+  const [withCache, uid] = withCard({ ...poisoned, temp: { ...poisoned.temp, hotfix: true } }, 'cache');
+  const plan = rules.planTurn(content, rules.playCard(content, withCache, uid));
+  const cache = plan.input.design.nodes.find((n) => n.id === 'cache')!;
+  assert.equal(cache.config!.hitRate, 0.7 * content.enemies.find((e) => e.id === 'cache_poisoner')!.passive!.cacheHitScale!);
 });

@@ -24,7 +24,8 @@
     "scale_api",
     "rate_limit",
     "cache",
-    "timeout"
+    "timeout",
+    "index"
   ],
   "design": {
     "nodes": [

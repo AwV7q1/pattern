@@ -34,5 +34,23 @@
       { "label": "Ngủ tiếp: hồi 12 Error Budget", "effects": [{ "op": "heal", "n": 12 }] },
       { "label": "Viết runbook: mất 4 Error Budget, nhận lá Runbook", "effects": [{ "op": "damage", "n": 4 }, { "op": "addCard", "card": "runbook" }] }
     ]
+  },
+  {
+    "id": "old_servers",
+    "title": "Thanh lý máy chủ cũ",
+    "text": "Phòng máy dọn dẹp, còn mấy con server đời cũ. Bán lấy tiền hay giữ làm DB dự phòng?",
+    "options": [
+      { "label": "Bán: +45 vàng", "effects": [{ "op": "gold", "n": 45 }] },
+      { "label": "Giữ làm DB dự phòng: nhận lá Read Replica", "effects": [{ "op": "addCard", "card": "replica" }] }
+    ]
+  },
+  {
+    "id": "cloud_bill",
+    "title": "Hoá đơn cloud tăng vọt",
+    "text": "Ai đó quên tắt cụm GPU thử nghiệm cả tuần. Kế toán gọi điện.",
+    "options": [
+      { "label": "Trả hoá đơn: mất 30 vàng", "effects": [{ "op": "gold", "n": -30 }] },
+      { "label": "Cãi với kế toán: mất 7 Error Budget, nhận 1 Tech Debt", "effects": [{ "op": "damage", "n": 7 }, { "op": "addCard", "card": "tech_debt" }] }
+    ]
   }
 ]

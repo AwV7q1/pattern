@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, CircleHelp, Coffee, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
@@ -12,16 +12,20 @@ import {
   battleSetup,
   battleTitle,
   bossOf,
+  buy,
   canRemove,
   chooseEvent,
   chooseNode,
   currentEvent,
   currentNode,
   finishBattle,
+  leaveShop,
   newRun,
   nextAct,
   pickReward,
+  removePriceOf,
   rest,
+  shopRemove,
   stepsPerAct,
 } from './run';
 import { canUpgrade, cardDef } from './rules';
@@ -81,6 +85,7 @@ export function CardRun() {
       {run.phase === 'map' && <TowerMap content={CONTENT} run={run} onChoose={(id) => setRun((r) => chooseNode(CONTENT, r, id))} />}
       {run.phase === 'reward' && <RewardScreen run={run} onPick={(id) => setRun((r) => pickReward(CONTENT, r, id))} />}
       {run.phase === 'rest' && <RestScreen run={run} onChoose={(c) => setRun((r) => rest(CONTENT, r, c))} />}
+      {run.phase === 'shop' && <ShopScreen run={run} setRun={setRun} />}
       {run.phase === 'event' && <EventScreen run={run} onChoose={(o, i) => setRun((r) => chooseEvent(CONTENT, r, o, i))} />}
       {run.phase === 'cleared' && <ActClear run={run} onClimb={(relic) => setRun((r) => nextAct(CONTENT, r, relic))} />}
       {(run.phase === 'won' || run.phase === 'lost') && <RunEnd run={run} best={best.best} record={best.record} onNew={startNew} />}
@@ -116,6 +121,9 @@ function RunScreen({ run, best, onNew, children }: { run: RunState; best: Best; 
         )}
         <RelicBar relics={CONTENT.relics} ids={run.relics} />
         <div className="ml-auto flex items-center gap-2">
+          <span className="flex items-center gap-1 text-yellow-300" title="Vàng: tiêu ở cửa hàng">
+            <Coins className="size-4" /> {run.gold}
+          </span>
           <span className="flex items-center gap-1 text-rose-300">
             <HeartPulse className="size-4" /> {run.hp}/{run.maxHp}
           </span>
@@ -179,7 +187,7 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
           <Trophy className="size-6 text-amber-300" /> {fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
         </div>
         <p className="text-sm text-muted-foreground">
-          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget. ` : ''}
+          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget${last.gold ? `, +${last.gold} vàng` : ''}. ` : ''}
           {last?.kind === 'elite' ? `+${CONTENT.run.elite.maxHp} Error Budget tối đa. ` : ''}
           Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.
         </p>
@@ -376,6 +384,109 @@ function RestOption({ icon, title, text, disabled, onClick }: { icon: React.Reac
   );
 }
 
+// ---------------------------------------------------------------- shop
+
+function ShopScreen({ run, setRun }: { run: RunState; setRun: React.Dispatch<React.SetStateAction<RunState>> }) {
+  const [removing, setRemoving] = useState(false);
+  const shop = run.shop;
+  if (!shop) return null;
+  const removePrice = removePriceOf(CONTENT, run);
+  const canPayRemove = !shop.removed && removePrice <= run.gold && canRemove(CONTENT, run, 0);
+
+  if (removing)
+    return (
+      <DeckPicker
+        run={run}
+        title={`Bỏ 1 lá khỏi bộ bài (${removePrice} vàng)`}
+        text="Mỗi cửa hàng chỉ bỏ được 1 lá, và giá tăng sau mỗi lần dùng."
+        onConfirm={(i) => {
+          setRun((r) => shopRemove(CONTENT, r, i));
+          setRemoving(false);
+        }}
+        onBack={() => setRemoving(false)}
+      />
+    );
+
+  return (
+    <div className="mx-auto flex max-w-5xl flex-col items-center gap-6">
+      <div className="text-center">
+        <div className="mb-1 flex items-center justify-center gap-2 text-2xl font-bold">
+          <Store className="size-6 text-yellow-300" /> Cửa hàng công cụ
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Bạn có <span className="font-mono text-yellow-200">{run.gold}</span> vàng. Mua lá, relic, hoặc trả tiền để bỏ bớt 1 lá.
+        </p>
+      </div>
+      <div className="flex flex-wrap justify-center gap-4">
+        {shop.cards.map((c, i) => (
+          <button
+            key={`${c.id}:${i}`}
+            type="button"
+            disabled={c.sold || c.price > run.gold}
+            onClick={() => setRun((r) => buy(CONTENT, r, { card: i }))}
+            className="flex flex-col items-center gap-2 rounded-2xl outline-none transition-transform enabled:hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-yellow-300 disabled:cursor-not-allowed"
+          >
+            <div className={cn('h-[260px] w-[160px]', c.sold && 'opacity-30')}>
+              <CardFace def={cardDef(CONTENT, c.id)} playable={!c.sold && c.price <= run.gold} />
+            </div>
+            <Price price={c.price} gold={run.gold} sold={c.sold} />
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-start justify-center gap-4">
+        {shop.relics.map((r, i) => (
+          <button
+            key={r.id}
+            type="button"
+            disabled={r.sold || r.price > run.gold}
+            onClick={() => setRun((x) => buy(CONTENT, x, { relic: i }))}
+            className={cn('rounded-2xl outline-none transition-transform enabled:hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-yellow-300 disabled:cursor-not-allowed', r.sold && 'opacity-40')}
+          >
+            <RelicTile relic={CONTENT.relics.find((x) => x.id === r.id)!}>
+              <Price price={r.price} gold={run.gold} sold={r.sold} />
+            </RelicTile>
+          </button>
+        ))}
+        <button
+          type="button"
+          disabled={!canPayRemove}
+          onClick={() => setRemoving(true)}
+          className="flex w-[220px] flex-col items-center gap-2 self-stretch rounded-2xl border bg-card/85 p-4 text-center outline-none transition-transform enabled:hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-yellow-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="flex size-14 items-center justify-center rounded-full border-2 border-sky-400/60 bg-background/70 text-sky-300">
+            <Trash2 className="size-7" />
+          </span>
+          <span className="font-semibold">Dọn bộ bài</span>
+          <span className="text-sm">{shop.removed ? 'Đã dùng ở cửa hàng này.' : 'Bỏ 1 lá khỏi bộ bài.'}</span>
+          {!shop.removed && <Price price={removePrice} gold={run.gold} />}
+        </button>
+      </div>
+      <Button size="lg" variant="outline" onClick={() => setRun((r) => leaveShop(CONTENT, r))}>
+        <ArrowUp /> Rời cửa hàng
+      </Button>
+    </div>
+  );
+}
+
+function Price({ price, gold, sold }: { price: number; gold: number; sold?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs',
+        sold ? 'bg-muted text-muted-foreground' : price <= gold ? 'bg-yellow-400/15 text-yellow-200' : 'bg-rose-500/10 text-rose-300',
+      )}
+    >
+      {sold ? (
+        'Đã mua'
+      ) : (
+        <>
+          <Coins className="size-3" /> {price}
+        </>
+      )}
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------- event
 
 function EventScreen({ run, onChoose }: { run: RunState; onChoose: (option: number, removeIndex?: number) => void }) {
@@ -447,7 +558,7 @@ function ActClear({ run, onClimb }: { run: RunState; onClimb: (relic: string | n
       {run.relicOffer.length > 0 && (
         <div className="flex flex-col items-center gap-3">
           <p className="text-sm text-muted-foreground">Phần thưởng trùm: chọn 1 relic mang theo tới hết run.</p>
-          <div className="flex flex-wrap justify-center gap-4">
+          <div className="flex flex-wrap items-start justify-center gap-4">
             {run.relicOffer.map((id) => {
               const relic = CONTENT.relics.find((r) => r.id === id)!;
               const on = chosen === id;
@@ -469,6 +580,12 @@ function ActClear({ run, onClimb }: { run: RunState; onClimb: (relic: string | n
 
 // ---------------------------------------------------------------- end of run
 
+/** "Redis Cache, CDN, bỏ Buffer" */
+const shopDetail = (h: FloorResult) =>
+  [...(h.bought ?? []).map((id) => CONTENT.relics.find((r) => r.id === id)?.name ?? cardDef(CONTENT, id).name), h.removed && `bỏ ${cardDef(CONTENT, h.removed).name}`]
+    .filter(Boolean)
+    .join(', ') || 'không mua gì';
+
 function HistoryRow({ h }: { h: FloorResult }) {
   const info = NODE_INFO[h.kind];
   const fell = h.turns > 0 && !h.won;
@@ -476,9 +593,11 @@ function HistoryRow({ h }: { h: FloorResult }) {
   const name =
     h.kind === 'rest'
       ? 'Nghỉ'
-      : h.kind === 'event'
-        ? (CONTENT.events.find((e) => e.id === h.enemy)?.title ?? 'Sự cố')
-        : (CONTENT.enemies.find((e) => e.id === h.enemy)?.name ?? h.enemy);
+      : h.kind === 'shop'
+        ? 'Cửa hàng'
+        : h.kind === 'event'
+          ? (CONTENT.events.find((e) => e.id === h.enemy)?.title ?? 'Sự cố')
+          : (CONTENT.enemies.find((e) => e.id === h.enemy)?.name ?? h.enemy);
   const detail =
     h.kind === 'rest'
       ? h.healed !== undefined
@@ -488,9 +607,11 @@ function HistoryRow({ h }: { h: FloorResult }) {
           : h.upgraded
             ? `nâng cấp ${cardDef(CONTENT, h.upgraded).name}`
             : ''
-      : h.kind === 'event'
-        ? (h.option ?? '')
-        : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}`;
+      : h.kind === 'shop'
+        ? shopDetail(h)
+        : h.kind === 'event'
+          ? (h.option ?? '')
+          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}`;
   return (
     <li className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
       <Icon className={cn('size-4 shrink-0', fell ? 'text-rose-400' : info.tone.split(' ')[0])} />

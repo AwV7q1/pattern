@@ -184,5 +184,277 @@
         "heal": 12
       }
     ]
+  },
+  {
+    "id": "cache_poisoner",
+    "name": "Kẻ Đầu Độc Cache",
+    "description": "Trùm: bơm hàng triệu key rác vào cache, đẩy dữ liệu thật ra ngoài. Mọi request rơi thẳng xuống DB.",
+    "hp": 55,
+    "escalation": 0.25,
+    "pattern": "weighted",
+    "passive": {
+      "label": "Cache nhiễm độc",
+      "text": "Key rác tràn cache: tỉ lệ hit luôn chỉ còn 70%. Hotfix không gỡ được.",
+      "cacheHitScale": 0.7
+    },
+    "intents": [
+      {
+        "id": "junk_keys",
+        "label": "Key rác",
+        "icon": "slow",
+        "text": "Bot ~1200 rps với key ngẫu nhiên: cache hit chỉ còn 50% lượt này.",
+        "botRps": 1200,
+        "cacheHitScale": 0.5,
+        "weight": 2
+      },
+      {
+        "id": "slow_db",
+        "label": "DB nghẹt",
+        "icon": "slow",
+        "text": "Bot ~1000 rps, DB chậm ×3.",
+        "botRps": 1000,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 3
+        },
+        "weight": 2
+      },
+      {
+        "id": "spike",
+        "label": "Spike",
+        "icon": "spike",
+        "text": "Bot ~2400 rps cùng lúc.",
+        "botRps": 2400,
+        "weight": 2
+      },
+      {
+        "id": "debt",
+        "label": "Nợ cấu hình",
+        "icon": "debt",
+        "text": "Bot ~1500 rps. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "botRps": 1500,
+        "addCards": {
+          "card": "tech_debt",
+          "n": 1
+        },
+        "weight": 1
+      }
+    ],
+    "phase2": {
+      "at": 0.5,
+      "label": "Đầu độc toàn bộ",
+      "text": "Dưới 50% máu: cache gần như vô dụng, DB bắt đầu trả lỗi.",
+      "intents": [
+        {
+          "id": "poison_all",
+          "label": "Đầu độc toàn bộ",
+          "icon": "slow",
+          "text": "Bot ~2400 rps, cache hit chỉ còn 20% lượt này.",
+          "botRps": 2400,
+          "cacheHitScale": 0.2,
+          "weight": 2
+        },
+        {
+          "id": "db_errors",
+          "label": "DB lỗi + retry",
+          "icon": "retry",
+          "text": "Bot ~1800 rps, DB lỗi 15%, client retry 2 lần.",
+          "botRps": 1800,
+          "chaos": {
+            "node": "db",
+            "action": "errors",
+            "value": 0.15
+          },
+          "clientRetries": 2,
+          "weight": 2
+        },
+        {
+          "id": "refill",
+          "label": "Bơm lại key",
+          "icon": "heal",
+          "text": "Bot ~600 rps, kẻ đầu độc hồi 12 máu.",
+          "botRps": 600,
+          "heal": 12,
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "black_friday",
+    "name": "Black Friday",
+    "description": "Trùm: ngày sale lớn nhất năm. Bot săn hàng trộn lẫn với khách thật, và khách thật đông gấp rưỡi ngày thường.",
+    "hp": 75,
+    "escalation": 0.25,
+    "pattern": "weighted",
+    "passive": {
+      "label": "Khách đông nghịt",
+      "text": "Người dùng thật ×1.6 cả trận: mỗi request lỗi đều là một đơn hàng mất.",
+      "legitRpsMul": 1.6
+    },
+    "intents": [
+      {
+        "id": "queue",
+        "label": "Xếp hàng",
+        "icon": "probe",
+        "text": "Bot ~1000 rps săn hàng.",
+        "botRps": 1000,
+        "weight": 2
+      },
+      {
+        "id": "flash_sale",
+        "label": "Flash sale",
+        "icon": "slow",
+        "text": "Bot ~2000 rps, DB chậm ×2 vì khoá tồn kho.",
+        "botRps": 2000,
+        "chaos": {
+          "node": "db",
+          "action": "latency",
+          "value": 2
+        },
+        "weight": 2
+      },
+      {
+        "id": "cart_retry",
+        "label": "F5 giỏ hàng",
+        "icon": "retry",
+        "text": "Bot ~1400 rps, mọi client retry 2 lần ngay khi lỗi.",
+        "botRps": 1400,
+        "clientRetries": 2,
+        "weight": 2
+      },
+      {
+        "id": "lull",
+        "label": "Giữa hai đợt sale",
+        "icon": "heal",
+        "text": "Bot ~400 rps, Black Friday hồi 8 máu.",
+        "botRps": 400,
+        "heal": 8,
+        "weight": 1
+      }
+    ],
+    "phase2": {
+      "at": 0.5,
+      "label": "Flash sale nửa đêm",
+      "text": "Dưới 50% máu: đợt sale cuối, mọi thứ dồn vào cùng một phút.",
+      "intents": [
+        {
+          "id": "midnight",
+          "label": "Sale nửa đêm",
+          "icon": "spike",
+          "text": "Bot ~3200 rps cùng lúc.",
+          "botRps": 3200,
+          "weight": 2
+        },
+        {
+          "id": "stock_lock",
+          "label": "Khoá tồn kho",
+          "icon": "slow",
+          "text": "Bot ~2400 rps, DB chậm ×3.",
+          "botRps": 2400,
+          "chaos": {
+            "node": "db",
+            "action": "latency",
+            "value": 3
+          },
+          "weight": 2
+        },
+        {
+          "id": "rage_retry",
+          "label": "Khách bực bấm lại",
+          "icon": "retry",
+          "text": "Bot ~2200 rps, mọi client retry 3 lần ngay khi lỗi.",
+          "botRps": 2200,
+          "clientRetries": 3,
+          "weight": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "ddos_lord",
+    "name": "Lãnh Chúa DDoS",
+    "description": "Trùm cuối: botnet thuê theo giờ, hàng trăm nghìn IP, đổi chiến thuật liên tục.",
+    "hp": 80,
+    "escalation": 0.25,
+    "pattern": "weighted",
+    "passive": {
+      "label": "Xoay IP",
+      "text": "Botnet đổi IP liên tục: WAF mất 10% hiệu lực mỗi lượt.",
+      "wafDecay": 0.1
+    },
+    "intents": [
+      {
+        "id": "recon",
+        "label": "Do thám",
+        "icon": "probe",
+        "text": "Bot ~900 rps dò điểm yếu.",
+        "botRps": 900,
+        "weight": 2
+      },
+      {
+        "id": "spike",
+        "label": "Spike",
+        "icon": "spike",
+        "text": "Bot ~2800 rps cùng lúc.",
+        "botRps": 2800,
+        "weight": 3
+      },
+      {
+        "id": "carpet",
+        "label": "Rải thảm",
+        "icon": "slow",
+        "text": "Bot ~2200 rps với URL ngẫu nhiên: cache hit chỉ còn 50%.",
+        "botRps": 2200,
+        "cacheHitScale": 0.5,
+        "weight": 2
+      },
+      {
+        "id": "rent_more",
+        "label": "Thuê thêm máy",
+        "icon": "heal",
+        "text": "Bot ~500 rps, lãnh chúa hồi 10 máu.",
+        "botRps": 500,
+        "heal": 10,
+        "weight": 1
+      }
+    ],
+    "phase2": {
+      "at": 0.5,
+      "label": "Dốc toàn lực",
+      "text": "Dưới 50% máu: thuê toàn bộ botnet còn lại.",
+      "intents": [
+        {
+          "id": "mega_spike",
+          "label": "Siêu spike",
+          "icon": "spike",
+          "text": "Bot ~4000 rps cùng lúc.",
+          "botRps": 4000,
+          "weight": 3
+        },
+        {
+          "id": "amplify",
+          "label": "Khuếch đại",
+          "icon": "retry",
+          "text": "Bot ~2400 rps, mọi client retry 3 lần ngay khi lỗi.",
+          "botRps": 2400,
+          "clientRetries": 3,
+          "weight": 2
+        },
+        {
+          "id": "dirty",
+          "label": "Đòn bẩn",
+          "icon": "debt",
+          "text": "Bot ~3000 rps. Sau lượt này nhét 2 Tech Debt vào bộ bài.",
+          "botRps": 3000,
+          "addCards": {
+            "card": "tech_debt",
+            "n": 2
+          },
+          "weight": 1
+        }
+      ]
+    }
   }
 ]
