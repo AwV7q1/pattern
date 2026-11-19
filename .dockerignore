@@ -1,0 +1,21 @@
+# Build context is the repo root; keep it small and free of secrets.
+.git
+.claude
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+target
+crates/engine-wasm/pkg
+crates/engine-wasm/pkg-node
+**/.env
+**/.env.*
+!**/.env.example
+apps/server/data
+# only the web app's manifest is needed (pnpm lockfile importers)
+apps/web
+!apps/web/package.json
+docs
+case-studies
+examples
+tools
+*.log

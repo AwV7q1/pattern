@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter @pattern/design-lint build && prisma generate && tsc -p tsconfig.build.json",
+    "predev": "pnpm --filter @pattern/design-lint build && prisma generate",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
     "cli": "node dist/cli.js",
