@@ -7,6 +7,7 @@ import {
   Bug,
   Filter,
   TriangleAlert,
+  User,
   Users,
   ZapOff,
   Database,
@@ -140,6 +141,7 @@ export function CardBattle() {
   const gateRef = useRef<HTMLDivElement>(null);
   const shieldRef = useRef<HTMLDivElement>(null);
   const hpRef = useRef<HTMLDivElement>(null);
+  const usersRef = useRef<HTMLDivElement>(null);
   const opsRef = useRef<HTMLDivElement>(null);
   const deckRef = useRef<HTMLSpanElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
@@ -288,16 +290,20 @@ export function CardBattle() {
       spreadFrom: 34,
       onHit: () => glow(gate, 'rgba(251,113,133,0.6)', 200),
     });
+    // your real users, from the crowd above the system down into the gateway
+    const users = usersRef.current;
     void wave(layer, {
-      from: { x: (from.x + to.x) / 2, y: -12 },
-      to,
+      from: users ? anchor(users, layer, 0.5, 0.9) : { x: to.x, y: -12 },
+      to: anchor(gate, layer, 0.5, 0.1),
       count: clamp(Math.round(plan.legitRps / 120), 1, 4),
       kind: 'user',
       window: ms,
       flight: 820,
-      spreadFrom: 0,
-      arc: 0,
+      spreadFrom: 10,
+      arc: 14,
+      onHit: () => glow(gate, 'rgba(125,211,252,0.55)', 200),
     });
+    if (users) pulse(users, 1.06, 260);
   };
 
   /**
@@ -511,6 +517,7 @@ export function CardBattle() {
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
             <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.system))}>
               {sides.system && <TargetTag side="system" over={dragState === 'over'} />}
+              <UserCrowd usersRef={usersRef} active={resolving} />
               <div className="w-full">
                 <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
               </div>
@@ -529,11 +536,7 @@ export function CardBattle() {
           </div>
 
           <div className="col-start-2 row-start-1 flex min-w-0 flex-col items-center justify-center">
-            {live ? (
-              <LiveReadout live={live} onSkip={() => (skip.current = true)} />
-            ) : (
-              <span className="select-none font-black italic tracking-tighter text-foreground/10 [font-size:64px]">VS</span>
-            )}
+            <span className="select-none font-black italic tracking-tighter text-foreground/10 [font-size:64px]">VS</span>
           </div>
 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
@@ -580,10 +583,18 @@ export function CardBattle() {
           <span className="hidden lg:inline">Kéo bài lên để đánh · phím 1–9 · E kết thúc lượt</span>
         </div>
         <div className="absolute bottom-6 right-6 z-30">
-          <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player' || resolving} onClick={() => void endTurn()}>
-            {resolving ? <LoaderCircle className="animate-spin" /> : <ArrowRight />}
-            Kết thúc lượt
-          </Button>
+          {resolving ? (
+            // while the turn plays, the same spot skips to the result
+            <Button size="lg" variant="secondary" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" onClick={() => (skip.current = true)}>
+              <LoaderCircle className="animate-spin" />
+              Bỏ qua
+            </Button>
+          ) : (
+            <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player'} onClick={() => void endTurn()}>
+              <ArrowRight />
+              Kết thúc lượt
+            </Button>
+          )}
         </div>
 
         <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
@@ -600,17 +611,7 @@ export function CardBattle() {
     </div>
   );
 }
-
 // ---------------------------------------------------------------- pieces
-
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1">
-      <span className={cn('size-2 rounded-full', color)} />
-      {label}
-    </span>
-  );
-}
 
 /** Which side a card acts on: attacks hit the bot, everything else changes your system. */
 function sidesOf(def: CardDef) {
@@ -646,6 +647,29 @@ function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
         {bot ? <Swords /> : <Server />}
         {over ? (bot ? 'Thả để tấn công bot' : 'Thả để áp dụng lên hệ thống') : bot ? 'Tác dụng lên bot' : 'Tác dụng lên hệ thống'}
       </span>
+    </div>
+  );
+}
+
+/**
+ * Your real users: a small crowd above the system, over the gateway they
+ * send their requests into. Bobs gently while a turn plays.
+ */
+function UserCrowd({ usersRef, active }: { usersRef: React.RefObject<HTMLDivElement | null>; active: boolean }) {
+  return (
+    <div className="flex w-full justify-end pr-6">
+      <div ref={usersRef} className="flex flex-col items-center gap-1" title="Người dùng thật gửi request vào cổng Nginx">
+        <div className={cn('flex -space-x-2.5', active && 'animate-bounce [animation-duration:1.6s]')}>
+          {['bg-sky-500/30', 'bg-sky-400/40', 'bg-sky-500/30'].map((bg, i) => (
+            <span key={i} className={cn('flex items-center justify-center rounded-full border-2 border-background text-sky-200', bg, i === 1 ? 'z-10 size-10' : 'mt-1.5 size-8')}>
+              <User className={i === 1 ? 'size-5' : 'size-4'} />
+            </span>
+          ))}
+        </div>
+        <span className="flex items-center gap-1 rounded-full bg-sky-950/70 px-2 py-0.5 text-[11px] font-medium text-sky-200">
+          Người dùng thật · {n0(CONTENT.battle.legitRps)} rps
+        </span>
+      </div>
     </div>
   );
 }
@@ -733,50 +757,6 @@ function HpBar({
           </span>
         )}
       </div>
-    </div>
-  );
-}
-
-/** The middle of the arena while a turn plays: the engine's clock and live numbers. */
-function LiveReadout({ live, onSkip }: { live: Live; onSkip: () => void }) {
-  const total = CONTENT.battle.turnMs;
-  const slo = CONTENT.battle.sloP99Ms;
-  return (
-    <div className="flex w-full flex-col items-center gap-2 text-center text-xs">
-      {live.phase === 'attack' ? (
-        <>
-          <Bot className="size-6 animate-pulse text-rose-400" />
-          <span className="font-semibold text-rose-300">Bot tấn công!</span>
-          <span className="flex items-center gap-1 text-muted-foreground">
-            <LoaderCircle className="size-3 animate-spin" /> engine đang tính
-          </span>
-        </>
-      ) : (
-        <>
-          <span className="font-mono text-lg font-bold tabular-nums">
-            {Math.min(total, live.tMs + 1000) / 1000}s<span className="text-xs font-normal text-muted-foreground"> / {total / 1000}s</span>
-          </span>
-          <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full bg-sky-400 transition-[width] duration-300" style={{ width: `${(Math.min(total, live.tMs + 1000) / total) * 100}%` }} />
-          </div>
-          <div className="w-full space-y-0.5 rounded-lg bg-card/60 p-2 font-mono backdrop-blur">
-            <Row label="rps" value={n0(live.rps)} />
-            <Row label="p99" value={`${Math.round(live.p99)}ms`} bad={live.p99 > slo} />
-            <Row label="lỗi" value={`${(live.errRate * 100).toFixed(1)}%`} bad={live.errRate > 0.01} />
-          </div>
-        </>
-      )}
-      <div className="flex flex-wrap justify-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-        <Legend color="bg-rose-400" label="bot" />
-        <Legend color="bg-sky-300" label="người dùng" />
-        <Legend color="bg-emerald-400" label="bị chặn" />
-        <Legend color="bg-slate-200" label="request" />
-        <Legend color="bg-amber-400" label="cache hit" />
-        <Legend color="bg-rose-500" label="lỗi" />
-      </div>
-      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onSkip}>
-        Bỏ qua <ArrowRight />
-      </Button>
     </div>
   );
 }
