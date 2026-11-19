@@ -1,5 +1,5 @@
 import { MIN_VISUAL_SECONDS, type ParticleSink, type Viewport } from './renderer';
-import { FLOATS_PER_EDGE } from './edgeGeometry';
+import { FLOATS_PER_EDGE, samplePacked } from './edgeGeometry';
 
 const CAPACITY = 1 << 16;
 const MAX_DRAWN = 30_000; // keep the CPU path interactive
@@ -7,7 +7,7 @@ const COLORS = ['rgba(77,179,255,0.9)', 'rgba(77,242,140,0.9)', 'rgba(255,71,71,
 
 /**
  * CPU fallback for browsers without WebGPU. Same data and same maths as the
- * WGSL shader (cubic bezier, opposite lanes for responses), just evaluated in
+ * WGSL shader (arc-length polyline, opposite lanes for responses), just evaluated in
  * JS and drawn with Canvas2D (same shapes: arrows, dots, crosses, rings),
  * so it handles fewer particles.
  */
@@ -97,21 +97,17 @@ export class Canvas2DRenderer implements ParticleSink {
       const response = kind === 1 || kind === 2;
       if (response) t = 1 - t;
       const e = edge * FLOATS_PER_EDGE;
-      const it = 1 - t;
-      const a = it * it * it, b = 3 * it * it * t, c = 3 * it * t * t, d = t * t * t;
-      let x = a * edges[e] + b * edges[e + 2] + c * edges[e + 4] + d * edges[e + 6];
-      let y = a * edges[e + 1] + b * edges[e + 3] + c * edges[e + 5] + d * edges[e + 7];
-      // tangent -> normal offset (lanes), as in the shader
-      const tx = 3 * it * it * (edges[e + 2] - edges[e]) + 6 * it * t * (edges[e + 4] - edges[e + 2]) + 3 * t * t * (edges[e + 6] - edges[e + 4]);
-      const ty = 3 * it * it * (edges[e + 3] - edges[e + 1]) + 6 * it * t * (edges[e + 5] - edges[e + 3]) + 3 * t * t * (edges[e + 7] - edges[e + 5]);
-      const len = Math.hypot(tx, ty) || 1;
+      if (edges[e + 4] < 2) continue;
+      const [px, py, tx, ty] = samplePacked(edges, e, t);
+      const len = 1;
+      let x = px, y = py;
       const jitter = traced ? 0 : (((k * 2654435761) >>> 0) / 4294967295 - 0.5) * 4;
       const lane = (response ? 3 : -3) + jitter;
       x += (-ty / len) * lane;
       y += (tx / len) * lane;
       const sx = x * vp.zoom + vp.x;
       const sy = y * vp.zoom + vp.y;
-      const payload = Math.max(1, edges[e + (response ? 9 : 8)] || 1);
+      const payload = Math.max(1, edges[e + (response ? 1 : 0)] || 1);
       let r = base * payload * (kind === 2 ? 1.5 : kind === 1 ? 1 : 1.25);
       if (traced) {
         rings.moveTo(sx + r * 1.8, sy);

@@ -20,19 +20,44 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 
 > Các con số được tạo ra thế nào, giả định gì, chưa mô phỏng gì: xem **[docs/SIMULATION.md](docs/SIMULATION.md)**.
 > Đo hệ thống thật, hiệu chỉnh mô hình, chọn server: **[docs/CAPACITY.md](docs/CAPACITY.md)**.
+> Server, PostgreSQL, tài khoản, deploy lên một VPS: **[docs/SERVER.md](docs/SERVER.md)**.
 
 ## Tính năng
 
-- **Học** (tab mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 29 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
+Điều hướng bằng thanh tab nổi ở đáy màn hình (Học, Game, Studio, Công suất, Từ điển; ẩn khi đang học một bài), nút **Thêm** hoặc **⌘K / Ctrl+K** để tìm nhanh trang, dự án, level, bài học, công nghệ, thuật ngữ. Mỗi màn có URL riêng:
+
+| URL | Màn |
+|---|---|
+| `/learn`, `/learn/:lessonId` | Lộ trình học, mở thẳng một bài |
+| `/play`, `/play/:levelId` | Danh sách level, chơi một level (`?lesson=` khi mở từ bài học) |
+| `/studio`, `/studio/:projectId` | Dự án, canvas của một dự án (`/studio?template=<example>` tạo dự án từ mẫu) |
+| `/studio/:projectId/compare` | So sánh A/B |
+| `/levels/new`, `/levels/:id/edit` | Tạo / sửa level cộng đồng |
+| `/interview`, `/interview/:id` | Phỏng vấn system design |
+| `/s/:slug` | Link chia sẻ chỉ đọc |
+| `/login`, `/account` | Đăng nhập, tài khoản |
+| `/cards` | Game thẻ bài (prototype) |
+| `/glossary` | Từ điển thuật ngữ |
+| `/library`, `/cases` | Thư viện công nghệ, case study |
+| `/capacity/sizing`, `/capacity/calibrate` | Chọn server, hiệu chỉnh từ k6 |
+
+- **Học** (trang mặc định): lộ trình kiểu Duolingo từ người mới đến nâng cao, 7 phần, 42 bài. Mỗi bài gồm thẻ giải thích có sơ đồ tuần tự động, câu hỏi trắc nghiệm, sắp xếp thứ tự và **dự đoán**: người học đoán kết quả, engine chạy thật để chấm. Bài thực hành mở level trên canvas, đạt ≥ 1★ là qua. Có XP, chuỗi ngày, mục tiêu ngày, câu sai được hỏi lại cuối bài. Xem [docs/LEARNING.md](docs/LEARNING.md).
 - **Sandbox**: kéo thả thành phần (LB, service, cache, DB, queue), nối dây, xoá. Chỉnh mọi tham số node và chính sách edge (timeout, retry + backoff + jitter, circuit breaker). Điều khiển RPS, spike ×2/×3/×5, tắt node (chaos). Tải design ra JSON để chạy bằng CLI.
-- **Studio** (trong tab Sandbox), xem [docs/STUDIO.md](docs/STUDIO.md):
+- **Studio** (`/studio`), xem [docs/STUDIO.md](docs/STUDIO.md):
   - Thư viện khoảng 45 công nghệ thật (Nginx, Traefik, NestJS, Go, Redis, PostgreSQL, RabbitMQ, Kafka, Authentik, Keycloak, Kubernetes…) có logo, mô tả tổng quan và chi tiết, thanh điểm mạnh/yếu, so sánh tối đa 4 lựa chọn, đổi công nghệ ngay trong Inspector.
   - Dự án lưu trong IndexedDB, tự động lưu, lịch sử phiên bản (⌘/Ctrl+S), ghi chú, nhập/xuất JSON.
   - Xuất prompt markdown cho agent triển khai: Mermaid, bảng thành phần, chính sách gọi, SLO, sự cố, kết quả mô phỏng, yêu cầu Compose/K8s/NestJS.
   - Kubernetes: khung Cluster/Namespace/Node pool/Zone, autoscale kiểu HPA trong engine (pod khởi động trễ, ổn định khi giảm).
   - Case study đơn giản hoá từ bài viết công khai của Discord, Slack, Netflix, Twitter, Stack Overflow, Figma.
+- **Kiểm tra design** (tab Kiểm tra trong Studio): khoảng 17 luật (retry storm, timeout sai thứ tự, retry nhân chồng, SPOF, pool vượt DB, cache stampede…) kèm giải thích và nút sửa nhanh. Xem [docs/STUDIO.md](docs/STUDIO.md).
+- **So sánh A/B**: hai design (bản hiện tại, phiên bản cũ, dự án khác) chạy cùng kịch bản và seed, biểu đồ chồng, bảng chênh lệch, diff từng tham số.
+- **Đồng bộ và chia sẻ**: dự án lưu IndexedDB trước, đồng bộ server khi đăng nhập (outbox offline, xung đột không mất dữ liệu), link chỉ đọc `/s/:slug`.
+- **Level cộng đồng**: biến một dự án thành level, engine kiểm tra (design ban đầu dưới 3★, lời giải đạt 3★), có leaderboard riêng.
+- **Phỏng vấn system design**: 5 đề có đồng hồ, chấm bằng engine + lint + rubric, báo cáo chi tiết. Xem [docs/INTERVIEW.md](docs/INTERVIEW.md).
 - **Game**: 4 level, mỗi level một bài học (cache-aside, retry storm, queue leveling, failover). Có ngân sách, chaos theo kịch bản và 3 tiêu chí sao. Giá và hiệu năng lấy từ catalog trong engine, người chơi chỉ chọn topology, số instance và policy nên không gian lận được.
-- **Leaderboard**: NestJS chạy lại đúng engine WASM để chấm. Client chỉ gửi design, scenario do server giữ.
+- **Game thẻ bài** (`/cards`, prototype): deckbuilder theo lượt chống botnet. Mỗi lượt engine chạy 10s traffic thật, số liệu quyết định sát thương. Xem [docs/CARDS.md](docs/CARDS.md).
+- **Leaderboard**: NestJS chạy lại đúng engine WASM (trong worker pool) để chấm. Client chỉ gửi design, scenario do server giữ. Cần đăng nhập, tên trên bảng là tên tài khoản.
+- **Tài khoản**: PostgreSQL + Prisma, email/mật khẩu (argon2id), session lưu ở server, chống CSRF, giới hạn tốc độ, sẵn sàng thêm SSO/OIDC. Xem [docs/SERVER.md](docs/SERVER.md).
 - **Công suất**:
   - Sizing wizard: tải mục tiêu cộng chi phí mỗi request đo được, cho ra số vCPU, RAM, pool, gói VPS. Kết quả được kiểm chứng bằng mô phỏng ở các kịch bản cao điểm, đột biến, mất 1 server và DB chậm.
   - Hiệu chỉnh từ kết quả k6: fit tham số để mô phỏng khớp số đo, rồi dự đoán giới hạn chịu tải.
@@ -57,10 +82,12 @@ Công cụ minh hoạ các pattern kiến trúc hệ thống. Bạn thiết kế
 | `examples/calibration` | Số đo thật của server NestJS trong repo, dùng để thử calibrate |
 | `crates/engine-cli` | `pattern-sim`: chạy scenario hoặc chấm design theo level |
 | `examples/*.json` | Scenario sandbox `{ design, scenario }`, đồng thời là mẫu dự án trong Studio |
+| `interviews/*.json` | Đề phỏng vấn: yêu cầu, luật, kịch bản chấm, lời giải tham khảo |
 | `case-studies/*.json` | Case study: bối cảnh, quyết định, các giai đoạn design + scenario |
 | `levels/*.json`, `levels/solutions/` | Level game và lời giải tham khảo (test đảm bảo lời giải đạt 3★, design ban đầu 0★) |
 | `apps/web` | React 19 + shadcn/ui (Tailwind v4, Radix) + React Flow + WebGPU |
-| `apps/server` | NestJS 11: `GET /api/levels`, `POST /api/levels/:id/submit`, `GET /api/levels/:id/leaderboard` |
+| `apps/server` | NestJS 11 + Prisma/PostgreSQL: auth, levels, leaderboard, health; engine trong worker pool |
+| `packages/design-lint` | Bộ luật kiểm tra design và chấm phỏng vấn, dùng chung web và server |
 
 ## Chạy
 
@@ -72,7 +99,8 @@ cargo install wasm-pack
 
 pnpm build:wasm          # engine → WASM cho web (pkg) và Node (pkg-node)
 pnpm install
-pnpm dev:server          # NestJS http://localhost:3000/api (leaderboard)
+pnpm db:up && pnpm db:migrate   # PostgreSQL (Docker) + schema, xem docs/SERVER.md
+pnpm dev:server          # NestJS http://localhost:3000/api (tài khoản, đồng bộ, leaderboard)
 pnpm dev                 # http://localhost:5173 (proxy /api → 3000)
 
 pnpm sim examples/*.json                                   # so sánh pattern
@@ -103,6 +131,11 @@ scenario            requests  ok rps   err %   p99 ms  retries  cost/h  SLO   st
 06-circuit-breaker     60219     775   22.80    204.5     2815    0.73  FAIL  ☆☆☆   (hồi phục ngay khi DB khoẻ)
 07-nestjs-pool        125896    2098    0.00   1239.4        0    0.67  FAIL  ☆☆☆   (pool cạn lúc spike; pool 10 → p99 45ms)
 08-checkout-fan-out     6078     101    0.00   1315.3        0    1.05  FAIL  ☆☆☆   (đường truyền 100 Mbps nghẽn ở ~208 rps lúc spike)
+11-cache-stampede     149797    2486    0.42     30.5        0    0.88  PASS  ★★☆   (Redis flush → herd xuống DB; coalesce → ★★★)
+12-hedged-requests     30130     502    0.00     61.1        0    0.60  PASS  ★★★   (replica p99 300ms; hedge sau 15ms)
+13-retry-budget        59976     749   25.04    146.0     1855    0.73  FAIL  ☆☆☆   (như 05 nhưng retry chỉ +10%, hồi phục ngay khi DB khoẻ)
+14-keda-queue          16638     139    0.00     23.6        0    1.90  PASS  ★★★   (worker scale theo queue, về 0 khi rảnh)
+15-zone-partition      48100     659   17.78    221.3     5021    1.43  FAIL  ☆☆☆   (mất zone B, rồi partition API-A → DB-A)
 ```
 
 ## Các quyết định thiết kế
@@ -155,4 +188,17 @@ Gọi nhiều nhánh, payload và băng thông:
 { "source": "client", "target": "checkout", "requestKb": 2, "responseKb": 60, "bandwidthMbps": 100 }
 ```
 
-Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`.
+Cache theo key, hedge/quorum, bảo vệ tải, KEDA và chaos nâng cao:
+
+```jsonc
+{ "id": "cache", "kind": "cache", "config": { "cache": { "keys": 300, "zipf": 1.0, "capacity": 300, "ttlMs": 30000, "coalesce": true } } }
+{ "id": "api", "kind": "service", "config": { "routing": "hedge", "hedgeAfterMs": 15 } }        // hoặc "quorum" + "quorum": 2
+{ "id": "api", "kind": "service", "config": { "queueTimeoutMs": 200, "adaptiveLimit": { "min": 5, "max": 200, "targetMs": 50 } } }
+{ "source": "api", "target": "db", "rateLimit": { "rps": 500, "burst": 50 }, "retryBudget": { "ratio": 0.1, "minPerSec": 10 } }
+{ "autoscale": { "min": 0, "max": 10, "metric": "queueLength", "queueSource": "q", "targetQueuePerInstance": 50 } }
+{ "atMs": 15000, "nodes": ["apiB", "dbB"], "action": "down" }                              // mất cả zone
+{ "atMs": 35000, "edge": { "source": "apiA", "target": "dbA" }, "action": "partition" }   // "heal" để nối lại
+"chaosMonkey": { "everyMs": 20000, "downMs": 5000, "targets": ["api", "db"], "seed": 7 }   // trong scenario
+```
+
+Các `kind` hỗ trợ: `client`, `loadBalancer`, `service`, `cache` (`hitRate` hoặc `cache`), `database`, `queue` (ack ngay, xử lý async). Chaos `action`: `down`, `up`, `latency`, `errors`, `flush`, `partition`, `heal`.

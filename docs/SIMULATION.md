@@ -11,13 +11,20 @@
 | Node | `queueSize` | Số request được chờ khi hết slot. Vượt quá thì **bị từ chối** |
 | Node | `latencyP50Ms`, `latencyP99Ms` | Thời gian xử lý *cục bộ*, phân phối **lognormal** suy ra từ 2 điểm này: `μ = ln p50`, `σ = (ln p99 − ln p50) / 2.326` |
 | Node | `errorRate` | Xác suất một request xử lý xong vẫn lỗi |
-| Cache | `hitRate` | Xác suất trả lời ngay mà không gọi xuống dưới (cố định, không mô phỏng warm-up hay eviction) |
+| Cache | `hitRate` | Xác suất trả lời ngay mà không gọi xuống dưới (cố định). Dùng khi không khai báo `cache` |
+| Cache | `cache` | Mô hình theo key: `keys` (Zipf `zipf`), `capacity` (LRU), `ttlMs`, `coalesce` (singleflight), `staleWhileRevalidate`, `warm`. Xem mục 2.8 |
+| Node | `queueTimeoutMs` | Request chờ trong hàng quá hạn này thì bị bỏ khi tới lượt (deadline shedding) |
+| Node | `adaptiveLimit` | Giới hạn concurrency tự điều chỉnh kiểu AIMD, vượt giới hạn thì từ chối ngay |
+| Node | `routing: hedge`, `hedgeAfterMs` / `routing: quorum`, `quorum` | Hedged request và chờ k/n nhánh, xem mục 2.9 |
 | Node | `costPerHour` | Chỉ để tính tiền: `Σ instances × costPerHour` |
 | Edge | `latencyMs` | Network một chiều (cố định) |
 | Edge | `timeoutMs`, `retries`, `backoffMs`, `jitter`, `circuitBreaker` | Chính sách phía caller |
 | Edge | `poolSize`, `poolTimeoutMs` | Connection pool mỗi process của caller |
+| Edge | `rateLimit: { rps, burst }` | Token bucket phía caller, hết token thì lỗi ngay (429), không retry |
+| Edge | `retryBudget: { ratio, minPerSec }` | Mỗi lần gọi đầu tiên nạp `ratio` token, mỗi retry tiêu 1 token, cộng `minPerSec` token/giây. Hết token thì không retry nữa |
 | Scenario | `traffic` | Hàm bậc thang rps theo thời gian. Request đến theo **quá trình Poisson** (khoảng cách giữa 2 request ~ phân phối mũ) |
-| Scenario | `events` | Chaos theo kịch bản: `down`, `up`, `latency` (×hệ số), `errors` |
+| Scenario | `events` | Chaos theo kịch bản: `down`, `up`, `latency` (×hệ số), `errors`, `flush` (xoá cache). `nodes: [...]` tác động nhiều node một lúc (mất cả zone). `partition`/`heal` với `edge: { source, target }`: đường mạng âm thầm làm rơi mọi gói tin hai chiều |
+| Scenario | `chaosMonkey` | `{ everyMs, downMs, targets, seed }`: cứ `everyMs` tắt ngẫu nhiên một node trong `targets` trong `downMs`. Dùng RNG riêng nên không làm lệch phần còn lại của mô phỏng |
 | Scenario | `seed` | Cùng seed thì cùng kết quả, đến từng bit, trên mọi máy |
 
 Các con số mặc định trong catalog (`crates/engine/src/level.rs`, `default_catalog`) chỉ là **cỡ độ lớn hợp lý**, chưa được hiệu chỉnh bằng benchmark:
@@ -64,6 +71,27 @@ Engine (`crates/engine/src/sim.rs`) giữ một hàng đợi sự kiện sắp t
 
    Bài học điển hình: HPA phản ứng chậm hơn spike (thời gian chờ lần xét kế tiếp cộng thời gian khởi động pod), nên vài chục giây đầu vẫn có lỗi. Khắc phục bằng cách giữ `min` cao hơn, đặt target thấp, hoặc đặt queue phía trước.
 
+   Autoscale theo queue (giống KEDA): `"metric": "queueLength"`, `"queueSource": "<id node queue>"`, `"targetQueuePerInstance": 50`. Số replica = `ceil(backlog / target)`, vẫn áp dung sai ±10%, stabilization và `podStartMs`. Cho phép `min: 0` (scale-to-zero). Lúc 0 replica, request tới node được giữ lại chờ replica đầu tiên sẵn sàng thay vì bị từ chối.
+
+8. **Cache theo key** (`config.cache` của node cache): mỗi request chọn một key theo phân phối Zipf trên `keys` key (CDF tính trước, tìm nhị phân, nên tất định).
+   - Còn hạn thì hit. Hết hạn hoặc chưa có thì miss và đi xuống downstream. Downstream trả OK thì ghi key vào cache với hạn `ttlMs`. Cache đầy thì bỏ key lâu nhất không dùng (LRU).
+   - `warm: false` nghĩa là cache rỗng lúc đầu, hit ratio tăng dần (warm-up). `warm: true` nạp sẵn các key phổ biến nhất, hạn rải đều trong một TTL để không hết hạn cùng lúc.
+   - Không có `coalesce`, N request cùng miss một key tạo N request xuống DB: đó là **thundering herd / cache stampede**, rõ nhất ngay sau chaos `flush`. Có `coalesce` (singleflight), request đầu tiên đi lấy, các request sau chờ kết quả của nó (vẫn giữ slot của cache).
+   - `staleWhileRevalidate`: key hết hạn vẫn trả ngay như hit, đồng thời một request nền đi làm mới (không giữ slot, không tính vào số liệu async).
+   - `NodeWindow.hitRatio` là tỉ lệ hit trong cửa sổ, có cho mọi node cache (kể cả `hitRate` cố định).
+
+9. **Hedge và quorum**:
+   - `hedge`: gọi edge đầu tiên (theo `order`). Sau `hedgeAfterMs` chưa có trả lời thì gọi thêm edge tiếp theo. Kết quả OK đầu tiên thắng. Nhánh lỗi thì chuyển sang edge kế tiếp ngay. Nhánh thua **không bị huỷ**, vẫn làm tiếp ở callee, nên tải tăng thêm đúng bằng phần request chậm.
+   - `quorum`: gọi tất cả, OK khi đủ `quorum` nhánh OK (mặc định đa số), lỗi ngay khi không còn đủ nhánh để đạt.
+
+10. **Bảo vệ tải**:
+    - `rateLimit` trên edge: token bucket phía caller.
+    - `retryBudget` trên edge: chặn retry storm, tổng retry không vượt `ratio` × số request (cộng một mức tối thiểu mỗi giây).
+    - `queueTimeoutMs` trên node: bỏ request đã chờ quá lâu thay vì xử lý việc caller đã bỏ cuộc. Tính vào `rejected`.
+    - `adaptiveLimit` trên node (AIMD, như Netflix concurrency-limits): request xong nhanh hơn `targetMs` và giới hạn đang được dùng quá nửa thì giới hạn +1. Request chậm hơn hoặc lỗi thì giới hạn × `backoff`. Request vượt giới hạn bị từ chối ngay, không xếp hàng.
+
+11. **Partition**: edge bị chia cắt làm rơi request lẫn response. Callee không nhận được gì, caller chỉ biết qua timeout. Không có timeout thì caller treo mãi. Connection của pool bị treo đến hết timeout của edge (hoặc 30s nếu không có).
+
 Mô phỏng này chạy nhanh hơn thời gian thực rất nhiều. Ví dụ native chạy 20k rps × 60s (1.2 triệu request) mất khoảng 1.3s.
 
 ## 3. Đầu ra: các con số được đo thế nào
@@ -91,9 +119,9 @@ Ví dụ `01-no-cache` bắn 3500 rps vào DB, nên phải sập. Đặt cache h
 
 ## 5. Những gì CHƯA mô phỏng
 
-- Cold start của từng request (JIT, cache nguội). Autoscaling đã có (mục 2.7), nhưng chỉ dựa trên utilization, chưa có scale theo độ dài queue (KEDA) hay theo custom metric. Băng thông đã có, nhưng ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói. CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
-- Gọi song song có điều kiện (gọi B chỉ khi A trả về X), hedged request, quorum (chờ 2/3 nhánh) chưa có.
-- Cache hit rate là hằng số (không có warm-up, eviction hay thundering herd).
+- Cold start của từng request (JIT). Autoscaling dựa trên utilization hoặc độ dài queue, chưa có custom metric khác. Băng thông ở mức một đường truyền FIFO mỗi chiều, chưa mô phỏng TCP chia sẻ công bằng hay mất gói lẻ tẻ (partition thì mất hết). CPU, GC, lock (USL) và pool đã có nhưng tham số cần đo để hiệu chỉnh, xem [CAPACITY.md](CAPACITY.md).
+- Gọi có điều kiện (gọi B chỉ khi A trả về X) chưa có. Hedge không huỷ nhánh thua.
+- Cache theo key không phân biệt đọc/ghi: chưa có invalidation khi ghi, nên chưa mô phỏng dữ liệu cũ.
 - Latency không tăng theo tải bên trong một node. Tải chỉ làm tăng thời gian *chờ hàng đợi*, phần đó mô phỏng đúng.
 
 ## 6. Hiệu chỉnh bằng số liệu thật

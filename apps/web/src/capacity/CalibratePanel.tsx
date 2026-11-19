@@ -120,7 +120,7 @@ export function CalibratePanel({
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(380px,460px)_1fr]">
-      <div className="min-h-0 overflow-y-auto border-r p-4">
+      <div className="min-h-0 overflow-y-auto border-r p-4 pb-28">
         <div className="grid gap-4">
           <Section title="1. Design cần hiệu chỉnh" desc="Cấu trúc phải đúng (ai gọi ai, số process, pool). Các con số sẽ được fit.">
             <Select value={sourceKey} onValueChange={pickSource}>
@@ -245,7 +245,7 @@ export function CalibratePanel({
             Mô phỏng lại đúng bài test k6 (arrival đều, cùng thời lượng) và tìm tham số khớp throughput, lỗi, p50/p95/p99.
           </p>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-28">
           {error && <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           {result ? (
             <CalibrationView r={result} design={source.design} onApply={() => onApply(result.report.design, `Hiệu chỉnh: ${source.label}`, result.slo)} hasObs={obs.some((o) => o.metric === 'utilization')} />

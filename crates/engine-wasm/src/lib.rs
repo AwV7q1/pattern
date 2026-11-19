@@ -72,6 +72,14 @@ pub fn run_headless(input_json: &str) -> Result<String, JsError> {
     serde_json::to_string(&summary).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Run a scenario to completion; returns `{ summary, windows }` as JSON.
+#[wasm_bindgen]
+pub fn run_detailed(input_json: &str) -> Result<String, JsError> {
+    let (summary, windows) = pattern_engine::run_detailed(input_json).map_err(|e| JsError::new(&e))?;
+    serde_json::to_string(&serde_json::json!({ "summary": summary, "windows": windows }))
+        .map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Score a player design against a level (both JSON). Returns the summary
 /// JSON, including `stars`. The server runs the very same function.
 #[wasm_bindgen]

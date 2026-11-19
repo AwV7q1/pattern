@@ -5,8 +5,52 @@ export const BUILDABLE: NodeKind[] = ['loadBalancer', 'service', 'cache', 'datab
 
 export type ExecModel = 'threads' | 'cpu';
 export type Balance = 'roundRobin' | 'leastConnections' | 'random';
-/** Several outgoing edges: pick one (LB), call all one after another, or all at once. */
-export type Routing = 'pick' | 'sequence' | 'parallel';
+/** Several outgoing edges: pick one (LB), call all one after another, all at once, hedge, or quorum. */
+export type Routing = 'pick' | 'sequence' | 'parallel' | 'hedge' | 'quorum';
+
+/** Key-level cache model (crates/engine/src/model.rs `CacheModel`). */
+export interface CacheModel {
+  keys: number;
+  zipf: number;
+  capacity: number;
+  ttlMs: number;
+  coalesce: boolean;
+  staleWhileRevalidate: boolean;
+  warm: boolean;
+}
+
+export const DEFAULT_CACHE: CacheModel = {
+  keys: 10000,
+  zipf: 1,
+  capacity: 1000,
+  ttlMs: 60000,
+  coalesce: false,
+  staleWhileRevalidate: false,
+  warm: false,
+};
+
+export interface AdaptiveLimit {
+  min: number;
+  max: number;
+  initial: number;
+  targetMs: number;
+  backoff: number;
+}
+
+export const DEFAULT_ADAPTIVE: AdaptiveLimit = { min: 5, max: 200, initial: 20, targetMs: 50, backoff: 0.9 };
+
+export interface RateLimit {
+  rps: number;
+  burst: number;
+}
+
+export interface RetryBudget {
+  ratio: number;
+  minPerSec: number;
+}
+
+export const DEFAULT_RATE_LIMIT: RateLimit = { rps: 1000, burst: 100 };
+export const DEFAULT_RETRY_BUDGET: RetryBudget = { ratio: 0.1, minPerSec: 10 };
 
 export interface NodeConfig {
   instances: number;
@@ -32,9 +76,18 @@ export interface NodeConfig {
   gcEveryRequests: number;
   errorRate: number;
   hitRate: number;
+  /** Key-level cache (replaces `hitRate`). */
+  cache?: CacheModel | null;
+  /** `hedge` routing: wait before calling the next edge. */
+  hedgeAfterMs: number;
+  /** `quorum` routing: successes needed, 0 = majority. */
+  quorum: number;
   costPerHour: number;
   /** Kubernetes HPA-like autoscaling; `instances` is the start count. */
   autoscale?: Autoscale | null;
+  /** Shed requests that waited longer than this in the queue (0 = never). */
+  queueTimeoutMs: number;
+  adaptiveLimit?: AdaptiveLimit | null;
 }
 
 export interface Autoscale {
@@ -44,6 +97,10 @@ export interface Autoscale {
   evalEveryMs: number;
   stabilizationMs: number;
   podStartMs: number;
+  /** `utilization` (HPA) or `queueLength` (KEDA). */
+  metric?: 'utilization' | 'queueLength';
+  queueSource?: string | null;
+  targetQueuePerInstance?: number;
 }
 
 export const DEFAULT_AUTOSCALE: Autoscale = {
@@ -80,6 +137,8 @@ export interface EdgePolicy {
   requestKb?: number;
   responseKb?: number;
   bandwidthMbps?: number;
+  rateLimit?: RateLimit | null;
+  retryBudget?: RetryBudget | null;
 }
 
 export const DEFAULT_POLICY: EdgePolicy = {
@@ -110,16 +169,44 @@ export interface DesignNode {
   group?: string;
 }
 
-export interface DesignEdge extends Partial<EdgePolicy> {
+/** Side of a node an edge leaves or enters by. */
+export type Side = 'left' | 'right' | 'top' | 'bottom';
+
+/**
+ * Hand-made drawing of an edge (ignored by the engine). `bends` are the
+ * fixed coordinates of the inner runs of an orthogonal route, alternating
+ * axes starting with the run after the one leaving `fromSide`.
+ */
+export interface EdgeLayout {
+  fromSide?: Side;
+  toSide?: Side;
+  bends?: number[];
+}
+
+export interface DesignEdge extends Partial<EdgePolicy>, EdgeLayout {
   source: string;
   target: string;
 }
 
+export type ChaosAction = 'down' | 'up' | 'latency' | 'errors' | 'flush' | 'partition' | 'heal';
+
 export interface ChaosEvent {
   atMs: number;
-  node: string;
-  action: 'down' | 'up' | 'latency' | 'errors';
+  /** Node id (or empty when `nodes` / `edge` is used). */
+  node?: string;
+  /** Several nodes at once (a whole zone). */
+  nodes?: string[];
+  /** `partition` / `heal`. */
+  edge?: { source: string; target: string } | null;
+  action: ChaosAction;
   value?: number;
+}
+
+export interface ChaosMonkey {
+  everyMs: number;
+  downMs: number;
+  targets: string[];
+  seed: number;
 }
 
 export interface Scenario {
@@ -133,6 +220,7 @@ export interface Scenario {
   budgetPerHour?: number | null;
   arrival?: 'poisson' | 'uniform';
   maxConcurrent?: number | null;
+  chaosMonkey?: ChaosMonkey | null;
 }
 
 export interface Design {
@@ -170,6 +258,8 @@ export interface NodeWindow {
   instances: number;
   /** Autoscaled instances still starting. */
   starting: number;
+  /** Cache nodes: fraction of lookups answered by the cache. */
+  hitRatio?: number;
 }
 
 export interface EdgeWindow {
@@ -182,6 +272,9 @@ export interface EdgeWindow {
   poolWaitMs: number;
   poolTimeouts: number;
   bandwidthUtilization: number;
+  rateLimited: number;
+  budgetExhausted: number;
+  partitioned: boolean;
 }
 
 /** One step of a traced request (crates/engine/src/sim.rs `TraceEvent`). */
@@ -262,7 +355,10 @@ export const DEFAULT_CONFIG: NodeConfig = {
   gcEveryRequests: 0,
   errorRate: 0,
   hitRate: 0,
+  hedgeAfterMs: 50,
+  quorum: 0,
   costPerHour: 0,
+  queueTimeoutMs: 0,
 };
 
 // ---------------------------------------------------------------- sizing (crates/engine/src/sizing.rs)

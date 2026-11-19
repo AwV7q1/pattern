@@ -1,0 +1,215 @@
+{
+  "id": "payment",
+  "title": "Thanh toán qua cổng bên ngoài",
+  "difficulty": "Trung bình",
+  "timeMinutes": 45,
+  "brief": "API thanh toán ghi đơn vào database rồi gọi cổng thanh toán của đối tác. Cổng chậm và thỉnh thoảng lỗi (3% request), và có lúc lỗi hàng loạt. Thanh toán thì lỗi trả về khách hàng phải cực ít.",
+  "requirements": [
+    "400 thanh toán/giây, cao điểm gấp đôi",
+    "p99 ≤ 1.000ms, lỗi ≤ 0,5%",
+    "Cổng thanh toán lỗi 30% trong 20 giây: giảm thiểu thiệt hại, không làm sập hệ thống",
+    "Database chậm ×3 vẫn chịu được",
+    "Ngân sách $2.00/giờ. Cổng thanh toán tính $0.20/instance/giờ, có thể thuê thêm"
+  ],
+  "talkingPoints": [
+    "Retry có backoff + jitter cho lỗi thoáng qua của cổng (cần idempotency key ở cổng thật)",
+    "Timeout gọi cổng lớn hơn p99 của nó nhưng nhỏ hơn timeout của client",
+    "Ghi database trước, gọi cổng sau: thứ tự gọi tuần tự",
+    "Retry budget hoặc circuit breaker để lỗi hàng loạt không thành retry storm",
+    "Đủ instance cổng cho cao điểm cộng phần retry"
+  ],
+  "level": {
+    "palette": [
+      "loadBalancer",
+      "service",
+      "database",
+      "cache",
+      "queue"
+    ],
+    "maxInstances": 6,
+    "locked": [
+      "client",
+      "gateway"
+    ],
+    "scalable": [
+      "gateway"
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng",
+          "position": {
+            "x": 0,
+            "y": 200
+          }
+        },
+        {
+          "id": "gateway",
+          "kind": "service",
+          "label": "Cổng thanh toán (đối tác)",
+          "position": {
+            "x": 960,
+            "y": 200
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 50,
+            "queueSize": 50,
+            "latencyP50Ms": 80,
+            "latencyP99Ms": 400,
+            "errorRate": 0.03,
+            "costPerHour": 0.2
+          }
+        }
+      ],
+      "edges": []
+    },
+    "scenario": {
+      "seed": 7,
+      "durationMs": 60000,
+      "timeoutMs": 2000,
+      "windowMs": 1000,
+      "traffic": [
+        {
+          "atMs": 0,
+          "rps": 400
+        }
+      ],
+      "slo": {
+        "p99Ms": 1000,
+        "errorRate": 0.005
+      },
+      "budgetPerHour": 2.0
+    }
+  },
+  "grading": [
+    {
+      "name": "Bình thường",
+      "kind": "normal"
+    },
+    {
+      "name": "Cao điểm ×2",
+      "kind": "peak",
+      "traffic": {
+        "multiplier": 2
+      }
+    },
+    {
+      "name": "Cổng lỗi 30%",
+      "kind": "failure",
+      "faults": [
+        {
+          "nodes": [
+            "gateway"
+          ],
+          "action": "errors",
+          "value": 0.3
+        }
+      ]
+    },
+    {
+      "name": "Database chậm ×3",
+      "kind": "failure",
+      "faults": [
+        {
+          "kind": "database",
+          "action": "latency",
+          "value": 3
+        }
+      ]
+    }
+  ],
+  "reference": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 240,
+          "y": 200
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Payment API",
+        "position": {
+          "x": 480,
+          "y": 200
+        },
+        "config": {
+          "instances": 3,
+          "routing": "sequence"
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 720,
+          "y": 60
+        }
+      },
+      {
+        "id": "gateway",
+        "kind": "service",
+        "label": "Cổng thanh toán (đối tác)",
+        "position": {
+          "x": 720,
+          "y": 320
+        },
+        "config": {
+          "instances": 3,
+          "concurrency": 50,
+          "queueSize": 50,
+          "latencyP50Ms": 80,
+          "latencyP99Ms": 400,
+          "errorRate": 0.03,
+          "costPerHour": 0.2
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "db",
+        "order": 1,
+        "timeoutMs": 300
+      },
+      {
+        "source": "api",
+        "target": "gateway",
+        "order": 2,
+        "timeoutMs": 550,
+        "retries": 2,
+        "backoffMs": 50,
+        "jitter": true,
+        "retryBudget": {
+          "ratio": 0.2,
+          "minPerSec": 20
+        }
+      }
+    ]
+  }
+}

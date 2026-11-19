@@ -1,0 +1,119 @@
+{
+  "title": "KEDA: worker scale theo độ dài queue",
+  "description": "Upload ảnh vào queue, worker resize ảnh scale theo số message đang chờ (KEDA, 50 message/replica), về 0 replica khi rảnh. Lúc 0 replica message vẫn nằm trong queue chờ replica đầu tiên khởi động, nên không mất việc, chỉ trễ hơn. Chi phí chỉ tính khi có worker chạy.",
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Users",
+        "position": {
+          "x": 0,
+          "y": 160
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Upload API",
+        "position": {
+          "x": 260,
+          "y": 160
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 200,
+          "queueSize": 100,
+          "latencyP50Ms": 5,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "RabbitMQ",
+        "position": {
+          "x": 520,
+          "y": 160
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 40,
+          "queueSize": 500000,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.08
+        }
+      },
+      {
+        "id": "worker",
+        "kind": "service",
+        "label": "Image worker",
+        "position": {
+          "x": 780,
+          "y": 160
+        },
+        "config": {
+          "instances": 0,
+          "concurrency": 10,
+          "queueSize": 100,
+          "latencyP50Ms": 40,
+          "latencyP99Ms": 120,
+          "costPerHour": 0.4,
+          "autoscale": {
+            "min": 0,
+            "max": 10,
+            "evalEveryMs": 5000,
+            "stabilizationMs": 30000,
+            "podStartMs": 8000,
+            "metric": "queueLength",
+            "queueSource": "q",
+            "targetQueuePerInstance": 50
+          }
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "q"
+      },
+      {
+        "source": "q",
+        "target": "worker"
+      }
+    ]
+  },
+  "scenario": {
+    "seed": 42,
+    "durationMs": 120000,
+    "timeoutMs": 2000,
+    "traffic": [
+      {
+        "atMs": 0,
+        "rps": 0
+      },
+      {
+        "atMs": 10000,
+        "rps": 150
+      },
+      {
+        "atMs": 40000,
+        "rps": 600
+      },
+      {
+        "atMs": 60000,
+        "rps": 0
+      }
+    ],
+    "slo": {
+      "p99Ms": 250,
+      "errorRate": 0.01
+    }
+  }
+}

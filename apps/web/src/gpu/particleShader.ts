@@ -9,6 +9,8 @@
 //   error    = red cross, larger
 //   size     = payload of the edge in that direction (edge style)
 //   traced   = kind + 4: twice as big with a white ring (one followed request)
+import { EDGE_HEADER, FLOATS_PER_EDGE } from './edgeGeometry';
+
 export const PARTICLE_SHADER = /* wgsl */ `
 struct Uniforms {
   now: f32,          // simulated time, seconds
@@ -19,12 +21,15 @@ struct Uniforms {
   resolution: vec2f, // canvas size, CSS px
 };
 
+// Edges are polylines parameterised by arc length (see edgeGeometry.ts):
+// [style x4, point count, pad x3] then [x, y, arc fraction] per point.
 // style: request size, response size, fire-and-forget, unused
-struct Edge { p0: vec2f, c0: vec2f, c1: vec2f, p1: vec2f, style: vec4f };
+const STRIDE: u32 = ${FLOATS_PER_EDGE}u;
+const HEADER: u32 = ${EDGE_HEADER}u;
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<storage, read> particles: array<vec4f>; // edge, t0, dur, kind
-@group(0) @binding(2) var<storage, read> edges: array<Edge>;
+@group(0) @binding(2) var<storage, read> edges: array<f32>;
 
 struct VSOut {
   @builtin(position) pos: vec4f,
@@ -34,14 +39,29 @@ struct VSOut {
   @location(3) @interpolate(flat) traced: u32,
 };
 
-fn bezier(e: Edge, t: f32) -> vec2f {
-  let it = 1.0 - t;
-  return it * it * it * e.p0 + 3.0 * it * it * t * e.c0 + 3.0 * it * t * t * e.c1 + t * t * t * e.p1;
+fn point(base: u32, i: u32) -> vec3f {
+  let o = base + HEADER + i * 3u;
+  return vec3f(edges[o], edges[o + 1u], edges[o + 2u]);
 }
 
-fn bezierTangent(e: Edge, t: f32) -> vec2f {
-  let it = 1.0 - t;
-  return 3.0 * it * it * (e.c0 - e.p0) + 6.0 * it * t * (e.c1 - e.c0) + 3.0 * t * t * (e.p1 - e.c1);
+struct Sample { pos: vec2f, tan: vec2f };
+
+// position and direction at arc fraction t: binary search for the segment
+fn sample(base: u32, t: f32) -> Sample {
+  let n = u32(edges[base + 4u]);
+  var lo = 0u;
+  var hi = max(n, 2u) - 1u;
+  for (var k = 0u; k < 6u && hi - lo > 1u; k++) {
+    let mid = (lo + hi) / 2u;
+    if (point(base, mid).z <= t) { lo = mid; } else { hi = mid; }
+  }
+  let a = point(base, lo);
+  let b = point(base, hi);
+  let f = clamp((t - a.z) / max(b.z - a.z, 1e-6), 0.0, 1.0);
+  var out: Sample;
+  out.pos = mix(a.xy, b.xy, f);
+  out.tan = b.xy - a.xy;
+  return out;
 }
 
 fn hash(i: u32) -> f32 {
@@ -57,7 +77,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VSOut
   let p = particles[ii];
   let dur = max(p.z, u.minDur);
   var t = (u.now - p.y) / dur;
-  if (p.y < 0.0 || t < 0.0 || t > 1.0 || u32(p.x) >= arrayLength(&edges)) {
+  if (p.y < 0.0 || t < 0.0 || t > 1.0 || u32(p.x) >= arrayLength(&edges) / STRIDE) {
     out.pos = vec4f(2.0, 2.0, 2.0, 1.0); // outside clip space: culled
     return out;
   }
@@ -67,22 +87,24 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VSOut
   let isResponse = kind == 1u || kind == 2u;
   if (isResponse) { t = 1.0 - t; } // responses travel back to the caller
 
-  let e = edges[u32(p.x)];
-  let tan = bezierTangent(e, t);
+  let base = u32(p.x) * STRIDE;
+  let at = sample(base, t);
+  let style = vec4f(edges[base], edges[base + 1u], edges[base + 2u], edges[base + 3u]);
+  let tan = at.tan;
   let len = max(length(tan), 1e-4);
   let dir = tan / len * select(1.0, -1.0, isResponse); // direction of travel
   let normal = vec2f(-tan.y, tan.x) / len;
   // spread particles into a stream; requests and responses use opposite lanes
   let jitter = select((hash(ii) - 0.5) * 4.0, 0.0, traced);
   let lane = select(-3.0, 3.0, isResponse);
-  let world = bezier(e, t) + normal * (lane + jitter);
+  let world = at.pos + normal * (lane + jitter);
 
   let corners = array<vec2f, 6>(
     vec2f(-1.0, -1.0), vec2f(1.0, -1.0), vec2f(-1.0, 1.0),
     vec2f(-1.0, 1.0), vec2f(1.0, -1.0), vec2f(1.0, 1.0)
   );
   let c = corners[vi];
-  let payload = select(e.style.x, e.style.y, isResponse);
+  let payload = select(style.x, style.y, isResponse);
   var radius = u.size * clamp(u.zoom, 0.6, 1.6) * max(payload, 1.0);
   if (kind == 2u) { radius *= 1.5; }
   if (kind == 0u || kind == 3u) { radius *= 1.25; }
@@ -108,7 +130,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VSOut
     out.color = vec3f(1.00, 0.62, 0.15); // retry
     out.shape = 1u;
   }
-  if (e.style.z > 0.5 && !isResponse) {
+  if (style.z > 0.5 && !isResponse) {
     out.color = mix(out.color, vec3f(0.75, 0.55, 1.0), 0.6); // fire-and-forget: violet tint
   }
   return out;

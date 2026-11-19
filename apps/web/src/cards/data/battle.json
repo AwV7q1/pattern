@@ -1,0 +1,113 @@
+{
+  "title": "Trận 1: Đêm botnet",
+  "enemy": "swarm",
+  "hp": 60,
+  "opsPerTurn": 3,
+  "handSize": 5,
+  "legitRps": 300,
+  "turnMs": 10000,
+  "sloP99Ms": 300,
+  "budgetPerHour": 1.5,
+  "failedPerDamage": 50,
+  "latencyDamage": 3,
+  "overBudgetDamage": 10,
+  "blockedPerDamage": 800,
+  "startingDeck": [
+    "scale_api",
+    "cache",
+    "timeout",
+    "breaker",
+    "rate_limit",
+    "rate_limit",
+    "burst",
+    "stale",
+    "stale",
+    "block_ip",
+    "block_ip",
+    "waf",
+    "runbook",
+    "coffee"
+  ],
+  "design": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng + bot",
+        "position": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Nginx",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "API",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 20,
+          "queueSize": 30,
+          "latencyP50Ms": 20,
+          "latencyP99Ms": 80,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "db",
+        "kind": "database",
+        "label": "PostgreSQL",
+        "position": {
+          "x": 0,
+          "y": 0
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 12,
+          "queueSize": 50,
+          "latencyP50Ms": 10,
+          "latencyP99Ms": 50,
+          "costPerHour": 0.5
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb",
+        "latencyMs": 5
+      },
+      {
+        "source": "lb",
+        "target": "api",
+        "latencyMs": 1
+      },
+      {
+        "source": "api",
+        "target": "db",
+        "latencyMs": 1
+      }
+    ]
+  },
+  "maxDamagePerTurn": 25
+}

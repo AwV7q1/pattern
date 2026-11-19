@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
 import {
   Background,
   Controls,
@@ -8,35 +8,44 @@ import {
   useNodesState,
   useReactFlow,
   MarkerType,
+  Panel,
   type Connection,
   type EdgeTypes,
   type Node,
   type NodeChange,
   type NodeTypes,
 } from '@xyflow/react';
-import { ArrowLeft, Bookmark, ChevronLeft, Download, Gamepad2, Gauge, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw, Shapes } from 'lucide-react';
-import { CASES, LEARN_LEVELS, LEVELS, PRESETS } from './presets';
-import { CaseLibrary } from './cases/CaseLibrary';
-import { LearnPage } from './learn/LearnPage';
-import { useProgress } from './learn/progress';
-import { LESSONS } from './learn/curriculum';
-import { SimClient } from './sim/client';
-import { clearEdgeGeometry } from './gpu/edgeGeometry';
+import { ArrowLeft, Bookmark, ChevronLeft, Download, Redo2, Undo2, GraduationCap, History, Maximize2, Sparkles, Minimize2, Pause, Play, RotateCcw } from 'lucide-react';
+import { LEARN_LEVELS, LEVELS } from '@/presets';
+import { useProgress } from '@/learn/progress';
+import { LESSONS } from '@/learn/curriculum';
+import { useSimClient } from '@/app/sim-context';
+import { countByTarget, lint, type Finding, type LintDesign } from '@pattern/design-lint';
+import { LintPanel } from './LintPanel';
+import { CONFLICT_EVENT, setOpenProject, useSync } from '@/projects/sync';
+import { idbStore } from '@/projects/store';
+import { ShareDialog } from './ShareDialog';
+import { Copy, Eye, GitCompareArrows, Share2, Wrench } from 'lucide-react';
+import { useNavigate } from 'react-router';
+import { useUi } from '@/app/ui-store';
+import { clearEdgeGeometry } from '@/gpu/edgeGeometry';
+import { EdgeFocusContext } from '@/components/edgeFocus';
+import { EdgeEditContext, type EdgeEdit } from '@/components/edgeEdit';
 import {
   BUILDABLE,
   DEFAULT_CONFIG,
   DEFAULT_POLICY,
-  type Design,
+  type EdgeLayout,
   type EdgePolicy,
   type NodeConfig,
   type NodeKind,
+  type Design,
+  type Level,
   type Preset,
-  type SizingReport,
   type Summary,
   type TraceEvent,
   type WindowMetrics,
-} from './types';
-import { CapacityPage } from './capacity/CapacityPage';
+} from '@/types';
 import {
   autoLayout,
   decorateEdges,
@@ -46,34 +55,35 @@ import {
   uniqueId,
   wouldCycle,
   type FlowEdgeType,
+  type EdgeStyleMode,
   type SystemNodeType,
-} from './model/flow';
-import { KIND_META, fmt } from './lib/meta';
-import { ParticleLegend } from './components/ParticleLegend';
-import { TracePanel, type PinnedTrace } from './components/TracePanel';
-import { SystemNode } from './components/SystemNode';
-import { FlowEdge } from './components/FlowEdge';
-import { ParticleLayer } from './components/ParticleLayer';
-import { MetricsPanel } from './components/MetricsPanel';
-import { EdgeInspector, NodeInspector } from './components/Inspector';
-import { LevelPanel } from './components/LevelPanel';
-import { ResultDialog } from './components/ResultDialog';
-import { DRAG_MIME, Palette } from './components/Palette';
-import { GROUP_MIME, TECH_MIME, TechLibrary } from './tech/TechLibrary';
-import { FrameNode, type FrameNodeType } from './components/FrameNode';
-import { GROUP_KINDS, childGroups, memberIds, withGroups } from './projects/groups';
-import { TechDialogs } from './tech/TechDialogs';
-import { techOf } from './tech/catalog';
-import { ProjectsHome } from './projects/ProjectsHome';
-import { SaveStatus, type SaveState } from './projects/SaveStatus';
-import { VersionHistory } from './projects/VersionHistory';
-import { Textarea } from './components/ui/textarea';
-import { PromptDialog } from './prompt/PromptDialog';
-import { Input } from './components/ui/input';
+} from '@/model/flow';
+import { KIND_META, fmt } from '@/lib/meta';
+import { ParticleLegend } from '@/components/ParticleLegend';
+import { TracePanel, type PinnedTrace } from '@/components/TracePanel';
+import { SystemNode } from '@/components/SystemNode';
+import { FlowEdge } from '@/components/FlowEdge';
+import { ParticleLayer } from '@/components/ParticleLayer';
+import { MetricsPanel } from '@/components/MetricsPanel';
+import { EdgeInspector, NodeInspector } from '@/components/Inspector';
+import { LevelPanel } from '@/components/LevelPanel';
+import { ResultDialog } from '@/components/ResultDialog';
+import { DRAG_MIME, Palette } from '@/components/Palette';
+import { GROUP_MIME, TECH_MIME, TechLibrary } from '@/tech/TechLibrary';
+import { FrameNode, type FrameNodeType } from '@/components/FrameNode';
+import { GROUP_KINDS, childGroups, memberIds, withGroups } from '@/projects/groups';
+import { techOf } from '@/tech/catalog';
+import { SaveStatus, type SaveState } from '@/projects/SaveStatus';
+import { VersionHistory } from '@/projects/VersionHistory';
+import { Textarea } from '@/components/ui/textarea';
+import { PromptDialog } from '@/prompt/PromptDialog';
+import { Input } from '@/components/ui/input';
+import { useUndo } from '@/projects/useUndo';
+import { CompareDialog } from '@/projects/CompareDialog';
 import {
   download,
   exportJson,
-  projectFromPreset,
+  onProjectsChanged,
   slug,
   snapshotOf,
   store,
@@ -82,18 +92,18 @@ import {
   type Project,
   type RunSnapshot,
   type Version,
-} from './projects/store';
-import { Button } from './components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { SidePanel } from './components/SidePanel';
-import { cn } from './lib/utils';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './components/ui/select';
-import { Slider } from './components/ui/slider';
-import { Switch } from './components/ui/switch';
-import { Label } from './components/ui/label';
-import { ToggleGroup, ToggleGroupItem } from './components/ui/toggle-group';
-import { ScrollArea } from './components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from './components/ui/tooltip';
+} from '@/projects/store';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SidePanel } from '@/components/SidePanel';
+import { cn } from '@/lib/utils';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const nodeTypes: NodeTypes = { system: SystemNode, frame: FrameNode };
 const edgeTypes: EdgeTypes = { flow: FlowEdge };
@@ -101,25 +111,63 @@ const HISTORY = 120;
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8'];
 const MULTIPLIERS = [1, 2, 3, 5];
 
-type Mode = 'learn' | 'sandbox' | 'game' | 'capacity';
-type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes';
+type Mode = 'sandbox' | 'game';
+
+export type WorkspaceProps =
+  | {
+      mode: 'game';
+      levelKey: string;
+      /** Community level fetched from the server (official ones come from the repo). */
+      level?: Level;
+      /** Opened from a lesson of the learning path. */
+      lessonId?: string | null;
+      onBackToPath?: () => void;
+      onLevelChange: (key: string) => void;
+      /** Replaces the level picker in the toolbar (interviews). */
+      title?: ReactNode;
+      /** Replaces the Level tab content (interviews): gets the current design. */
+      panel?: (design: () => Design) => ReactNode;
+      panelLabel?: string;
+    }
+  | {
+      mode: 'sandbox';
+      project: Project;
+      onClose: () => void;
+      /** Shared link (`/s/:slug`): nothing is saved; the visitor can copy it to their projects. */
+      readOnly?: { author: string; onDuplicate: (p: Project) => void };
+    };
+type Panel = 'metrics' | 'inspect' | 'level' | 'trace' | 'notes' | 'lint';
 const AUTO_VERSION_MS = 5 * 60 * 1000;
+/** Simulated time between two `lastRun` snapshots of the open project. */
+const RUN_SNAPSHOT_MS = 5000;
 const projectKey = (id: string) => `project:${id}`;
 const MAX_TRACE_EVENTS = 6000;
 
 const bestKey = (id: string) => `pattern.best.${id}`;
+const EMPTY_PRESET: Preset = {
+  title: '',
+  description: '',
+  design: { nodes: [], edges: [] },
+  scenario: { seed: 1, timeoutMs: 2000, traffic: [{ atMs: 0, rps: 0 }], slo: { p99Ms: 200, errorRate: 0.01 }, windowMs: 1000 },
+};
 const ALL_LEVELS = { ...LEVELS, ...LEARN_LEVELS };
 
-export function App() {
-  const client = useMemo(() => new SimClient(), []);
+/** Canvas + simulation + side panel, for a game level or a studio project. */
+export function Workspace(props: WorkspaceProps) {
+  const client = useSimClient();
   const { screenToFlowPosition } = useReactFlow();
-  const [mode, setMode] = useState<Mode>('learn');
+  const mode: Mode = props.mode;
+  const readOnly = props.mode === 'sandbox' ? props.readOnly : undefined;
+  const navigate = useNavigate();
+  const [shareOpen, setShareOpen] = useState(false);
+  const levelKey = props.mode === 'game' ? props.levelKey : Object.keys(LEVELS)[0];
   /** Practice level opened from a lesson of the learning path. */
-  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(null);
+  const [practice, setPractice] = useState<{ lessonId: string; level: string; xp?: number } | null>(
+    props.mode === 'game' && props.lessonId ? { lessonId: props.lessonId, level: props.levelKey } : null,
+  );
   const { complete } = useProgress();
-  const [presetKey, setPresetKey] = useState(Object.keys(PRESETS)[0]);
-  const [levelKey, setLevelKey] = useState(Object.keys(LEVELS)[0]);
-  /** Studio project open on the sandbox canvas (null = projects home). */
+  const [presetKey, setPresetKey] = useState('');
+  /** Studio project open on the sandbox canvas. */
   const [project, setProject] = useState<Project | null>(null);
   const projectRef = useRef(project);
   const [reloadTick, setReloadTick] = useState(0);
@@ -130,12 +178,8 @@ export function App() {
         : null,
     [project],
   );
-  const preset =
-    project && presetKey === projectKey(project.id) && projectPreset
-      ? projectPreset
-      : (PRESETS[presetKey] ?? PRESETS[Object.keys(PRESETS)[0]]);
-  const [sandboxDesign, setSandboxDesign] = useState<Design | null>(null);
-  const level = ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
+  const preset: Preset = projectPreset ?? EMPTY_PRESET;
+  const level = (props.mode === 'game' ? props.level : undefined) ?? ALL_LEVELS[levelKey] ?? LEVELS[Object.keys(LEVELS)[0]];
   const scenario = mode === 'game' ? level.scenario : preset.scenario;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<SystemNodeType>([]);
@@ -145,6 +189,9 @@ export function App() {
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const [groupSel, setGroupSel] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyleMode>(() => (localStorage.getItem('edgeStyle') === 'curve' ? 'curve' : 'orthogonal'));
+  useEffect(() => localStorage.setItem('edgeStyle', edgeStyle), [edgeStyle]);
   const dragMembers = useRef(new Map<string, { nodes: Set<string>; groups: Set<string> }>());
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
@@ -196,6 +243,7 @@ export function App() {
     [client],
   );
 
+  const undoReset = useRef<(() => void) | null>(null);
   const load = useCallback(() => {
     const s = settings.current;
     const source = s.mode === 'game' ? s.level : s.preset;
@@ -209,6 +257,7 @@ export function App() {
       design: JSON.stringify(withGroups(toDesign(flow.nodes, flow.edges), frames)),
     };
     clearEdgeGeometry();
+    undoReset.current?.();
     setNodes(flow.nodes);
     setEdges(flow.edges);
     setMultiplier(1);
@@ -223,42 +272,18 @@ export function App() {
   }, [client, restart, setEdges, setNodes]);
 
   useEffect(() => {
-    if (mode === 'capacity' || mode === 'learn') {
-      client.pause();
-      setRunning(false);
-      return;
-    }
+    if (mode === 'sandbox' && !presetKey) return; // project not opened yet
     setPanel(mode === 'game' ? 'level' : 'metrics');
     load();
   }, [client, mode, presetKey, levelKey, load, reloadTick]);
 
-  const switchMode = (next: Mode) => {
-    if (mode === 'sandbox') {
-      setSandboxDesign(toDesign(nodesRef.current, edgesRef.current));
-      flushSave.current?.();
-    }
-    if (next !== 'game') setPractice(null);
-    // learning-path levels are only reachable from their lesson
-    if (next === 'game' && !practice && levelKey.startsWith('learn/')) setLevelKey(Object.keys(LEVELS)[0]);
-    setMode(next);
-  };
-
-  /** A lesson asks for its practice level on the canvas. */
-  const openPractice = (levelId: string, lessonId: string) => {
-    if (!ALL_LEVELS[levelId]) return;
-    setPractice({ lessonId, level: levelId });
-    setLevelKey(levelId);
-    setMode('game');
-  };
   const backToPath = () => {
     setPractice(null);
-    setLevelKey(Object.keys(LEVELS)[0]);
-    setMode('learn');
+    if (props.mode === 'game') props.onBackToPath?.();
   };
 
   // ------------------------------------------------------------------ studio projects
 
-  const [homeTab, setHomeTab] = useState('mine');
   const [saveState, setSaveState] = useState<SaveState>({ status: 'idle' });
   const [notes, setNotes] = useState('');
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -266,20 +291,31 @@ export function App() {
   const [flash, setFlash] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
+  /** Version vs. canvas, both frozen when the comparison was asked for. */
+  const [compare, setCompare] = useState<{ label: string; design: Design; current: Design } | null>(null);
+  /** Another tab saved (or deleted) the open project since this tab loaded it. */
+  const [conflict, setConflict] = useState<{ theirs: Project | undefined } | null>(null);
+  const conflictRef = useRef(conflict);
+  conflictRef.current = conflict;
   const saved = useRef({ design: '', notes: '' });
   const lastVersionAt = useRef(0);
   const flushSave = useRef<(() => void) | null>(null);
-  projectRef.current = project;
+  // `projectRef` is NOT synced from `project` on render: saves set it to the
+  // new copy before writing, and a render in between (e.g. "Đang lưu…") would
+  // put the stale copy back and make this tab's own write look like a conflict.
+  // Every `setProject` call updates the ref itself.
 
   const showFlash = (text: string) => {
     setFlash(text);
     setTimeout(() => setFlash((f) => (f === text ? null : f)), 2500);
   };
 
+  const firstVersionFor = useRef<string | null>(null);
   const openProject = useCallback((p: Project) => {
     const opened = { ...p, design: { ...autoLayout(p.design), groups: p.design.groups } };
     projectRef.current = opened;
     setProject(opened);
+    setConflict(null);
     setNotes(opened.notes);
     saved.current = { design: '', notes: opened.notes };
     setSaveState({ status: 'saved', at: opened.updatedAt });
@@ -288,19 +324,59 @@ export function App() {
     setScripted(false);
     settings.current.scripted = false;
     lastVersionAt.current = Date.now();
+    if (readOnly) return;
     store.versions(opened.id).then((vs) => {
       if (vs.length) lastVersionAt.current = vs[0].at;
-      else store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      // a project from the server already has its history elsewhere
+      else if (!opened.rev && firstVersionFor.current !== opened.id) {
+        firstVersionFor.current = opened.id; // StrictMode runs the open effect twice
+        store.addVersion(snapshotOf(opened, 'Tạo dự án')).then(() => setVersionRev((r) => r + 1));
+      }
     });
-  }, []);
+  }, [readOnly]);
 
   const closeProject = () => {
     flushSave.current?.();
+    // the flushed save resolves later: it must not reopen this project
+    projectRef.current = null;
     client.pause();
     setRunning(false);
-    setProject(null);
-    setPresetKey(Object.keys(PRESETS)[0]);
+    if (props.mode === 'sandbox') props.onClose();
   };
+
+  // open the project given by the route
+  const initialProject = props.mode === 'sandbox' ? props.project : null;
+  useEffect(() => {
+    if (!initialProject) return;
+    openProject(initialProject);
+    // sync must not replace it while it is on the canvas
+    setOpenProject(initialProject.id);
+    return () => setOpenProject(null);
+  }, [initialProject, openProject]);
+  // is the open project in the account yet? (the sync engine sets `owner`)
+  const lastSync = useSync((s) => s.lastSync);
+  const [owned, setOwned] = useState(false);
+  useEffect(() => {
+    if (initialProject && !readOnly) void idbStore.get(initialProject.id).then((p) => setOwned(!!p?.owner));
+  }, [initialProject, readOnly, lastSync]);
+  useEffect(() => {
+    const onConflict = (e: Event) =>
+      showFlash(`“${(e as CustomEvent<{ name: string }>).detail.name}” cũng được sửa ở máy khác: bản đó được giữ trong lịch sử phiên bản`);
+    window.addEventListener(CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(CONFLICT_EVENT, onConflict);
+  }, []);
+
+  // leaving the page: stop the engine, save, remember the design for the capacity tools
+  const setLastDesign = useUi((s) => s.setLastDesign);
+  useEffect(
+    () => () => {
+      flushSave.current?.();
+      client.pause();
+      const p = projectRef.current;
+      if (p) setLastDesign({ title: p.name, design: toDesign(nodesRef.current, edgesRef.current) });
+    },
+    [client, setLastDesign],
+  );
 
   /** Write the canvas + notes to IndexedDB now. */
   const persist = useCallback(async (design: string, nextNotes: string) => {
@@ -315,7 +391,18 @@ export function App() {
     projectRef.current = p;
     setSaveState({ status: 'saving' });
     try {
-      await store.put(p);
+      const res = await store.putIfUnchanged(p, current.updatedAt);
+      if (!res.ok) {
+        // keep the edits on the canvas, unsaved, until the user picks a side
+        if (projectRef.current?.id === p.id) projectRef.current = current;
+        if (projectRef.current?.id === current.id) {
+          setConflict({ theirs: res.current });
+          setSaveState({ status: 'conflict' });
+        }
+        return null;
+      }
+      // closed or switched to another project while writing: keep the UI as it is
+      if (projectRef.current?.id !== p.id) return p;
       saved.current = { design, notes: nextNotes };
       setProject(p);
       setSaveState({ status: 'saved', at: p.updatedAt });
@@ -331,14 +418,28 @@ export function App() {
     }
   }, []);
 
+  // keyed on the project id only: `project` itself changes on every lastRun
+  // snapshot and would keep resetting the autosave debounce while the simulation runs
+  const projectId = project?.id;
   const designJson = useMemo(
-    () => (project && mode === 'sandbox' ? JSON.stringify(withGroups(toDesign(nodes, edges), groups)) : null),
-    [project, mode, nodes, edges, groups],
+    () => (projectId && mode === 'sandbox' ? JSON.stringify(withGroups(toDesign(nodes, edges), groups)) : null),
+    [projectId, mode, nodes, edges, groups],
   );
+
+  // design review (studio only: in game levels it would give the answer away)
+  const findings = useMemo<Finding[]>(
+    () => (designJson ? lint(JSON.parse(designJson) as LintDesign, preset.scenario) : []),
+    [designJson, preset.scenario],
+  );
+  const lintCounts = useMemo(() => countByTarget(findings), [findings]);
 
   // autosave: debounce edits (drag, config, wiring, notes) 800 ms
   useEffect(() => {
-    if (!designJson || !project || loaded.current.key !== projectKey(project.id)) return;
+    if (readOnly || !designJson || !projectId || loaded.current.key !== projectKey(projectId)) return;
+    if (conflict) {
+      flushSave.current = null;
+      return;
+    }
     if (!saved.current.design) saved.current.design = loaded.current.design;
     const dirty = designJson !== saved.current.design || notes !== saved.current.notes;
     if (!dirty) {
@@ -354,7 +455,7 @@ export function App() {
     flushSave.current = run;
     const t = setTimeout(run, 800);
     return () => clearTimeout(t);
-  }, [designJson, notes, project, persist]);
+  }, [designJson, notes, projectId, persist, readOnly, conflict]);
 
   // do not lose the last 800 ms when the tab closes
   useEffect(() => {
@@ -381,7 +482,7 @@ export function App() {
 
   // ⌘S / Ctrl+S: named version
   useEffect(() => {
-    if (mode !== 'sandbox' || !project) return;
+    if (mode !== 'sandbox' || !project || readOnly) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
@@ -390,14 +491,20 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [mode, project, saveNamedVersion]);
+  }, [mode, project, saveNamedVersion, readOnly]);
 
   const restoreVersion = async (v: Version) => {
     const current = projectRef.current;
     if (!current) return;
     await store.addVersion(snapshotOf(current, 'Trước khi khôi phục'));
     const p: Project = { ...current, design: v.design, scenario: v.scenario, notes: v.notes, updatedAt: Date.now() };
-    await store.put(p);
+    projectRef.current = p; // so this tab does not see its own write as a conflict
+    const res = await store.putIfUnchanged(p, current.updatedAt);
+    if (!res.ok) {
+      projectRef.current = current;
+      setConflict({ theirs: res.current });
+      return;
+    }
     setVersionRev((r) => r + 1);
     openProject(p);
     showFlash('Đã khôi phục phiên bản');
@@ -410,40 +517,48 @@ export function App() {
     const p = { ...current, name: name.trim(), updatedAt: Date.now() };
     projectRef.current = p;
     setProject(p);
-    await store.put(p);
+    const res = await store.putIfUnchanged(p, current.updatedAt);
+    if (!res.ok) {
+      if (projectRef.current === p) projectRef.current = current;
+      setProject(current);
+      setConflict({ theirs: res.current });
+    }
   };
 
-  /** Load a generated design (sizing, calibration) into the sandbox as a new project. */
-  const openInSandbox = (key: string, p: Preset) => {
-    const created = projectFromPreset({ ...p, design: autoLayout(p.design) }, p.title, key);
-    store.put(created).then(() => {
-      openProject(created);
-      setMode('sandbox');
+  // another tab wrote this project: warn now, not only at the next save
+  useEffect(() => {
+    if (!projectId) return;
+    return onProjectsChanged(async () => {
+      const mine = projectRef.current;
+      if (!mine || mine.id !== projectId || conflictRef.current) return;
+      const theirs = await store.get(projectId);
+      if (projectRef.current !== mine) return;
+      if (!theirs || theirs.updatedAt > mine.updatedAt) setConflict({ theirs });
     });
+  }, [projectId]);
+
+  /** Conflict: drop this tab's unsaved edits and load what the other tab saved. */
+  const takeTheirs = () => {
+    const theirs = conflictRef.current?.theirs;
+    flushSave.current = null;
+    if (theirs) openProject(theirs);
   };
-  const openSizing = (r: SizingReport, title: string) => {
-    if (!r.input) return;
-    const t = r.input.scenario.traffic;
-    openInSandbox('custom-sizing', {
-      title,
-      description: `Đề xuất của Sizing wizard: Node cluster (1 process/vCPU) + Postgres, pool mỗi process. Cao điểm ${Math.round(t[0].rps)} rps; bật "Traffic theo kịch bản" để có đột biến ${Math.round(t[1]?.rps ?? 0)} rps ở giây 30–40. Thử tắt app server hoặc làm chậm DB.`,
-      design: r.input.design,
-      scenario: r.input.scenario,
-    });
+  /** Conflict: overwrite with this tab, keeping the other tab's copy in the history. */
+  const keepMine = async () => {
+    const current = projectRef.current;
+    const theirs = conflictRef.current?.theirs;
+    if (!current) return;
+    if (theirs) await store.addVersion(snapshotOf(theirs, 'Bản từ tab khác (trước khi ghi đè)'));
+    const p: Project = { ...current, design: withGroups(toDesign(nodesRef.current, edgesRef.current), groups), notes, updatedAt: Date.now() };
+    await store.put(p);
+    projectRef.current = p;
+    saved.current = { design: JSON.stringify(p.design), notes };
+    setProject(p);
+    setConflict(null);
+    setSaveState({ status: 'saved', at: p.updatedAt });
+    setVersionRev((r) => r + 1);
+    showFlash(theirs ? 'Đã ghi đè; bản của tab kia nằm trong lịch sử' : 'Đã lưu lại dự án');
   };
-  const openCalibrated = (design: Design, title: string, slo?: { p99Ms: number; errorRate: number }) =>
-    openInSandbox('custom-calibrated', {
-      title,
-      description: 'Design đã hiệu chỉnh từ số đo k6. Kéo RPS để xem hệ thống phản ứng thế nào quanh giới hạn dự đoán.',
-      design,
-      scenario: {
-        seed: 1,
-        timeoutMs: 60000,
-        traffic: [{ atMs: 0, rps: 500 }],
-        slo: slo ?? { p99Ms: 200, errorRate: 0.01 },
-        windowMs: 1000,
-      },
-    });
 
   // worker events
   useEffect(() => {
@@ -477,15 +592,20 @@ export function App() {
     });
   }, [client, setEdges, setNodes]);
 
-  // remember how the open project behaved (feeds the agent prompt)
+  // remember how the open project behaved (feeds the agent prompt), every 5 s of
+  // simulated time; `windows` is capped at HISTORY so its length cannot be the clock
+  const lastRunAt = useRef(-Infinity);
   useEffect(() => {
     const current = projectRef.current;
-    if (!current || mode !== 'sandbox' || windows.length < 5 || windows.length % 5 !== 0) return;
+    const last = windows[windows.length - 1];
+    if (!last || last.tMs < lastRunAt.current) lastRunAt.current = -Infinity; // restarted
+    if (!current || mode !== 'sandbox' || !last || windows.length < 5) return;
+    if (last.tMs - lastRunAt.current < RUN_SNAPSHOT_MS) return;
+    lastRunAt.current = last.tMs;
     const recent = windows.slice(-10);
     const avg = (f: (w: WindowMetrics) => number) => recent.reduce((s, w) => s + f(w), 0) / recent.length;
     const total = recent.reduce((s, w) => s + w.okCount + w.errorCount, 0);
     const errors = recent.reduce((s, w) => s + w.errorCount, 0);
-    const last = recent[recent.length - 1];
     const ns = [...nodesRef.current].sort((a, b) => a.data.index - b.data.index);
     const hot = ns
       .filter((n) => n.data.kind !== 'client')
@@ -506,17 +626,22 @@ export function App() {
       p99Ms: avg((w) => w.p99Ms),
       errorRate: total ? errors / total : 0,
       sloOk: recent.filter((w) => w.sloOk).length / recent.length,
-      costPerHour: nodesRef.current.reduce(
-        (sum, n) => sum + (n.data.kind === 'client' ? 0 : n.data.config.costPerHour * n.data.config.instances),
-        0,
-      ),
+      // replicas actually running (autoscale changes them; starting pods are billed too)
+      costPerHour: ns.reduce((sum, n) => {
+        if (n.data.kind === 'client') return sum;
+        const i = n.data.index;
+        const replicas = avg((w) => (w.nodes[i] ? w.nodes[i].instances + w.nodes[i].starting : n.data.config.instances));
+        return sum + n.data.config.costPerHour * replicas;
+      }, 0),
       hot,
     };
+    if (conflictRef.current) return;
     const p = { ...current, lastRun };
     projectRef.current = p;
     setProject(p);
-    store.put(p).catch(() => {});
-  }, [windows, mode]);
+    // same updatedAt: it is metadata, but must not clobber another tab's newer design
+    if (!readOnly) store.putIfUnchanged(p, current.updatedAt).catch(() => {});
+  }, [windows, mode, readOnly]);
 
   // follow one request every 2 s of wall time
   useEffect(() => {
@@ -526,11 +651,69 @@ export function App() {
     return () => clearInterval(id);
   }, [autoTrace, running, client]);
 
+  // ------------------------------------------------- hand-made edge drawing
+
+  /** Edge whose route is being dragged: drawn as dragged even across a node. */
+  const [editingEdge, setEditingEdge] = useState<string | null>(null);
+  const layoutBeforeEdit = useRef<EdgeLayout | undefined>(undefined);
+  const setEdgeLayout = useCallback(
+    (id: string, layout: EdgeLayout | undefined) =>
+      setEdges((es) => es.map((e) => (e.id === id ? { ...e, data: { ...e.data!, layout } } : e))),
+    [setEdges],
+  );
+  const edgeEdit = useMemo<EdgeEdit>(
+    () => ({
+      orthogonal: edgeStyle === 'orthogonal',
+      begin(id) {
+        layoutBeforeEdit.current = edgesRef.current.find((e) => e.id === id)?.data?.layout;
+        setEditingEdge(id);
+      },
+      set: setEdgeLayout,
+      end(id) {
+        setEditingEdge(null);
+        // a route released across a node is undone
+        setEdges((es) => {
+          const e = es.find((x) => x.id === id);
+          if (!e?.data?.layout?.bends || edgeStyle !== 'orthogonal') return es;
+          const ok = decorateEdges(nodesRef.current, es, 'orthogonal').find((x) => x.id === id)?.data?.view?.manual;
+          return ok ? es : es.map((x) => (x.id === id ? { ...x, data: { ...x.data!, layout: layoutBeforeEdit.current } } : x));
+        });
+      },
+    }),
+    [edgeStyle, setEdgeLayout, setEdges],
+  );
+  /**
+   * Nodes moved together carry the hand-made bends of the edges between
+   * them; a single node moving leaves the inner runs where they are.
+   */
+  const shiftBends = useCallback(
+    (moves: Map<string, { dx: number; dy: number }>) => {
+      if (!moves.size) return;
+      setEdges((es) => {
+        let changed = false;
+        const next = es.map((e) => {
+          const l = e.data?.layout;
+          const a = moves.get(e.source);
+          const b = moves.get(e.target);
+          if (!l?.bends || !l.fromSide || !a || !b || a.dx !== b.dx || a.dy !== b.dy) return e;
+          changed = true;
+          // bend 0 is an x when the edge leaves sideways, then axes alternate
+          const h0 = l.fromSide === 'left' || l.fromSide === 'right';
+          const bends = l.bends.map((v, i) => v + ((i % 2 === 0) === h0 ? a.dx : a.dy));
+          return { ...e, data: { ...e.data!, layout: { ...l, bends } } };
+        });
+        return changed ? next : es;
+      });
+    },
+    [setEdges],
+  );
+
   /** Edges as drawn: fanned out, numbered, with an arrow at the callee. */
   const viewEdges = useMemo(
     () =>
-      decorateEdges(nodes, edges).map((e) => ({
+      decorateEdges(nodes, edges, edgeStyle, editingEdge).map((e) => ({
         ...e,
+        data: { ...e.data!, lint: lintCounts.edges.get(`${e.source}->${e.target}`) },
         markerEnd: {
           type: MarkerType.ArrowClosed,
           width: 14,
@@ -538,7 +721,7 @@ export function App() {
           color: e.selected ? 'var(--primary)' : 'oklch(0.6 0 0)',
         },
       })),
-    [nodes, edges],
+    [nodes, edges, lintCounts, edgeStyle, editingEdge],
   );
 
   // ------------------------------------------------------------------ editing
@@ -553,6 +736,42 @@ export function App() {
     },
     [client, restart, setEdges, setNodes],
   );
+
+  // undo / redo: whole-design snapshots of the open project
+  const applyDesign = useCallback(
+    (json: string) => {
+      const d = JSON.parse(json) as Design & { groups?: DesignGroup[] };
+      const flow = toFlow(d, ['client'], client.catalog);
+      const frames = d.groups ?? [];
+      setGroups(frames);
+      groupsRef.current = frames;
+      setGroupSel(null);
+      commit(flow.nodes, flow.edges);
+    },
+    [client, commit],
+  );
+  // only once the canvas shows this project (load() resets the history)
+  const undoable = useUndo(
+    projectId ?? null,
+    projectId && loaded.current.key === projectKey(projectId) ? designJson : null,
+    applyDesign,
+  );
+  undoReset.current = undoable.reset;
+  useEffect(() => {
+    if (mode !== 'sandbox' || !projectId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) undoable.undo();
+      else if ((k === 'z' && e.shiftKey) || k === 'y') undoable.redo();
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mode, projectId, undoable.undo, undoable.redo]);
 
   const isValidConnection = useCallback((c: Connection | FlowEdgeType) => {
     if (!c.source || !c.target || c.source === c.target) return false;
@@ -639,6 +858,10 @@ export function App() {
 
   const selectedNode = nodes.find((n) => n.selected);
   const selectedEdge = selectedNode ? undefined : viewEdges.find((e) => e.selected);
+  const edgeFocus = useMemo(
+    () => ({ node: hovered ?? selectedNode?.id ?? null, edge: hovered ? null : (selectedEdge?.id ?? null) }),
+    [hovered, selectedNode?.id, selectedEdge?.id],
+  );
   const selectedGroup = selectedNode || selectedEdge ? undefined : groups.find((g) => g.id === groupSel);
   const selectionKey = selectedNode?.id ?? selectedEdge?.id ?? selectedGroup?.id;
   useEffect(() => {
@@ -671,14 +894,31 @@ export function App() {
         : [],
     [mode, groups, groupSel, nodes],
   );
-  const canvasNodes = useMemo(() => [...frameNodes, ...nodes] as Node[], [frameNodes, nodes]);
+  const canvasNodes = useMemo(
+    () =>
+      [
+        ...frameNodes,
+        ...(lintCounts.nodes.size
+          ? nodes.map((n) => (lintCounts.nodes.has(n.id) ? { ...n, data: { ...n.data, lint: lintCounts.nodes.get(n.id) } } : n))
+          : nodes),
+      ] as Node[],
+    [frameNodes, nodes, lintCounts],
+  );
 
   const onCanvasNodesChange = useCallback(
     (changes: NodeChange<Node>[]) => {
       const ids = new Set(groupsRef.current.map((g) => g.id));
       const isFrame = (c: NodeChange<Node>) => 'id' in c && ids.has(c.id);
       const nodeChanges = changes.filter((c) => !isFrame(c)) as NodeChange<SystemNodeType>[];
+      const moved = new Map<string, { dx: number; dy: number }>();
+      for (const c of nodeChanges) {
+        if (c.type !== 'position' || !c.position) continue;
+        const n = nodesRef.current.find((x) => x.id === c.id);
+        if (n && (n.position.x !== c.position.x || n.position.y !== c.position.y))
+          moved.set(c.id, { dx: c.position.x - n.position.x, dy: c.position.y - n.position.y });
+      }
       if (nodeChanges.length) onNodesChange(nodeChanges);
+      shiftBends(moved);
       const frameChanges = changes.filter(isFrame);
       if (!frameChanges.length) return;
       let next = groupsRef.current;
@@ -704,11 +944,12 @@ export function App() {
         if (!m) return;
         next = next.map((x) => (m.groups.has(x.id) ? { ...x, position: { x: x.position.x + dx, y: x.position.y + dy } } : x));
         setNodes((ns) => ns.map((n) => (m.nodes.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n)));
+        shiftBends(new Map([...m.nodes].map((nid) => [nid, { dx, dy }])));
       });
       groupsRef.current = next;
       setGroups(next);
     },
-    [onNodesChange, setNodes],
+    [onNodesChange, setNodes, shiftBends],
   );
 
   const onNodeDragStart = useCallback((_: unknown, node: Node) => {
@@ -736,6 +977,31 @@ export function App() {
       .filter((n) => members.has(n.id) && n.data.kind !== 'client')
       .forEach((n) => client.setNodeDown(n.data.index, down));
     setNodes((ns) => ns.map((n) => (members.has(n.id) && n.data.kind !== 'client' ? { ...n, data: { ...n.data, down } } : n)));
+  };
+
+  /** Show a finding's node or edge on the canvas (opens its inspector). */
+  const selectFinding = (f: Finding) => {
+    const t = f.target;
+    if ('design' in t) return;
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: 'node' in t && n.id === t.node })));
+    setEdges((es) => es.map((e) => ({ ...e, selected: 'edge' in t && e.source === t.edge[0] && e.target === t.edge[1] })));
+  };
+  /** Apply the one-click fix of a finding and rerun. */
+  const applyFix = (f: Finding) => {
+    if (!f.fix) return;
+    let ns = nodesRef.current;
+    let es = edgesRef.current;
+    for (const p of f.fix.patches) {
+      const t = p.target;
+      if ('node' in t)
+        ns = ns.map((n) => (n.id === t.node ? { ...n, data: { ...n.data, config: { ...n.data.config, [p.field]: p.value } } } : n));
+      else
+        es = es.map((e) =>
+          e.source === t.edge[0] && e.target === t.edge[1] ? { ...e, data: { ...e.data!, policy: { ...e.data!.policy, [p.field]: p.value } } } : e,
+        );
+    }
+    commit(ns, es);
+    showFlash(`Đã áp dụng: ${f.fix.label}`);
   };
 
   const updateNode = (id: string, config: NodeConfig, label: string) =>
@@ -815,49 +1081,37 @@ export function App() {
   const paletteKinds = mode === 'game' ? level.palette : BUILDABLE;
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <div className="flex items-center gap-2 font-semibold">
-          <span className="flex size-7 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <Shapes className="size-4" />
-          </span>
-          Pattern
-        </div>
-        <Tabs value={mode} onValueChange={(v) => switchMode(v as Mode)}>
-          <TabsList>
-            <TabsTrigger value="learn">
-              <GraduationCap /> Học
-            </TabsTrigger>
-            <TabsTrigger value="game">
-              <Gamepad2 /> Game
-            </TabsTrigger>
-            <TabsTrigger value="sandbox">
-              <Shapes /> Sandbox
-            </TabsTrigger>
-            <TabsTrigger value="capacity">
-              <Gauge /> Công suất
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {mode === 'capacity' || mode === 'learn' ? null : mode === 'game' ? (
+    <div className="flex h-full min-h-0 flex-col">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
+        {props.mode === 'game' && props.title ? (
+          props.title
+        ) : mode === 'game' ? (
           <Select
             value={levelKey}
             onValueChange={(v) => {
               setPractice(null);
-              setLevelKey(v);
+              if (props.mode === 'game') props.onLevelChange(v);
             }}
           >
             <SelectTrigger className="w-64">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Object.entries(practice ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
+              {Object.entries(practice || !(levelKey in LEVELS) ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
                 <SelectItem key={key} value={key}>
                   {l.title}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        ) : project && readOnly ? (
+          <div className="flex min-w-0 items-center gap-2 text-sm">
+            <Eye className="size-4 text-muted-foreground" />
+            <span className="max-w-72 truncate font-medium">{project.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              chỉ xem · của {readOnly.author} · sửa thử thoải mái, không lưu
+            </span>
+          </div>
         ) : project ? (
           <div className="flex min-w-0 items-center gap-1 text-sm">
             <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" onClick={closeProject}>
@@ -885,16 +1139,12 @@ export function App() {
               </button>
             )}
             <span className="ml-2">
-              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={saveState} />}
+              {flash ? <span className="text-xs text-success">{flash}</span> : <SaveStatus state={conflict ? { status: 'conflict' } : saveState} owned={owned} />}
             </span>
           </div>
         ) : null}
 
-        <div
-          className={
-            mode === 'capacity' || mode === 'learn' || (mode === 'sandbox' && !project) ? 'hidden' : 'ml-auto flex items-center gap-2'
-          }
-        >
+        <div className={mode === 'sandbox' && !project ? 'hidden' : 'ml-auto flex items-center gap-2'}>
           {mode === 'game' && (
             <div className="flex w-40 items-center gap-2 font-mono text-xs text-muted-foreground">
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -943,8 +1193,69 @@ export function App() {
               ))}
             </SelectContent>
           </Select>
-          {mode === 'sandbox' && (
+          {readOnly && (
+            <Button
+              size="sm"
+              onClick={() =>
+                project && readOnly.onDuplicate({ ...project, design: withGroups(toDesign(nodes, edges), groups), notes })
+              }
+            >
+              <Copy /> Nhân bản vào dự án của tôi
+            </Button>
+          )}
+          {mode === 'sandbox' && !readOnly && (
             <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.undo} disabled={!undoable.canUndo} aria-label="Hoàn tác">
+                    <Undo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Hoàn tác (⌘/Ctrl+Z)</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" onClick={undoable.redo} disabled={!undoable.canRedo} aria-label="Làm lại">
+                    <Redo2 />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Làm lại (⌘/Ctrl+Shift+Z)</TooltipContent>
+              </Tooltip>
+              <Button size="sm" variant="secondary" onClick={() => setShareOpen(true)}>
+                <Share2 /> Chia sẻ
+              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Tạo level từ dự án"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/levels/new?from=${project.id}`);
+                    }}
+                  >
+                    <Wrench />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Tạo level game từ dự án này</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="So sánh A/B"
+                    onClick={() => {
+                      flushSave.current?.();
+                      if (project) navigate(`/studio/${project.id}/compare`);
+                    }}
+                  >
+                    <GitCompareArrows />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>So sánh A/B với phiên bản cũ hoặc dự án khác</TooltipContent>
+              </Tooltip>
               <Button size="sm" variant="secondary" onClick={() => setPromptOpen(true)}>
                 <Sparkles /> Prompt
               </Button>
@@ -976,22 +1287,30 @@ export function App() {
           )}
         </div>
       </header>
+      {mode === 'sandbox' && project && conflict && (
+        <div role="alert" className="flex shrink-0 items-center gap-3 border-b bg-warning/15 px-4 py-2 text-sm">
+          <span>
+            {conflict.theirs
+              ? 'Dự án này vừa được sửa ở một tab khác. Thay đổi ở tab này chưa được lưu.'
+              : 'Dự án này đã bị xoá ở một tab khác.'}
+          </span>
+          <span className="ml-auto flex gap-2">
+            {conflict.theirs ? (
+              <Button size="sm" variant="secondary" className="h-7" onClick={takeTheirs}>
+                Tải bản mới nhất
+              </Button>
+            ) : (
+              <Button size="sm" variant="secondary" className="h-7" onClick={closeProject}>
+                Đóng dự án
+              </Button>
+            )}
+            <Button size="sm" variant="outline" className="h-7" onClick={keepMine}>
+              {conflict.theirs ? 'Giữ bản của tab này' : 'Lưu lại dự án'}
+            </Button>
+          </span>
+        </div>
+      )}
 
-      {mode === 'learn' ? (
-        <LearnPage onBuild={openPractice} />
-      ) : mode === 'capacity' ? (
-        <CapacityPage sandboxDesign={sandboxDesign} onOpenSizing={openSizing} onOpenCalibrated={openCalibrated} />
-      ) : mode === 'sandbox' && !project ? (
-        <ProjectsHome
-          presets={PRESETS}
-          onOpen={openProject}
-          tab={homeTab}
-          onTab={setHomeTab}
-          extraTabs={[
-            { value: 'cases', label: `Case study · ${CASES.length}`, content: <CaseLibrary cases={CASES} onOpen={openProject} /> },
-          ]}
-        />
-      ) : (
       <div className="relative flex min-h-0 flex-1">
         {mode === 'sandbox' ? (
           <aside className="flex w-60 shrink-0 flex-col gap-3 border-r p-3">
@@ -1005,6 +1324,8 @@ export function App() {
         )}
 
         <main className="relative flex-1" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+          <EdgeFocusContext value={edgeFocus}>
+          <EdgeEditContext value={edgeEdit}>
           <ReactFlow
             nodes={canvasNodes}
             edges={viewEdges}
@@ -1013,8 +1334,11 @@ export function App() {
             onNodesChange={onCanvasNodesChange}
             onNodeDragStart={onNodeDragStart}
             onNodeDragStop={onNodeDragStop}
+            onNodeMouseEnter={(_, n) => n.type === 'system' && setHovered(n.id)}
+            onNodeMouseLeave={() => setHovered(null)}
             elevateNodesOnSelect={false}
             onEdgesChange={onEdgesChange}
+            onEdgeDoubleClick={(_, e) => setEdgeLayout(e.id, undefined)}
             onConnect={onConnect}
             onDelete={({ nodes: dn, edges: de }) =>
               onDelete({ nodes: dn.filter((n) => n.type === 'system') as SystemNodeType[], edges: de as FlowEdgeType[] })
@@ -1028,8 +1352,29 @@ export function App() {
           >
             <Background gap={24} color="oklch(1 0 0 / 6%)" />
             <ParticleLayer client={client} />
-            <Controls showInteractive={false} position="bottom-right" />
+            <Controls showInteractive={false} position="bottom-right" style={{ marginBottom: 96 }} />
+            <Panel position="bottom-left" className="!m-3">
+              <div className="flex overflow-hidden rounded-md border bg-background/90 text-[11px]">
+                {(
+                  [
+                    ['orthogonal', 'Vuông góc', 'Cạnh đi theo đường ngang/dọc, vòng qua các node'],
+                    ['curve', 'Cong', 'Cạnh là đường cong nối thẳng hai node'],
+                  ] as const
+                ).map(([k, label, title]) => (
+                  <button
+                    key={k}
+                    title={title}
+                    onClick={() => setEdgeStyle(k)}
+                    className={cn('px-2 py-1', edgeStyle === k ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Panel>
           </ReactFlow>
+          </EdgeEditContext>
+          </EdgeFocusContext>
           {practice && mode === 'game' && (
             <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-3 rounded-full border border-primary/40 bg-background/90 py-1 pr-1 pl-4 text-xs shadow-lg backdrop-blur">
               <GraduationCap className="size-4 text-primary" />
@@ -1043,7 +1388,7 @@ export function App() {
             </div>
           )}
           {error && (
-            <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
+            <div className="absolute bottom-24 left-1/2 z-10 -translate-x-1/2 rounded-md border border-destructive/50 bg-destructive/15 px-3 py-2 text-sm text-destructive backdrop-blur">
               {error}
             </div>
           )}
@@ -1052,11 +1397,26 @@ export function App() {
         <SidePanel full={panelFull} onExitFull={exitPanelFull}>
           <Tabs value={panel} onValueChange={(v) => setPanel(v as Panel)} className="min-h-0 flex-1 gap-0">
             <div className="m-3 mb-0 flex items-center gap-2">
-              <TabsList className={cn('flex-1', panelFull && 'mx-auto max-w-xl')}>
-                {mode === 'game' && <TabsTrigger value="level">Level</TabsTrigger>}
+              <TabsList className={cn('min-w-0 flex-1 justify-start overflow-x-auto', panelFull && 'mx-auto max-w-xl')}>
+                {mode === 'game' && <TabsTrigger value="level">{(props.mode === 'game' && props.panelLabel) || 'Level'}</TabsTrigger>}
                 <TabsTrigger value="metrics">Số liệu</TabsTrigger>
                 <TabsTrigger value="trace">Trace</TabsTrigger>
                 <TabsTrigger value="inspect">Thuộc tính</TabsTrigger>
+                {mode === 'sandbox' && (
+                  <TabsTrigger value="lint" className="gap-1">
+                    Kiểm tra
+                    {findings.some((f) => f.severity !== 'info') && (
+                      <span
+                        className={cn(
+                          'rounded-full px-1.5 font-mono text-[10px] leading-4 text-white',
+                          findings.some((f) => f.severity === 'error') ? 'bg-destructive' : 'bg-warning text-black',
+                        )}
+                      >
+                        {findings.filter((f) => f.severity !== 'info').length}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                )}
                 {mode === 'sandbox' && project && <TabsTrigger value="notes">Ghi chú</TabsTrigger>}
               </TabsList>
               <Button
@@ -1074,14 +1434,18 @@ export function App() {
               <div className={cn('p-3', panelFull && 'mx-auto max-w-6xl px-6 py-4')}>
                 {mode === 'game' && (
                   <TabsContent value="level" className="max-w-2xl">
+                    {props.mode === 'game' && props.panel ? (
+                      props.panel(() => toDesign(nodesRef.current, edgesRef.current))
+                    ) : (
                     <LevelPanel
                       level={level}
                       design={() => toDesign(nodesRef.current, edgesRef.current)}
                       onVerify={verify}
                       verifying={verifying}
                       best={best}
-                      online={!levelKey.startsWith('learn/')}
+                      online={!levelKey.startsWith('learn/') && !levelKey.startsWith('interview-')}
                     />
+                    )}
                   </TabsContent>
                 )}
                 <TabsContent value="metrics" className="grid gap-3">
@@ -1144,6 +1508,9 @@ export function App() {
                     replicas={nodes
                       .filter((n) => n.data.config.autoscale)
                       .map((n) => ({ index: n.data.index, label: n.data.label }))}
+                    caches={nodes
+                      .filter((n) => n.data.kind === 'cache')
+                      .map((n) => ({ index: n.data.index, label: n.data.label }))}
                   />
                 </TabsContent>
                 <TabsContent value="trace">
@@ -1197,10 +1564,18 @@ export function App() {
                     )}
                   </TabsContent>
                 )}
+                {mode === 'sandbox' && (
+                  <TabsContent value="lint" className="max-w-2xl">
+                    <LintPanel findings={findings} onSelect={selectFinding} onFix={applyFix} />
+                  </TabsContent>
+                )}
                 <TabsContent value="inspect" className="max-w-2xl">
                   {selectedNode ? (
                     <NodeInspector
                       node={selectedNode.data}
+                      queues={nodes
+                        .filter((n) => n.type === 'system' && (n as SystemNodeType).data.kind === 'queue')
+                        .map((n) => ({ id: n.id, label: (n as SystemNodeType).data.label }))}
                       outDegree={edges.filter((e) => e.source === selectedNode.id).length}
                       game={mode === 'game'}
                       maxInstances={level.maxInstances ?? 10}
@@ -1218,6 +1593,7 @@ export function App() {
                       allowFireAndForget={mode !== 'game' || !!level.allowFireAndForget}
                       onChange={(p) => updateEdge(selectedEdge.id, p)}
                       onDelete={() => onDelete({ nodes: [], edges: [selectedEdge] })}
+                      onResetLayout={() => setEdgeLayout(selectedEdge.id, undefined)}
                     />
                   ) : selectedGroup ? (
                     <div className="grid gap-3">
@@ -1301,8 +1677,6 @@ export function App() {
           </div>
         </SidePanel>
       </div>
-      )}
-      <TechDialogs />
       <PromptDialog
         open={promptOpen}
         onOpenChange={setPromptOpen}
@@ -1313,12 +1687,30 @@ export function App() {
         }
       />
       {project && (
+        <CompareDialog
+          open={!!compare}
+          onOpenChange={(o) => !o && setCompare(null)}
+          base={compare}
+          current={compare?.current ?? { nodes: [], edges: [] }}
+          scenario={project.scenario}
+        />
+      )}
+      {project && !readOnly && <ShareDialog project={project} open={shareOpen} onOpenChange={setShareOpen} />}
+      {project && !readOnly && (
         <VersionHistory
           projectId={project.id}
           open={historyOpen}
           onOpenChange={setHistoryOpen}
           onRestore={restoreVersion}
           onSaveNamed={saveNamedVersion}
+          onCompare={(v) => {
+            setHistoryOpen(false);
+            setCompare({
+              label: v.label ?? `Tự động lưu ${new Date(v.at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`,
+              design: v.design,
+              current: toDesign(nodesRef.current, edgesRef.current),
+            });
+          }}
           revision={versionRev}
         />
       )}

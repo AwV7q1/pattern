@@ -1,0 +1,338 @@
+{
+  "id": "product-page",
+  "title": "Trang sản phẩm gọi 3 service",
+  "difficulty": "Khó",
+  "timeMinutes": 45,
+  "brief": "Trang sản phẩm cần giá (Pricing), tồn kho (Inventory) và đánh giá (Reviews). Ba service do team khác quản lý, bạn chỉ chỉnh được cách gọi, số instance và thêm cache. Hiện trang gọi lần lượt từng service và p99 rất tệ. Pricing có đuôi dài (p99 300ms), Reviews lỗi 5% request.",
+  "requirements": [
+    "1.000 lượt xem/giây, cao điểm gấp đôi",
+    "p99 ≤ 300ms, lỗi ≤ 1%",
+    "Inventory chậm ×3 trong 20 giây vẫn đạt SLO phần lớn thời gian",
+    "Ngân sách $1.60/giờ"
+  ],
+  "talkingPoints": [
+    "Gọi song song khi các bước độc lập: latency = nhánh chậm nhất",
+    "Cache trước Pricing để cắt đuôi dài (giá đổi chậm)",
+    "Retry có timeout ngắn cho lỗi thoáng qua của Reviews",
+    "Timeout từng nhánh nhỏ hơn timeout tổng của trang"
+  ],
+  "level": {
+    "palette": [
+      "cache"
+    ],
+    "maxInstances": 6,
+    "locked": [
+      "client",
+      "lb",
+      "pricing",
+      "inventory",
+      "reviews"
+    ],
+    "scalable": [
+      "pricing",
+      "inventory",
+      "reviews"
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng",
+          "position": {
+            "x": 0,
+            "y": 200
+          }
+        },
+        {
+          "id": "lb",
+          "kind": "loadBalancer",
+          "label": "Load Balancer",
+          "position": {
+            "x": 240,
+            "y": 200
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20000,
+            "queueSize": 0,
+            "latencyP50Ms": 0.2,
+            "latencyP99Ms": 1,
+            "costPerHour": 0.03
+          }
+        },
+        {
+          "id": "page",
+          "kind": "service",
+          "label": "Product page",
+          "position": {
+            "x": 480,
+            "y": 200
+          },
+          "config": {
+            "instances": 2,
+            "routing": "sequence"
+          }
+        },
+        {
+          "id": "pricing",
+          "kind": "service",
+          "label": "Pricing",
+          "position": {
+            "x": 760,
+            "y": 40
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 100,
+            "queueSize": 100,
+            "latencyP50Ms": 30,
+            "latencyP99Ms": 300,
+            "costPerHour": 0.1
+          }
+        },
+        {
+          "id": "inventory",
+          "kind": "service",
+          "label": "Inventory",
+          "position": {
+            "x": 760,
+            "y": 200
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 100,
+            "queueSize": 100,
+            "latencyP50Ms": 20,
+            "latencyP99Ms": 80,
+            "costPerHour": 0.1
+          }
+        },
+        {
+          "id": "reviews",
+          "kind": "service",
+          "label": "Reviews",
+          "position": {
+            "x": 760,
+            "y": 360
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 100,
+            "queueSize": 100,
+            "latencyP50Ms": 40,
+            "latencyP99Ms": 200,
+            "errorRate": 0.05,
+            "costPerHour": 0.1
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "client",
+          "target": "lb"
+        },
+        {
+          "source": "lb",
+          "target": "page"
+        },
+        {
+          "source": "page",
+          "target": "pricing",
+          "order": 1
+        },
+        {
+          "source": "page",
+          "target": "inventory",
+          "order": 2
+        },
+        {
+          "source": "page",
+          "target": "reviews",
+          "order": 3
+        }
+      ]
+    },
+    "scenario": {
+      "seed": 7,
+      "durationMs": 60000,
+      "timeoutMs": 1000,
+      "windowMs": 1000,
+      "traffic": [
+        {
+          "atMs": 0,
+          "rps": 1000
+        }
+      ],
+      "slo": {
+        "p99Ms": 300,
+        "errorRate": 0.01
+      },
+      "budgetPerHour": 1.6
+    }
+  },
+  "grading": [
+    {
+      "name": "Bình thường",
+      "kind": "normal"
+    },
+    {
+      "name": "Cao điểm ×2",
+      "kind": "peak",
+      "traffic": {
+        "multiplier": 2
+      }
+    },
+    {
+      "name": "Inventory chậm ×3",
+      "kind": "failure",
+      "faults": [
+        {
+          "nodes": [
+            "inventory"
+          ],
+          "action": "latency",
+          "value": 3
+        }
+      ]
+    }
+  ],
+  "reference": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 240,
+          "y": 200
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 20000,
+          "queueSize": 0,
+          "latencyP50Ms": 0.2,
+          "latencyP99Ms": 1,
+          "costPerHour": 0.03
+        }
+      },
+      {
+        "id": "page",
+        "kind": "service",
+        "label": "Product page",
+        "position": {
+          "x": 480,
+          "y": 200
+        },
+        "config": {
+          "instances": 3,
+          "routing": "parallel"
+        }
+      },
+      {
+        "id": "pcache",
+        "kind": "cache",
+        "label": "Price cache",
+        "position": {
+          "x": 660,
+          "y": 40
+        }
+      },
+      {
+        "id": "pricing",
+        "kind": "service",
+        "label": "Pricing",
+        "position": {
+          "x": 880,
+          "y": 40
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 100,
+          "queueSize": 100,
+          "latencyP50Ms": 30,
+          "latencyP99Ms": 300,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "inventory",
+        "kind": "service",
+        "label": "Inventory",
+        "position": {
+          "x": 760,
+          "y": 200
+        },
+        "config": {
+          "instances": 3,
+          "concurrency": 100,
+          "queueSize": 100,
+          "latencyP50Ms": 20,
+          "latencyP99Ms": 80,
+          "costPerHour": 0.1
+        }
+      },
+      {
+        "id": "reviews",
+        "kind": "service",
+        "label": "Reviews",
+        "position": {
+          "x": 760,
+          "y": 360
+        },
+        "config": {
+          "instances": 2,
+          "concurrency": 100,
+          "queueSize": 100,
+          "latencyP50Ms": 40,
+          "latencyP99Ms": 200,
+          "errorRate": 0.05,
+          "costPerHour": 0.1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "page"
+      },
+      {
+        "source": "page",
+        "target": "pcache",
+        "timeoutMs": 200
+      },
+      {
+        "source": "pcache",
+        "target": "pricing",
+        "timeoutMs": 180
+      },
+      {
+        "source": "page",
+        "target": "inventory",
+        "timeoutMs": 150,
+        "retries": 1,
+        "backoffMs": 10
+      },
+      {
+        "source": "page",
+        "target": "reviews",
+        "timeoutMs": 150,
+        "retries": 2,
+        "backoffMs": 10
+      }
+    ]
+  }
+}

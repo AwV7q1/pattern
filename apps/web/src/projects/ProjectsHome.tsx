@@ -36,6 +36,8 @@ interface Props {
   extraTabs?: { value: string; label: string; content: ReactNode }[];
   tab: string;
   onTab: (t: string) => void;
+  /** Shown under the title (sync notices). */
+  banner?: ReactNode;
 }
 
 /** Up to five distinct technology logos used in a design. */
@@ -98,7 +100,7 @@ function ProjectCard({ p, onOpen }: { p: Project; onOpen: () => void }) {
             <DropdownMenuItem
               onSelect={() => {
                 const now = Date.now();
-                store.put({ ...structuredClone(p), id: newId(), name: `${p.name} (bản sao)`, createdAt: now, updatedAt: now });
+                store.put({ ...structuredClone(p), id: newId(), name: `${p.name} (bản sao)`, createdAt: now, updatedAt: now, rev: undefined, owner: undefined });
               }}
             >
               <Copy /> Nhân bản
@@ -123,7 +125,7 @@ function ProjectCard({ p, onOpen }: { p: Project; onOpen: () => void }) {
 }
 
 /** Home of the studio: your saved projects, templates and case studies. */
-export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab }: Props) {
+export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab, banner }: Props) {
   const { projects, error } = useProjects();
   const [query, setQuery] = useState('');
   const [importError, setImportError] = useState<string | null>(null);
@@ -150,7 +152,7 @@ export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab }: Pr
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto grid max-w-6xl gap-6 px-6 py-8">
+      <div className="mx-auto grid max-w-6xl gap-6 px-6 pt-8 pb-28">
         <div className="flex items-end gap-3">
           <div>
             <h1 className="text-xl font-semibold">Studio</h1>
@@ -178,6 +180,7 @@ export function ProjectsHome({ presets, onOpen, extraTabs = [], tab, onTab }: Pr
             </Button>
           </div>
         </div>
+        {banner}
         {(error || importError) && (
           <p className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
             {error ?? importError}

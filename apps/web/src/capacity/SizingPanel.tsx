@@ -64,7 +64,7 @@ export function SizingPanel({ onOpen, onReport }: Props) {
 
   return (
     <div className="grid min-h-0 flex-1 grid-cols-[minmax(380px,460px)_1fr] gap-0">
-      <div className="min-h-0 overflow-y-auto border-r p-4">
+      <div className="min-h-0 overflow-y-auto border-r p-4 pb-28">
         <div className="grid gap-4">
           <Section title="1. Tải mục tiêu" desc="Lấy từ nghiệp vụ hoặc analytics, chưa cần server.">
             <ToggleGroup
@@ -195,7 +195,7 @@ export function SizingPanel({ onOpen, onReport }: Props) {
             server và DB chậm.
           </p>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-4 pb-28">
           {error && <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           {report ? <Result report={report} spec={spec} onOpen={onOpen} /> : !error && <Intro />}
         </div>
@@ -247,7 +247,7 @@ function Result({ report, spec, onOpen }: { report: SizingReport; spec: SizingSp
               </div>
             </div>
             <Button variant="outline" onClick={() => onOpen(report, `Sizing: ${rec.appServers}× ${rec.appPlan.name}`)}>
-              Mở trong Sandbox
+              Mở trong Studio
             </Button>
           </div>
           {rule && rule !== rec && (

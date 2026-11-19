@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Bookmark, Check, History, Pencil, RotateCcw } from 'lucide-react';
+import { Bookmark, Check, GitCompare, History, Pencil, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -14,12 +14,14 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   onRestore: (v: Version) => void;
   onSaveNamed: () => void;
+  /** Simulate this version next to the current canvas. */
+  onCompare: (v: Version) => void;
   /** Bumped by the parent when a version is added, to reload the list. */
   revision: number;
 }
 
 /** Version list: named (⌘S) and automatic snapshots, restore is non-destructive. */
-export function VersionHistory({ projectId, open, onOpenChange, onRestore, onSaveNamed, revision }: Props) {
+export function VersionHistory({ projectId, open, onOpenChange, onRestore, onSaveNamed, onCompare, revision }: Props) {
   const [versions, setVersions] = useState<Version[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -139,6 +141,9 @@ export function VersionHistory({ projectId, open, onOpenChange, onRestore, onSav
                   }}
                 >
                   <RotateCcw /> Khôi phục phiên bản này
+                </Button>
+                <Button variant="outline" onClick={() => onCompare(current)}>
+                  <GitCompare /> So sánh với bản hiện tại
                 </Button>
               </>
             ) : (

@@ -1,0 +1,200 @@
+{
+  "id": "image-pipeline",
+  "title": "Upload và xử lý ảnh",
+  "difficulty": "Trung bình",
+  "timeMinutes": 40,
+  "brief": "Người dùng upload ảnh, hệ thống tạo thumbnail. Dịch vụ resize có sẵn: mỗi ảnh mất 150ms (p99 400ms) và mỗi instance chỉ xử lý 4 ảnh cùng lúc. Người dùng chỉ cần biết upload thành công, thumbnail có sau vài giây cũng được.",
+  "requirements": [
+    "100 upload/giây, cao điểm gấp đôi trong 20 giây",
+    "Phản hồi upload p99 ≤ 300ms, lỗi ≤ 1%",
+    "Thumbnail không được mất, backlog phải xả hết trước khi hết bài",
+    "Dịch vụ resize sập 10 giây không làm lỗi upload",
+    "Ngân sách $2.50/giờ. Resize tính $0.25/instance/giờ"
+  ],
+  "talkingPoints": [
+    "Queue tách upload (nhanh) khỏi resize (chậm): trả lời ngay khi message đã vào queue",
+    "Số instance resize theo thông lượng: 4 / 0.18s ≈ 22 ảnh/giây mỗi instance",
+    "Retry với backoff ở consumer khi resize lỗi, dead-letter queue cho ảnh hỏng",
+    "Autoscale consumer theo độ dài queue (KEDA) ngoài đời thật"
+  ],
+  "level": {
+    "palette": [
+      "loadBalancer",
+      "service",
+      "queue",
+      "database"
+    ],
+    "maxInstances": 10,
+    "locked": [
+      "client",
+      "resizer"
+    ],
+    "scalable": [
+      "resizer"
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng",
+          "position": {
+            "x": 0,
+            "y": 200
+          }
+        },
+        {
+          "id": "resizer",
+          "kind": "service",
+          "label": "Dịch vụ resize",
+          "position": {
+            "x": 960,
+            "y": 200
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 4,
+            "queueSize": 100,
+            "latencyP50Ms": 150,
+            "latencyP99Ms": 400,
+            "costPerHour": 0.25
+          }
+        }
+      ],
+      "edges": []
+    },
+    "scenario": {
+      "seed": 7,
+      "durationMs": 90000,
+      "timeoutMs": 1000,
+      "windowMs": 1000,
+      "traffic": [
+        {
+          "atMs": 0,
+          "rps": 100
+        }
+      ],
+      "slo": {
+        "p99Ms": 300,
+        "errorRate": 0.01
+      },
+      "budgetPerHour": 2.5
+    }
+  },
+  "grading": [
+    {
+      "name": "Bình thường",
+      "kind": "normal"
+    },
+    {
+      "name": "Cao điểm ×2",
+      "kind": "peak",
+      "traffic": {
+        "multiplier": 2
+      }
+    },
+    {
+      "name": "Resize sập 10 giây",
+      "kind": "failure",
+      "faults": [
+        {
+          "nodes": [
+            "resizer"
+          ],
+          "action": "down",
+          "fromMs": 20000,
+          "untilMs": 30000
+        }
+      ]
+    }
+  ],
+  "reference": {
+    "nodes": [
+      {
+        "id": "client",
+        "kind": "client",
+        "label": "Người dùng",
+        "position": {
+          "x": 0,
+          "y": 200
+        }
+      },
+      {
+        "id": "lb",
+        "kind": "loadBalancer",
+        "label": "Load Balancer",
+        "position": {
+          "x": 240,
+          "y": 200
+        }
+      },
+      {
+        "id": "api",
+        "kind": "service",
+        "label": "Upload API",
+        "position": {
+          "x": 480,
+          "y": 200
+        },
+        "config": {
+          "instances": 2
+        }
+      },
+      {
+        "id": "q",
+        "kind": "queue",
+        "label": "RabbitMQ",
+        "position": {
+          "x": 720,
+          "y": 200
+        }
+      },
+      {
+        "id": "resizer",
+        "kind": "service",
+        "label": "Dịch vụ resize",
+        "position": {
+          "x": 960,
+          "y": 200
+        },
+        "config": {
+          "instances": 7,
+          "concurrency": 4,
+          "queueSize": 100,
+          "latencyP50Ms": 150,
+          "latencyP99Ms": 400,
+          "costPerHour": 0.25
+        }
+      }
+    ],
+    "edges": [
+      {
+        "source": "client",
+        "target": "lb"
+      },
+      {
+        "source": "lb",
+        "target": "api"
+      },
+      {
+        "source": "api",
+        "target": "q",
+        "timeoutMs": 100
+      },
+      {
+        "source": "q",
+        "target": "resizer",
+        "timeoutMs": 2000,
+        "retries": 5,
+        "backoffMs": 1000,
+        "jitter": true,
+        "circuitBreaker": {
+          "failureThreshold": 0.5,
+          "minRequests": 20,
+          "windowMs": 1000,
+          "openMs": 2000
+        }
+      }
+    ]
+  }
+}

@@ -2,13 +2,16 @@
 // Heavy one-shot engine calls (sizing, calibration, lesson predictions) off
 // the main thread and off the live-simulation worker, so the canvas keeps
 // animating.
-import init, { calibrate_json, default_sizing_spec, run_headless, size_json } from 'pattern-engine-wasm';
+import init, { calibrate_json, default_sizing_spec, level_input, play_level, run_detailed, run_headless, size_json } from 'pattern-engine-wasm';
 
 export type ComputeRequest =
   | { id: number; op: 'defaults' }
   | { id: number; op: 'size'; spec: string }
   | { id: number; op: 'calibrate'; design: string; request: string }
-  | { id: number; op: 'run'; input: string };
+  | { id: number; op: 'run'; input: string }
+  | { id: number; op: 'runDetailed'; input: string }
+  | { id: number; op: 'playLevel'; level: string; design: string }
+  | { id: number; op: 'levelRun'; level: string; design: string };
 
 const ready = init();
 
@@ -22,6 +25,14 @@ function handle(msg: ComputeRequest): string {
       return calibrate_json(msg.design, msg.request);
     case 'run':
       return run_headless(msg.input);
+    case 'runDetailed':
+      return run_detailed(msg.input);
+    case 'playLevel':
+      return play_level(msg.level, msg.design);
+    case 'levelRun': {
+      const input = level_input(msg.level, msg.design);
+      return JSON.stringify({ input: JSON.parse(input), ...JSON.parse(run_detailed(input)) });
+    }
   }
 }
 

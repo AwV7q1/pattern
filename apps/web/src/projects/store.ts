@@ -43,6 +43,10 @@ export interface Project {
   /** Template / case it was created from. */
   source?: string;
   lastRun?: RunSnapshot;
+  /** Server revision last synced (set by the sync engine only). */
+  rev?: number;
+  /** Account the project is synced to; absent = only on this device. */
+  owner?: string;
 }
 
 export interface Version {
@@ -58,9 +62,20 @@ export interface Version {
   scenario: Scenario;
 }
 
+/** Change waiting to be sent to the server; one per key, the latest wins. */
+export interface OutboxItem {
+  key: string;
+  kind: 'project' | 'delete' | 'version';
+  id: string;
+  projectId?: string;
+  at: number;
+}
+
 interface StudioDB extends DBSchema {
   projects: { key: string; value: Project; indexes: { updatedAt: number } };
   versions: { key: string; value: Version; indexes: { projectId: string } };
+  outbox: { key: string; value: OutboxItem };
+  meta: { key: string; value: { key: string; value: unknown } };
 }
 
 /** Storage behind the UI; an HTTP adapter (NestJS) can implement the same interface. */
@@ -68,23 +83,66 @@ export interface ProjectStore {
   list(): Promise<Project[]>;
   get(id: string): Promise<Project | undefined>;
   put(p: Project): Promise<void>;
+  /**
+   * Write only if the stored copy is still the one this tab started from
+   * (`updatedAt === expected`): another tab may have saved in between.
+   * An HTTP adapter maps this to `If-Match` / 412.
+   */
+  putIfUnchanged(p: Project, expected: number): Promise<PutResult>;
   remove(id: string): Promise<void>;
   versions(projectId: string): Promise<Version[]>;
   addVersion(v: Version): Promise<void>;
   updateVersion(v: Version): Promise<void>;
 }
 
+export type PutResult = { ok: true } | { ok: false; current: Project | undefined };
+
 const MAX_AUTO_VERSIONS = 50;
 const CHANGED = 'pattern:projects-changed';
 
 let dbp: Promise<IDBPDatabase<StudioDB>> | null = null;
 const db = () =>
-  (dbp ??= openDB<StudioDB>('pattern-studio', 1, {
-    upgrade(d) {
-      d.createObjectStore('projects', { keyPath: 'id' }).createIndex('updatedAt', 'updatedAt');
-      d.createObjectStore('versions', { keyPath: 'id' }).createIndex('projectId', 'projectId');
+  (dbp ??= openDB<StudioDB>('pattern-studio', 2, {
+    upgrade(d, oldVersion) {
+      if (oldVersion < 1) {
+        d.createObjectStore('projects', { keyPath: 'id' }).createIndex('updatedAt', 'updatedAt');
+        d.createObjectStore('versions', { keyPath: 'id' }).createIndex('projectId', 'projectId');
+      }
+      if (oldVersion < 2) {
+        d.createObjectStore('outbox', { keyPath: 'key' });
+        d.createObjectStore('meta', { keyPath: 'key' });
+      }
     },
   }));
+
+/** Raw access for the sync engine (projects/sync.ts). */
+export const idb = {
+  db,
+  async version(id: string) {
+    return (await db()).get('versions', id);
+  },
+  async outbox() {
+    return (await (await db()).getAll('outbox')).sort((a, b) => a.at - b.at);
+  },
+  async enqueue(item: OutboxItem) {
+    await (await db()).put('outbox', item);
+  },
+  /** Remove an item unless it was re-queued meanwhile (newer `at`). */
+  async dequeue(item: OutboxItem) {
+    const d = await db();
+    const cur = await d.get('outbox', item.key);
+    if (cur && cur.at === item.at) await d.delete('outbox', item.key);
+  },
+  async pendingFor(projectId: string) {
+    return (await this.outbox()).some((i) => i.id === projectId || i.projectId === projectId);
+  },
+  async meta<T>(key: string): Promise<T | undefined> {
+    return (await (await db()).get('meta', key))?.value as T | undefined;
+  },
+  async setMeta(key: string, value: unknown) {
+    await (await db()).put('meta', { key, value });
+  },
+};
 
 const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('pattern-studio') : null;
 const notify = () => {
@@ -92,6 +150,12 @@ const notify = () => {
   channel?.postMessage('changed');
 };
 channel?.addEventListener('message', () => window.dispatchEvent(new Event(CHANGED)));
+
+/** Called after any write to the projects store, from this tab or another one. */
+export function onProjectsChanged(cb: () => void) {
+  window.addEventListener(CHANGED, cb);
+  return () => window.removeEventListener(CHANGED, cb);
+}
 
 export const idbStore: ProjectStore = {
   async list() {
@@ -104,6 +168,20 @@ export const idbStore: ProjectStore = {
   async put(p) {
     await (await db()).put('projects', p);
     notify();
+  },
+  async putIfUnchanged(p, expected) {
+    // one readwrite transaction: no other tab can write between the check and the put
+    const tx = (await db()).transaction('projects', 'readwrite');
+    const current = await tx.store.get(p.id);
+    if (current?.updatedAt !== expected) {
+      await tx.done;
+      return { ok: false, current };
+    }
+    // `rev` and `owner` belong to the sync engine (see `store.put`)
+    await tx.store.put({ ...p, rev: current?.rev ?? p.rev, owner: current?.owner ?? p.owner });
+    await tx.done;
+    notify();
+    return { ok: true };
   },
   async remove(id) {
     const d = await db();
@@ -130,7 +208,52 @@ export const idbStore: ProjectStore = {
   },
 };
 
-export const store: ProjectStore = idbStore;
+/** Hooks the sync engine registers; until then the store is local-only. */
+export const syncHooks: {
+  enqueue: (item: Omit<OutboxItem, 'key' | 'at'>, project?: Project) => Promise<void>;
+  pullVersions: (projectId: string) => Promise<void>;
+} = { enqueue: async () => {}, pullVersions: async () => {} };
+
+/**
+ * What the app uses: IndexedDB first (instant, offline), every write also
+ * queued for the server when the user is signed in (projects/sync.ts).
+ */
+export const store: ProjectStore = {
+  list: () => idbStore.list(),
+  get: (id) => idbStore.get(id),
+  async put(p) {
+    // `rev` and `owner` belong to the sync engine: never overwrite them with a stale in-memory copy
+    const prev = await idbStore.get(p.id);
+    const next = { ...p, rev: prev?.rev ?? p.rev, owner: prev?.owner ?? p.owner };
+    await idbStore.put(next);
+    await syncHooks.enqueue({ kind: 'project', id: p.id }, next);
+  },
+  async putIfUnchanged(p, expected) {
+    const res = await idbStore.putIfUnchanged(p, expected);
+    if (res.ok) {
+      const next = await idbStore.get(p.id);
+      if (next) await syncHooks.enqueue({ kind: 'project', id: p.id }, next);
+    }
+    return res;
+  },
+  async remove(id) {
+    const prev = await idbStore.get(id);
+    await idbStore.remove(id);
+    await syncHooks.enqueue({ kind: 'delete', id }, prev);
+  },
+  async versions(projectId) {
+    await syncHooks.pullVersions(projectId).catch(() => {});
+    return idbStore.versions(projectId);
+  },
+  async addVersion(v) {
+    await idbStore.addVersion(v);
+    await syncHooks.enqueue({ kind: 'version', id: v.id, projectId: v.projectId }, await idbStore.get(v.projectId));
+  },
+  async updateVersion(v) {
+    await idbStore.updateVersion(v);
+    await syncHooks.enqueue({ kind: 'version', id: v.id, projectId: v.projectId }, await idbStore.get(v.projectId));
+  },
+};
 
 export const newId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -211,7 +334,8 @@ export function download(name: string, text: string, type = 'application/json') 
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = Object.assign(document.createElement('a'), { href: url, download: name });
   a.click();
-  URL.revokeObjectURL(url);
+  // revoking synchronously can cancel the download in Firefox/Safari
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export const slug = (s: string) =>
