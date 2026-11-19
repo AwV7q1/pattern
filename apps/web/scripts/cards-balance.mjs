@@ -31,13 +31,15 @@ const policies = {
     const intent = rules.currentIntent(content, s);
     const big = intent.botRps >= 1000 || intent.chaos || intent.clientRetries;
     const order = big
-      ? ['coffee', 'cache', 'timeout', 'breaker', 'hotfix', 'rate_limit', 'burst', 'stale', 'runbook', 'waf', 'scale_api', 'block_ip', 'honeypot']
-      : ['coffee', 'cache', 'timeout', 'waf', 'runbook', 'honeypot', 'block_ip', 'rate_limit', 'breaker', 'scale_api', 'stale', 'burst'];
+      ? ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'breaker', 'hotfix', 'rate_limit', 'captcha', 'burst', 'stale', 'postmortem', 'runbook', 'null_route', 'waf', 'scale_api', 'block_ip', 'honeypot']
+      : ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'waf', 'runbook', 'postmortem', 'honeypot', 'block_ip', 'null_route', 'rate_limit', 'captcha', 'breaker', 'scale_api', 'stale', 'burst'];
     for (const id of order) {
       const c = s.hand.find((h) => h.id === id && rules.canPlay(content, s, h.uid));
       if (!c) continue;
       if (id === 'hotfix' && !(intent.chaos || intent.clientRetries)) continue;
       if (id === 'cache' && rules.nodeOf(s.design, 'cache')?.config.hitRate >= 0.95) continue;
+      if (id === 'refactor' && !s.hand.some((h) => h.id === 'tech_debt')) continue;
+      if (id === 'index' && rules.nodeOf(s.design, 'db').config.latencyP50Ms < 5) continue;
       return c.uid;
     }
     return null;

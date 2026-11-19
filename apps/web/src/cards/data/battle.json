@@ -15,18 +15,25 @@
   "startingDeck": [
     "scale_api",
     "cache",
+    "index",
     "timeout",
     "breaker",
+    "pool",
     "rate_limit",
-    "rate_limit",
+    "captcha",
     "burst",
     "stale",
     "stale",
-    "block_ip",
-    "block_ip",
-    "waf",
+    "postmortem",
+    "hotfix",
+    "refactor",
     "runbook",
-    "coffee"
+    "coffee",
+    "block_ip",
+    "block_ip",
+    "null_route",
+    "waf",
+    "honeypot"
   ],
   "design": {
     "nodes": [

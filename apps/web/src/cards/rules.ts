@@ -143,7 +143,7 @@ export function newBattle(content: Content, seed: number): BattleState {
 
 // ---------------------------------------------------------------- playing cards
 
-function apply(state: BattleState, effect: Effect) {
+function apply(content: Content, state: BattleState, effect: Effect) {
   switch (effect.op) {
     case 'scale': {
       if (effect.temp) {
@@ -184,6 +184,27 @@ function apply(state: BattleState, effect: Effect) {
     case 'hotfix':
       state.temp.hotfix = true;
       break;
+    case 'tune': {
+      const cfg = nodeOf(state.design, effect.node)!.config!;
+      const m = effect.mul;
+      const round2 = (v: number) => Math.round(v * 100) / 100;
+      if (m.latency !== undefined) {
+        cfg.latencyP50Ms = round2((cfg.latencyP50Ms ?? 1) * m.latency);
+        cfg.latencyP99Ms = round2((cfg.latencyP99Ms ?? 1) * m.latency);
+      }
+      if (m.concurrency !== undefined) cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * m.concurrency));
+      if (m.queueSize !== undefined) cfg.queueSize = Math.max(0, Math.round((cfg.queueSize ?? 0) * m.queueSize));
+      if (m.cost !== undefined) cfg.costPerHour = round2((cfg.costPerHour ?? 0) * m.cost);
+      break;
+    }
+    case 'purge': {
+      const curses = state.hand.filter((c) => content.cards.find((d) => d.id === c.id)?.unplayable);
+      if (!curses.length) break;
+      state.hand = state.hand.filter((c) => !curses.includes(c));
+      state.exhausted.push(...curses);
+      if (effect.draw) draw(state, curses.length);
+      break;
+    }
   }
 }
 
@@ -197,7 +218,7 @@ export function playCard(content: Content, prev: BattleState, uid: number): Batt
   state.played.push(def.id);
   // the card leaves the hand before its effects, so "draw" cannot redraw it
   (def.exhaust ? state.exhausted : state.discard).push(inst);
-  for (const effect of def.effects) apply(state, effect);
+  for (const effect of def.effects) apply(content, state, effect);
   if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
 }

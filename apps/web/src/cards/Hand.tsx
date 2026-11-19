@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
+import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { CardDef, CardType } from './types';
+import { reduced } from './fx';
 
 export const TYPE_STYLE: Record<CardType, { label: string; ring: string; head: string; chip: string }> = {
   infra: { label: 'Hạ tầng', ring: 'border-sky-500/60', head: 'from-sky-500/25', chip: 'bg-sky-500/20 text-sky-300' },
@@ -17,6 +19,27 @@ const FAN_R = 1100;
 /** How much of a resting card hides below the screen edge. */
 const SINK = 64;
 const LIFT = 92;
+/** Deal / discard timing: one card's flight and the gap between cards. */
+const DEAL_MS = 340;
+const DEAL_GAP = 70;
+const DISCARD_MS = 300;
+const DISCARD_GAP = 40;
+
+/** How long the hand takes to fly into the discard pile. */
+export const discardDuration = (n: number) => (reduced() || n === 0 ? 0 : (n - 1) * DISCARD_GAP + DISCARD_MS);
+
+/** Center of `el` on screen. */
+function center(el: Element) {
+  const r = el.getBoundingClientRect();
+  return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+}
+
+/** A screen-space offset expressed in the frame of a card rotated by `theta`. */
+function toLocal(dx: number, dy: number, theta: number) {
+  const c = Math.cos(-theta);
+  const s = Math.sin(-theta);
+  return { x: dx * c - dy * s, y: dx * s + dy * c };
+}
 
 export interface HandCard {
   uid: number;
@@ -49,9 +72,17 @@ export function Hand({
   dropRef,
   onPlay,
   onDragChange,
+  deckRef,
+  discardRef,
+  discarding = false,
 }: {
   cards: HandCard[];
   dropRef: RefObject<HTMLElement | null>;
+  /** New cards fly in from the draw pile... */
+  deckRef?: RefObject<HTMLElement | null>;
+  /** ...and the hand flies into the discard pile while `discarding`. */
+  discardRef?: RefObject<HTMLElement | null>;
+  discarding?: boolean;
   onPlay: (uid: number, at: { x: number; y: number }) => void;
   /** The drag state and, while dragging, the dragged card. */
   onDragChange?: (state: 'idle' | 'dragging' | 'over', card: CardDef | null) => void;
@@ -60,6 +91,79 @@ export function Hand({
   const [drag, setDrag] = useState<Drag | null>(null);
   const handRef = useRef<HTMLDivElement>(null);
   const n = cards.length;
+  /** The element of each card that the deal / discard animations move. */
+  const flyEls = useRef(new Map<number, HTMLDivElement>());
+  const seen = useRef(new Set<number>());
+  const [entering, setEntering] = useState<ReadonlySet<number>>(new Set());
+  const discardAnims = useRef<Animation[]>([]);
+
+  // deal: every card not seen before flies in from the draw pile, one after another
+  const uidKey = cards.map((c) => c.uid).join(',');
+  useLayoutEffect(() => {
+    const fresh = cards.filter((c) => !seen.current.has(c.uid));
+    for (const c of cards) seen.current.add(c.uid);
+    const deck = deckRef?.current;
+    if (!fresh.length || !deck || reduced()) return;
+    const from = center(deck);
+    const uids = fresh.map((c) => c.uid);
+    setEntering((prev) => new Set([...prev, ...uids]));
+    fresh.forEach((c, k) => {
+      const el = flyEls.current.get(c.uid);
+      if (!el) return;
+      const to = center(el);
+      const d = toLocal(from.x - to.x, from.y - to.y, Number(el.dataset.theta ?? 0));
+      const anim = el.animate(
+        [
+          { transform: `translate(${d.x}px, ${d.y}px) rotate(-24deg) scale(0.3)`, opacity: 0 },
+          { opacity: 1, offset: 0.25 },
+          { transform: 'none', opacity: 1 },
+        ],
+        { duration: DEAL_MS, delay: k * DEAL_GAP, easing: 'cubic-bezier(0.2, 0.8, 0.3, 1)', fill: 'backwards' },
+      );
+      void anim.finished
+        .catch(() => undefined)
+        .then(() =>
+          setEntering((prev) => {
+            const next = new Set(prev);
+            next.delete(c.uid);
+            return next;
+          }),
+        );
+    });
+    // only the set of cards matters, not their props
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uidKey]);
+
+  // discard: the whole hand flies into the discard pile; if the turn is
+  // called off (engine error) the cards come back
+  useLayoutEffect(() => {
+    if (!discarding) {
+      for (const a of discardAnims.current) a.cancel();
+      discardAnims.current = [];
+      return;
+    }
+    setHover(null);
+    const pile = discardRef?.current;
+    if (!pile) return;
+    const to = center(pile);
+    const instant = reduced();
+    discardAnims.current = cards.flatMap((c, k) => {
+      const el = flyEls.current.get(c.uid);
+      if (!el) return [];
+      const from = center(el);
+      const d = toLocal(to.x - from.x, to.y - from.y, Number(el.dataset.theta ?? 0));
+      return el.animate(
+        [
+          { transform: 'none', opacity: 1 },
+          { transform: `translate(${d.x * 0.4}px, ${d.y * 0.4 - 30}px) rotate(10deg) scale(0.7)`, opacity: 1, offset: 0.45 },
+          { transform: `translate(${d.x}px, ${d.y}px) rotate(28deg) scale(0.25)`, opacity: 0 },
+        ],
+        { duration: instant ? 1 : DISCARD_MS, delay: instant ? 0 : k * DISCARD_GAP, easing: 'cubic-bezier(0.5, 0, 0.7, 0.4)', fill: 'forwards' },
+      );
+    });
+    // runs when discarding toggles; the hand cannot change meanwhile
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discarding]);
 
   const dragDef = drag?.active ? (cards.find((c) => c.uid === drag.uid)?.def ?? null) : null;
   useEffect(() => {
@@ -89,14 +193,15 @@ export function Hand({
 
   return (
     <>
-      <div ref={handRef} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[190px]">
+      <div ref={handRef} inert={discarding} className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[190px]">
         <div className="absolute bottom-0 left-1/2">
           {cards.map((c, i) => {
             const t = i - (n - 1) / 2;
             const theta = t * step;
             let x = FAN_R * Math.sin(theta);
             const y = FAN_R * (1 - Math.cos(theta));
-            const lifted = hover === c.uid && !drag?.active;
+            const flying = entering.has(c.uid) || discarding;
+            const lifted = hover === c.uid && !drag?.active && !flying;
             // neighbours make room for the raised card
             if (hoverIdx >= 0 && !lifted && !drag?.active) x += Math.sign(i - hoverIdx) * 26;
             const dragging = drag?.active && drag.uid === c.uid;
@@ -112,7 +217,7 @@ export function Hand({
             return (
               <div
                 key={c.uid}
-                className="pointer-events-auto absolute transition-transform duration-200 ease-out"
+                className={cn('absolute transition-transform duration-200 ease-out', flying ? 'pointer-events-none' : 'pointer-events-auto')}
                 style={slot}
                 onPointerEnter={() => setHover(c.uid)}
                 onPointerLeave={() => setHover((h) => (h === c.uid ? null : h))}
@@ -172,7 +277,16 @@ export function Hand({
                     transformOrigin: '50% 100%',
                   }}
                 >
-                  <CardFace def={c.def} playable={c.playable} index={i + 1} lifted={lifted} />
+                  <div
+                    className="size-full"
+                    data-theta={theta}
+                    ref={(el) => {
+                      if (el) flyEls.current.set(c.uid, el);
+                      else flyEls.current.delete(c.uid);
+                    }}
+                  >
+                    <CardFace def={c.def} playable={c.playable} index={i + 1} lifted={lifted} />
+                  </div>
                 </button>
               </div>
             );
@@ -250,3 +364,45 @@ export function CardFace({
 }
 
 export const CARD_SIZE = { w: CARD_W, h: CARD_H };
+
+/** A small face-down stack (draw or discard pile) with its count. */
+export function Pile({
+  pileRef,
+  count,
+  label,
+  tone,
+}: {
+  pileRef: RefObject<HTMLDivElement | null>;
+  count: number;
+  label: string;
+  tone: 'draw' | 'discard';
+}) {
+  const layers = Math.min(3, count);
+  const back =
+    tone === 'draw'
+      ? 'border-sky-400/50 bg-gradient-to-br from-sky-900 to-slate-900 text-sky-300/70'
+      : 'border-zinc-500/50 bg-gradient-to-br from-zinc-800 to-zinc-900 text-zinc-400/70';
+  return (
+    <div ref={pileRef} className="relative flex flex-col items-center gap-1 rounded-md" title={`${label}: ${count} lá`} aria-label={`${label}: ${count} lá`}>
+      <div className="relative h-[62px] w-[44px]">
+        {count === 0 ? (
+          <div className="absolute inset-0 rounded-md border border-dashed border-muted-foreground/30" />
+        ) : (
+          Array.from({ length: layers }, (_, k) => (
+            <div
+              key={k}
+              className={cn('absolute inset-0 flex items-center justify-center rounded-md border shadow-md shadow-black/50', back)}
+              style={{ transform: `translate(${(layers - 1 - k) * -2}px, ${(layers - 1 - k) * 2}px)` }}
+            >
+              {k === layers - 1 && <Layers className="size-4" />}
+            </div>
+          ))
+        )}
+        <span className="absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-background px-1 font-mono text-[11px] font-bold text-foreground ring-1 ring-border">
+          {count}
+        </span>
+      </div>
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+    </div>
+  );
+}

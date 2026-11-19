@@ -7,7 +7,7 @@ export interface Pt {
   y: number;
 }
 
-const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+export const reduced = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 

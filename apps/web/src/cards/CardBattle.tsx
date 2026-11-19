@@ -17,7 +17,6 @@ import {
   Info,
   ScrollText,
   X,
-  Layers,
   LoaderCircle,
   Network,
   Radar,
@@ -45,7 +44,7 @@ import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattl
 import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
 import { NetBackdrop } from './NetBackdrop';
 import { BotAvatar } from './BotAvatar';
-import { CARD_SIZE, CardFace, Hand } from './Hand';
+import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
 const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData } as unknown as Content;
@@ -124,6 +123,10 @@ export function CardBattle() {
   const [seenReports, setSeenReports] = useState(0);
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
   const [dragDef, setDragDef] = useState<CardDef | null>(null);
+  /** The hand is flying into the discard pile (end of turn). */
+  const [discarding, setDiscarding] = useState(false);
+  /** Bumped on restart so the new hand is dealt again (card uids restart at 1). */
+  const [battleKey, setBattleKey] = useState(0);
   const onDragChange = useCallback((s: 'idle' | 'dragging' | 'over', def: CardDef | null) => {
     setDragState(s);
     setDragDef(def);
@@ -143,7 +146,8 @@ export function CardBattle() {
   const hpRef = useRef<HTMLDivElement>(null);
   const usersRef = useRef<HTMLDivElement>(null);
   const opsRef = useRef<HTMLDivElement>(null);
-  const deckRef = useRef<HTMLSpanElement>(null);
+  const deckRef = useRef<HTMLDivElement>(null);
+  const discardRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
 
   // a game screen: the app's tab bar steps aside
@@ -156,6 +160,8 @@ export function CardBattle() {
   const restart = (s: number) => {
     setSeed(s);
     setState(newBattle(CONTENT, s));
+    setBattleKey((k) => k + 1);
+    setDiscarding(false);
     setError(null);
     setFlash(null);
     setSeenReports(0);
@@ -215,6 +221,22 @@ export function CardBattle() {
         case 'ops':
           hits.push({ el: opsRef.current, label: `+${e.n} Ops` });
           break;
+        case 'tune': {
+          const m = e.mul;
+          const label =
+            m.latency !== undefined
+              ? `latency ×${m.latency}`
+              : m.concurrency !== undefined
+                ? `kết nối ×${m.concurrency}`
+                : m.queueSize !== undefined
+                  ? `queue ×${m.queueSize}`
+                  : 'tune';
+          hits.push({ el: nodes[e.node], label });
+          break;
+        }
+        case 'purge':
+          hits.push({ el: deckRef.current, label: 'dọn Tech Debt' });
+          break;
       }
     }
     return hits.filter((h, i): h is { el: HTMLElement; label?: string } => !!h.el && hits.findIndex((k) => k.el === h.el) === i);
@@ -241,6 +263,15 @@ export function CardBattle() {
     );
   };
 
+  /** Drawing ran the draw pile dry and the discard pile was shuffled back in. */
+  const reshuffleFx = (prev: BattleState, next: BattleState) => {
+    const layer = fxRef.current;
+    const deck = deckRef.current;
+    if (!layer || !deck || next.drawPile.length <= prev.drawPile.length) return;
+    pulse(deck, 1.18, 420);
+    floatText(layer, anchor(deck, layer, 0.5, 0), 'Xáo lại chồng bỏ', '#7dd3fc');
+  };
+
   const play = (uid: number, at?: { x: number; y: number }) => {
     if (resolving || state.phase !== 'player') return;
     const inst = state.hand.find((c) => c.uid === uid);
@@ -251,6 +282,7 @@ export function CardBattle() {
     const pos = at ?? (arena ? { x: arena.left + arena.width / 2, y: arena.bottom - 320 } : { x: 0, y: 0 });
     setSplash({ key: Date.now(), def, x: pos.x, y: pos.y });
     setState(next);
+    reshuffleFx(state, next);
     const dmg = state.enemy.hp - next.enemy.hp;
     // the system takes the card in first; an attack card then fires from it
     void cardFx(def, pos, next).then(async () => {
@@ -412,7 +444,11 @@ export function CardBattle() {
     setResolving(true);
     setError(null);
     setLive({ phase: 'attack', hp: state.hp, headroom: state.headroom, enemyHp: state.enemy.hp, tMs: 0, rps: 0, p99: 0, errRate: 0, nodes: {} });
+    // the hand goes to the discard pile first, so the arena is clear for the attack
+    setDiscarding(true);
+    let over = false;
     try {
+      await wait(discardDuration(state.hand.length));
       const plan = planTurn(CONTENT, state);
       let done = false;
       // the engine runs in its worker while the attack plays
@@ -427,12 +463,16 @@ export function CardBattle() {
       await replayPhase(plan, windows, r, state);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: r.enemyDamage });
       setState(next);
+      reshuffleFx(state, next);
+      // a finished fight keeps its last hand in the rules: leave it in the pile on screen
+      over = next.phase === 'won' || next.phase === 'lost';
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       busy.current = false;
       setLive(null);
       setResolving(false);
+      if (!over) setDiscarding(false);
     }
   };
 
@@ -575,35 +615,35 @@ export function CardBattle() {
           <div ref={opsRef} className="w-fit rounded-full">
             <OpsPips ops={state.ops} max={CONTENT.battle.opsPerTurn} />
           </div>
-          <div className="flex gap-3">
-            <span ref={deckRef} className="inline-block rounded">
-              <Layers className="mr-1 inline size-3.5" />
-              Bộ rút {state.drawPile.length}
-            </span>
-            <span>Bỏ {state.discard.length}</span>
-            {state.exhausted.length > 0 && <span>Tiêu hao {state.exhausted.length}</span>}
+          <div className="flex items-end gap-3">
+            <Pile pileRef={deckRef} count={state.drawPile.length} label="Chồng rút" tone="draw" />
+            {state.exhausted.length > 0 && <span className="pb-0.5">Tiêu hao {state.exhausted.length}</span>}
           </div>
           <span className="hidden lg:inline">Kéo bài lên để đánh · phím 1–9 · E kết thúc lượt</span>
         </div>
-        <div className="absolute bottom-6 right-6 z-30">
-          {resolving ? (
-            // while the turn plays, the same spot skips to the result
-            <Button size="lg" variant="secondary" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" onClick={() => (skip.current = true)}>
-              <LoaderCircle className="animate-spin" />
-              Bỏ qua
-            </Button>
-          ) : (
-            <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player'} onClick={() => void endTurn()}>
-              <ArrowRight />
-              Kết thúc lượt
-            </Button>
-          )}
+        <div className="absolute bottom-4 right-6 z-30 flex items-end gap-4">
+          <Pile pileRef={discardRef} count={state.discard.length + (discarding ? state.hand.length : 0)} label="Chồng bỏ" tone="discard" />
+          {/* fixed width: the pile must not move when the button's label changes */}
+          <div className="flex w-[168px] justify-end pb-2">
+            {resolving ? (
+              // while the turn plays, the same spot skips to the result
+              <Button size="lg" variant="secondary" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" onClick={() => (skip.current = true)}>
+                <LoaderCircle className="animate-spin" />
+                Bỏ qua
+              </Button>
+            ) : (
+              <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player'} onClick={() => void endTurn()}>
+                <ArrowRight />
+                Kết thúc lượt
+              </Button>
+            )}
+          </div>
         </div>
 
         <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
 
-        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} />
-        {hand.length === 0 && !over && (
+        <Hand key={battleKey} cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} deckRef={deckRef} discardRef={discardRef} discarding={discarding} />
+        {hand.length === 0 && !over && !resolving && (
           <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
         )}
       </div>

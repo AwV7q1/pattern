@@ -28,7 +28,18 @@ export type Effect =
   | { op: 'draw'; n: number }
   | { op: 'ops'; n: number }
   /** Cancel the attacker's chaos (slow DB, client retries) for this turn. */
-  | { op: 'hotfix' };
+  | { op: 'hotfix' }
+  /** Multiply a node's settings for the whole fight (`latency` scales p50 and p99). */
+  | { op: 'tune'; node: NodeRef; mul: TuneMul }
+  /** Exhaust every unplayable card (curse) in hand; `draw`: draw one per card removed. */
+  | { op: 'purge'; draw?: boolean };
+
+export interface TuneMul {
+  latency?: number;
+  concurrency?: number;
+  queueSize?: number;
+  cost?: number;
+}
 
 export interface CardDef {
   id: string;
