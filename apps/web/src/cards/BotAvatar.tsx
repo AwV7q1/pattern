@@ -1,7 +1,8 @@
 import { forwardRef, useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Intent } from './types';
-import { BOT_DIE_MS, gaitStyle, minionGaitStyle, type BotTier } from './botMotion';
+import { LORD, LordBack, LordExtra, LordFront, lordBody } from './ddosLord';
+import { botDieMs, dieClass, gaitStyle, minionGaitStyle, type BotTier } from './botMotion';
 
 /**
  * The enemy, drawn in SVG. Each enemy has its own body (warmup kid, radar,
@@ -390,22 +391,8 @@ const LOOKS: Record<string, Look> = {
         <circle cx="1.3" cy="0" r="0.9" fill={p.light} />
       </g>
     ),
-    body: (p, ids) => (
-      <>
-        <path d="M24 140 Q34 104 60 104 L100 104 Q126 104 136 140 Z" fill={p.dark} stroke={p.main} strokeOpacity="0.6" />
-        <path d="M60 104 L80 126 L100 104" fill="none" stroke="#fbbf24" strokeWidth="2" />
-        <rect x="44" y="48" width="72" height="62" rx="16" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
-        <path d="M46 52 L50 26 L64 40 L80 16 L96 40 L110 26 L114 52 Z" fill="#fbbf24" stroke="#92400e" strokeWidth="1.5" strokeLinejoin="round" />
-        <circle cx="80" cy="36" r="3.5" fill="#e11d48" />
-        <circle cx="62" cy="44" r="2.2" fill="#22d3ee" />
-        <circle cx="98" cy="44" r="2.2" fill="#22d3ee" />
-        <rect x="52" y="70" width="56" height="20" rx="9" fill="#09090b" />
-        <path d="M80 56 L85 62 L80 68 L75 62 Z" fill={p.main} filter={`url(#${ids.glow})`} className="animate-pulse" />
-        {[0, 1, 2, 3, 4].map((i) => (
-          <rect key={i} x={63 + i * 7} y="96" width="4" height="8" rx="1" fill="#52525b" />
-        ))}
-      </>
-    ),
+    // crown and third eye float on their own: LordExtra
+    body: (p, ids) => lordBody(p, ids.head),
   },
 
   // ---- floor 1
@@ -1089,8 +1076,10 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
   return (
     <div
       ref={ref}
-      className={cn('relative size-44', defeated && `bot-die-${tier}`, className)}
-      style={defeated ? { animationDuration: `${BOT_DIE_MS[tier]}ms` } : undefined}
+      className={cn('relative size-44', defeated && dieClass(enemyId, tier), className)}
+      style={defeated ? { animationDuration: `${botDieMs(enemyId, tier)}ms` } : undefined}
+      data-enemy={enemyId}
+      data-enraged={enraged}
       data-stance={stance}
       data-tier={tier}
       title={STANCE[stance].label}
@@ -1162,8 +1151,10 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
           </g>
         )}
 
+        {enemyId === LORD && <LordBack p={p} enraged={enraged} />}
+
         {/* orbiting minions */}
-        <g style={{ transformOrigin: '80px 80px', animation: `spin ${orbit}s linear infinite` }}>
+        <g data-fx="orbit" style={{ transformOrigin: '80px 80px', animation: `spin ${orbit}s linear infinite` }}>
           <circle cx="80" cy="80" r="70" fill="none" stroke={p.main} strokeOpacity="0.18" strokeDasharray="2 6" />
           {Array.from({ length: look.minions }, (_, i) => {
             const a = (i / look.minions) * Math.PI * 2;
@@ -1204,10 +1195,11 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
                 <use href={`#${bodyId}`} opacity="0.22" style={{ animation: 'bot-echo-r 1.2s ease-in-out infinite' }} />
               </>
             )}
-            <g id={bodyId}>
+            <g id={bodyId} data-fx="core">
               {look.body(p, ids)}
               <Eyes look={look} stance={stance} dying={dying} glow={ids.glow} />
             </g>
+            {enemyId === LORD && <LordExtra p={p} enraged={enraged} bodyId={bodyId} glow={ids.glow} />}
             {tier === 'elite' && (
               <>
                 <circle cx="80" cy="80" r="50" fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.8" style={{ transformOrigin: '80px 80px', animation: 'spin 14s linear infinite' }} />
@@ -1242,6 +1234,8 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
               style={{ transformOrigin: `${x}px ${y}px`, animation: `tier-twinkle 2.1s ease-in-out ${d}s infinite` }}
             />
           ))}
+
+        {enemyId === LORD && <LordFront p={p} enraged={enraged} />}
 
         <StanceFront stance={stance} />
       </svg>

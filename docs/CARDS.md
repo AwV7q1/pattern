@@ -174,7 +174,8 @@ Mỗi địch và lính có bộ chuyển động riêng (`botMotion.ts`, keyfra
 | Dáng đi | Địch |
 |---|---|
 | Nhún nhảy (`hop`) | Script Kiddie, Bot Săn Sneaker |
-| Lơ lửng (`hover`) | Bot Ping, Nhóm APT, Lãnh Chúa DDoS |
+| Lơ lửng (`hover`) | Bot Ping, Nhóm APT |
+| Bay lên, nghiêng nhẹ (`levitate`) | Lãnh Chúa DDoS |
 | Bước đều (`march`) | Bot Spam Form, Kẻ Lạm Dụng API |
 | Đập như tim (`beat`) | Bot Kiểm Tra Uptime, Khuếch Đại DNS |
 | Trôi (`drift`) | Botnet Bầy Kiến, Bão Retry |
@@ -192,7 +193,7 @@ Mỗi địch và lính có bộ chuyển động riêng (`botMotion.ts`, keyfra
 |---|---|
 | Lao tới (`lunge`) | Script Kiddie, Crawler, Slowloris, Sâu, Hydra |
 | Lấy đà rồi húc (`charge`) | Bot Uptime, Bầy Kiến, Thundering Herd, Scraper, Sneaker |
-| Nhảy lên dậm xuống (`slam`) | Rò Rỉ Bộ Nhớ, Băng Tống Tiền, Black Friday, Lãnh Chúa DDoS |
+| Nhảy lên dậm xuống (`slam`) | Rò Rỉ Bộ Nhớ, Băng Tống Tiền, Black Friday |
 | Xoay vòng (`spin`) | Bão Retry, Cron Nửa Đêm |
 | Biến mất rồi hiện sát (`blink`) | Credential Stuffer, Kẻ Lạm Dụng API, Nhóm APT |
 | Phun hai nhịp (`spit`) | Bot Ping, Bot Spam, Click Farm, Camera IoT, Khuếch Đại DNS, Kẻ Đầu Độc Cache |
@@ -205,6 +206,17 @@ Cấp của địch thêm một lớp chuyển động:
 | Thường | Dáng đi riêng | Rung | Ngã nghiêng, bạc màu |
 | Tinh anh | Hai viền vàng xoay ngược nhau, thỉnh thoảng gồng người | Rung ngắn, loé vàng | Loé sáng hai lần rồi vỡ mờ |
 | Trùm tầng | Thở chậm, bóng đổ dưới chân, sóng chấn lan trên mặt đất (pha 2 nhanh hơn, sóng màu lửa) | Gần như không lùi | Rung, loé sáng nhiều lần rồi nổ tan |
+
+Lãnh Chúa DDoS, trùm cuối, có bộ chuyển động riêng thay cho các kiểu dùng chung (`ddosLord.tsx`):
+
+| Lúc | Chuyển động |
+|---|---|
+| Đứng yên | Bay lơ lửng, áo choàng gợn sóng. Vương miện bay tách khỏi đầu, có ánh sáng rỉ ra ở giữa. Mắt thứ ba thường híp lại, thỉnh thoảng mở ra nhìn. Một vòng gói tin xoay quanh người, nửa sau chạy sau lưng, nửa trước chạy trước mặt |
+| Ra đòn "Flood" | Ngả người lấy đà, mắt thứ ba nạp sáng rồi bắn một tia kèm chùm gói tin về phía hệ thống của bạn |
+| Trúng đòn | Khiên proxy lục giác hiện ra đỡ đòn, gợn sóng chạy dọc các ô, vương miện chao đi |
+| Gọi lính | Vương miện bay lên xoay một vòng, cổng triệu hồi mở dưới đất, vòng lính quay nhanh hẳn |
+| Pha 2 | Bùng một vòng sóng đỏ khi chuyển pha. Vương miện nứt, nghiêng và rực đỏ. Mắt mở to liên tục, gói tin chạy nhanh gấp đôi, thân thỉnh thoảng nhoè thành hai bản đỏ và xanh. Khi trúng đòn, khiên vỡ thành mảnh |
+| Bị hạ | Thân giật nhiễu rồi tắt như màn hình CRT: co thành một vạch sáng, rồi một chấm, rồi biến mất. Vương miện rơi xuống đất, nảy hai lần rồi nằm yên |
 
 Trùm có đòn to và chậm hơn, mini bot có đòn nhỏ và nhanh hơn. Khi địch sắp gọi lính, nó vươn lên, loé cam rồi toả một vòng sóng. Màn tổng kết chờ hiệu ứng bị hạ chạy xong mới hiện.
 
@@ -225,6 +237,7 @@ Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, b�
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
 | `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
 | `apps/web/src/cards/botMotion.ts` | Chuyển động của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp |
+| `apps/web/src/cards/ddosLord.tsx` | Bộ chuyển động riêng của Lãnh Chúa DDoS: các lớp SVG và các hàm ra đòn, trúng đòn, gọi lính |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
 Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.

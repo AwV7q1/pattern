@@ -439,6 +439,89 @@ input[type='number']::-webkit-outer-spin-button {
 .bot-die-normal { animation: bot-die-normal 1.3s ease-in forwards; }
 .bot-die-elite { animation: bot-die-elite 1.5s ease-in forwards; }
 .bot-die-boss { animation: bot-die-boss 2.2s ease-in forwards; }
+/* the DDoS Lord's own moves (ddosLord.tsx) */
+@keyframes gait-levitate {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-9px) rotate(-1.5deg); }
+  65% { transform: translateY(-4px) rotate(1.5deg); }
+}
+@keyframes lord-cape {
+  0%, 100% { d: path("M24 140 Q34 104 60 104 L100 104 Q126 104 136 140 Q122 134 108 141 Q94 134 80 141 Q66 134 52 141 Q38 134 24 140 Z"); }
+  50% { d: path("M20 142 Q34 104 60 104 L100 104 Q126 104 140 138 Q122 145 108 137 Q94 145 80 137 Q66 145 52 137 Q38 145 20 142 Z"); }
+}
+@keyframes lord-crown {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-5px) rotate(2deg); }
+}
+@keyframes lord-leak {
+  0%, 100% { opacity: 0.25; transform: scaleX(0.8); }
+  50% { opacity: 0.7; transform: scaleX(1); }
+}
+@keyframes lord-eye {
+  0%, 62%, 100% { transform: scaleY(0.15); }
+  68% { transform: scaleY(1.2); }
+  72%, 90% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
+@keyframes lord-stare {
+  0%, 100% { transform: scale(1.15); }
+  50% { transform: scale(1.35, 1.25); }
+}
+@keyframes lord-rgb {
+  0%, 84%, 94%, 100% { opacity: 0; transform: none; }
+  86% { opacity: 0.8; transform: translateX(var(--dx)); }
+  89% { opacity: 0.5; transform: translate(calc(var(--dx) * -0.6), -1px); }
+  92% { opacity: 0.8; transform: translateX(var(--dx)) skewX(-8deg); }
+}
+@keyframes lord-burst {
+  0% { transform: scale(0.6); opacity: 1; stroke-width: 6; }
+  100% { transform: scale(3); opacity: 0; stroke-width: 1; }
+}
+/* defeat: the box holds, the body switches off like a CRT, the crown drops */
+@keyframes lord-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes lord-crt {
+  0% { transform: none; filter: none; }
+  6% { transform: translateX(-5px) skewX(10deg); filter: hue-rotate(90deg); }
+  12% { transform: translateX(4px) skewX(-8deg); filter: none; }
+  18% { transform: translateX(-3px) scaleY(0.9); filter: hue-rotate(-90deg) brightness(1.5); }
+  24% { transform: none; filter: none; }
+  30% { transform: translateX(6px) skewX(-14deg); filter: brightness(2); }
+  36% { transform: scale(1.06); filter: brightness(1.5); }
+  48% { transform: scale(1.35, 0.03); filter: brightness(4); }
+  58% { transform: scale(0.02, 0.03); filter: brightness(5); }
+  62%, 100% { transform: scale(0); }
+}
+@keyframes lord-dot {
+  0%, 55% { opacity: 0; transform: scale(1); }
+  60% { opacity: 1; transform: scale(1.6); }
+  72%, 100% { opacity: 0; transform: scale(0); }
+}
+@keyframes lord-crown-fall {
+  0% { transform: none; }
+  30% { transform: translateY(-10px) rotate(-6deg); }
+  50% { transform: translateY(-14px) rotate(5deg); animation-timing-function: ease-in; }
+  64% { transform: translateY(98px) rotate(26deg); animation-timing-function: ease-out; }
+  70% { transform: translateY(84px) rotate(20deg); animation-timing-function: ease-in; }
+  76% { transform: translateY(98px) rotate(24deg); animation-timing-function: ease-out; }
+  80% { transform: translateY(93px) rotate(22deg); animation-timing-function: ease-in; }
+  84%, 100% { transform: translateY(98px) rotate(23deg); }
+}
+.bot-die-lord { animation: lord-die 2.6s linear forwards; }
+.bot-die-lord [data-fx='core'],
+.bot-die-lord [data-fx='eye'],
+.bot-die-lord [data-fx='rgb'] { animation: lord-crt 2.6s ease-in forwards !important; transform-origin: 80px 80px !important; }
+.bot-die-lord [data-fx='crt-dot'] { animation: lord-dot 2.6s linear forwards; }
+.bot-die-lord [data-fx='crown'] { animation: lord-crown-fall 2.6s linear forwards !important; }
+/* crack lines and the light under the crown go out with the body */
+.bot-die-lord [data-fx='core'] ~ :not([data-fx='crown']):not([data-fx='crt-dot']):not([data-fx='eye']):not([data-fx='rgb']) {
+  opacity: 0 !important;
+  transition: opacity 250ms 1.1s;
+}
+.bot-die-lord [data-fx='ring'],
+.bot-die-lord [data-fx='orbit'] { opacity: 0 !important; transition: opacity 500ms; }
 .minion-in { animation: minion-in 480ms ease-out both; }
 .minion-die { animation: minion-die 1.5s ease-in forwards; }
 .minion-flee { animation: minion-flee 1.5s ease-in forwards; }
@@ -448,7 +531,7 @@ input[type='number']::-webkit-outer-spin-button {
   .minion-in {
     animation: none !important;
   }
-  .bot-die-mini, .bot-die-normal, .bot-die-elite, .bot-die-boss, .minion-die, .minion-flee {
+  .bot-die-mini, .bot-die-normal, .bot-die-elite, .bot-die-boss, .bot-die-lord, .minion-die, .minion-flee {
     animation: none !important;
     opacity: 0.25;
     filter: grayscale(1);

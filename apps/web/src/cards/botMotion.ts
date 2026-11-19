@@ -3,6 +3,7 @@
 // summons and defeat that differ by tier (warmup mini bot, normal, elite, floor
 // boss). DOM-only, like fx.ts: these illustrate, the rules decide.
 import { reduced } from './fx';
+import { LORD, LORD_DIE_MS, lordHit, lordStrike, lordSummon } from './ddosLord';
 
 export type BotTier = 'mini' | 'normal' | 'elite' | 'boss';
 
@@ -21,7 +22,8 @@ export type Gait =
   | 'tick'
   | 'slither'
   | 'creep'
-  | 'scan';
+  | 'scan'
+  | 'levitate';
 
 /** How it attacks at the start of the enemy turn. */
 export type Strike = 'lunge' | 'charge' | 'slam' | 'spin' | 'blink' | 'spit';
@@ -47,6 +49,7 @@ const GAIT_S: Record<Gait, number> = {
   slither: 1.8,
   creep: 8,
   scan: 3,
+  levitate: 3.4,
 };
 
 /** Where the gait pivots, in the 160×160 avatar box: feet for hops and stomps, the top for things that hang. */
@@ -90,7 +93,7 @@ const MOTIONS: Record<string, Motion> = {
   // floor bosses
   cache_poisoner: { gait: 'prowl', strike: 'spit' },
   black_friday: { gait: 'swing', strike: 'slam' },
-  ddos_lord: { gait: 'hover', strike: 'slam' },
+  ddos_lord: { gait: 'levitate', strike: 'slam' }, // its own strike, hit and summon: ddosLord.tsx
 };
 
 export const motionOf = (enemyId: string): Motion => MOTIONS[enemyId] ?? { gait: 'hover', strike: 'lunge' };
@@ -190,6 +193,7 @@ const bodyOf = (el: Element | null) => el?.querySelector('svg') ?? null;
 
 /** The enemy's attack move, by its strike style and tier. Resolves when it lands. */
 export async function botStrike(el: Element | null, enemyId: string, tier: BotTier): Promise<void> {
+  if (el && enemyId === LORD) return lordStrike(el);
   const body = bodyOf(el);
   if (!body || reduced()) return;
   const t = TIER_AMP[tier];
@@ -211,6 +215,7 @@ export function botJab(el: Element | null, tier: BotTier) {
 
 /** Taking a hit: a mini bot gets knocked around, a boss barely flinches. */
 export function botHit(el: Element | null, tier: BotTier) {
+  if (el?.getAttribute('data-enemy') === LORD) return lordHit(el);
   if (!el || reduced()) return;
   const frames: Record<BotTier, { f: Keyframe[]; ms: number }> = {
     mini: {
@@ -250,6 +255,7 @@ export function botHit(el: Element | null, tier: BotTier) {
 
 /** Calling minions: rise up and flare. */
 export async function botSummon(el: Element | null, tier: BotTier): Promise<void> {
+  if (el?.getAttribute('data-enemy') === LORD) return lordSummon(el);
   const body = bodyOf(el);
   if (!body || reduced()) return;
   const a = TIER_AMP[tier];
@@ -323,3 +329,7 @@ export const MINION_EXIT_MS = 1500;
 
 /** How long the defeat animation runs (keyframes `bot-die-<tier>`). */
 export const BOT_DIE_MS: Record<BotTier, number> = { mini: 1100, normal: 1300, elite: 1500, boss: 2200 };
+
+/** The defeat's length for this enemy: by tier, or its own (keyframes `lord-*` for the DDoS Lord). */
+export const botDieMs = (enemyId: string, tier: BotTier) => (enemyId === LORD ? LORD_DIE_MS : BOT_DIE_MS[tier]);
+export const dieClass = (enemyId: string, tier: BotTier) => (enemyId === LORD ? 'bot-die-lord' : `bot-die-${tier}`);

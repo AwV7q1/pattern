@@ -70,7 +70,7 @@ import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
-import { BOT_DIE_MS, MINION_EXIT_MS, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
+import { botDieMs, MINION_EXIT_MS, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
@@ -170,7 +170,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const [endReady, setEndReady] = useState(false);
   useEffect(() => {
     if (!down) return;
-    const t = setTimeout(() => setEndReady(true), BOT_DIE_MS[tierRef.current] + 250);
+    const t = setTimeout(() => setEndReady(true), botDieMs(state.enemy.id, tierRef.current) + 250);
     return () => clearTimeout(t);
   }, [down]);
   const [resolving, setResolving] = useState(false);
