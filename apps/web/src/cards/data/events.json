@@ -1,0 +1,38 @@
+[
+  {
+    "id": "friday_deploy",
+    "title": "Deploy chiều thứ Sáu",
+    "text": "16h45 thứ Sáu, PM muốn đẩy tính năng mới lên production \"cho kịp sprint\". Không ai muốn trực cuối tuần.",
+    "options": [
+      { "label": "Deploy luôn: nhận 1 lá ngẫu nhiên, nhưng thêm 1 Tech Debt", "effects": [{ "op": "randomCard" }, { "op": "addCard", "card": "tech_debt" }] },
+      { "label": "Để sáng thứ Hai: hồi 8 Error Budget", "effects": [{ "op": "heal", "n": 8 }] }
+    ]
+  },
+  {
+    "id": "blameless",
+    "title": "Họp postmortem không đổ lỗi",
+    "text": "Sự cố tuần trước được mổ xẻ: không ai bị khiển trách, chỉ có quy trình được sửa.",
+    "options": [
+      { "label": "Dọn quy trình: bỏ 1 lá khỏi bộ", "effects": [{ "op": "removeCard" }] },
+      { "label": "Viết thêm alert: +4 Error Budget tối đa", "effects": [{ "op": "maxHp", "n": 4 }] }
+    ]
+  },
+  {
+    "id": "boss_asks",
+    "title": "Sếp hỏi \"sao chậm thế?\"",
+    "text": "Dashboard đỏ, sếp đứng sau lưng. Có thể tranh thủ xin ngân sách thử công cụ mới, nhưng sẽ mất thời gian chữa cháy.",
+    "options": [
+      { "label": "Xin thử công cụ: mất 6 Error Budget, chọn 1 trong 3 lá", "effects": [{ "op": "damage", "n": 6 }, { "op": "pickCard" }] },
+      { "label": "Trả lời \"đang xử lý\" và đi tiếp", "effects": [] }
+    ]
+  },
+  {
+    "id": "pager_3am",
+    "title": "Pager kêu lúc 3 giờ sáng",
+    "text": "Báo động giả. Bạn tỉnh hẳn rồi, ngủ tiếp hay ngồi viết runbook cho lần sau?",
+    "options": [
+      { "label": "Ngủ tiếp: hồi 12 Error Budget", "effects": [{ "op": "heal", "n": 12 }] },
+      { "label": "Viết runbook: mất 4 Error Budget, nhận lá Runbook", "effects": [{ "op": "damage", "n": 4 }, { "op": "addCard", "card": "runbook" }] }
+    ]
+  }
+]

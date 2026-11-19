@@ -114,6 +114,7 @@ export interface Content {
   enemies: EnemyDef[];
   battle: BattleConfig;
   run: RunConfig;
+  events: RunEvent[];
 }
 
 /** What a fight starts from when it is part of a run (defaults: `battle.json`). */
@@ -122,29 +123,82 @@ export interface BattleSetup {
   hp?: number;
   maxHp?: number;
   deck?: string[];
+  /** Enemy HP and traffic multipliers (elites, bosses, higher floors). */
+  enemyScale?: Scale;
 }
 
-// ---------------------------------------------------------------- run ("ca trực")
+// ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
 
-export type Floor =
-  | { kind: 'battle'; enemy: string; title: string; boss?: boolean }
-  | { kind: 'rest'; title: string };
+export type NodeKind = 'battle' | 'elite' | 'rest' | 'event' | 'boss';
+
+export interface MapNode {
+  id: number;
+  /** 0 = entry row; the boss sits on row `map.rows`. */
+  row: number;
+  col: number;
+  kind: NodeKind;
+  /** Ids of the nodes this one leads to. */
+  next: number[];
+}
+
+export interface TowerMap {
+  act: number;
+  nodes: MapNode[];
+  bossId: number;
+}
+
+export interface Scale {
+  hp: number;
+  rps: number;
+}
 
 export interface RunConfig {
   title: string;
-  /** Player max HP for the whole run (a single fight uses `battle.hp`). */
+  /** Floors of the tower; beating the last boss wins the run. */
+  acts: number;
+  /** Player max HP at the start of a run (a single fight uses `battle.hp`). */
   hp: number;
-  floors: Floor[];
-  /** Cards offered after each won fight (pick one or skip). */
+  /** Cards offered after each won fight (pick one or skip); elites offer one more. */
   rewardChoices: number;
   /** Share of max HP restored at a rest stop. */
   restHeal: number;
+  /** Share of max HP restored when climbing to the next floor. */
+  actHeal: number;
+  map: { rows: number; width: number; paths: number; weights: Record<'battle' | 'event' | 'elite' | 'rest', number> };
+  /** Enemies met in normal and elite fights. */
+  normal: string[];
+  /** Boss of each floor, in order (wraps around). */
+  bosses: string[];
+  /** Enemy multipliers by node kind (before the floor multiplier). */
+  fight: Scale;
+  elite: Scale & { maxHp: number };
+  boss: Scale;
+  /** Extra enemy HP / traffic per floor climbed (×(1 + k·(act−1))). */
+  actScale: Scale;
 }
 
-export type RunPhase = 'battle' | 'reward' | 'rest' | 'won' | 'lost';
+export type EventEffect =
+  | { op: 'heal'; n: number }
+  | { op: 'damage'; n: number }
+  | { op: 'maxHp'; n: number }
+  | { op: 'addCard'; card: string }
+  | { op: 'randomCard' }
+  | { op: 'pickCard' }
+  | { op: 'removeCard' };
+
+export interface RunEvent {
+  id: string;
+  title: string;
+  text: string;
+  options: { label: string; effects: EventEffect[] }[];
+}
+
+export type RunPhase = 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'cleared' | 'won' | 'lost';
 
 export interface FloorResult {
-  floor: number;
+  act: number;
+  kind: NodeKind;
+  /** Enemy id for fights, event id for events, '' for rests. */
   enemy: string;
   won: boolean;
   turns: number;
@@ -153,14 +207,23 @@ export interface FloorResult {
   picked?: string | null;
   removed?: string;
   healed?: number;
+  added?: string[];
+  /** Event option taken. */
+  option?: string;
 }
 
 export interface RunState {
-  version: 1;
+  version: 2;
   seed: number;
-  /** RNG for rewards, advanced only by the run rules. */
+  /** RNG for rewards and events, advanced only by the run rules. */
   rng: number;
-  floor: number;
+  act: number;
+  /** Map node the player stands on (null: at the foot of the floor). */
+  node: number | null;
+  /** Nodes visited on this floor, in order. */
+  path: number[];
+  /** Nodes visited in the whole run. */
+  climbed: number;
   phase: RunPhase;
   hp: number;
   maxHp: number;
@@ -168,6 +231,8 @@ export interface RunState {
   deck: string[];
   /** Card ids offered in the `reward` phase. */
   reward: string[];
+  /** Event shown in the `event` phase. */
+  event: string | null;
   history: FloorResult[];
 }
 
@@ -213,7 +278,7 @@ export interface BattleState {
   design: Design;
   waf: number;
   temp: { api: number; db: number; botCut: number; hotfix: boolean };
-  enemy: { id: string; hp: number; maxHp: number; step: number };
+  enemy: { id: string; hp: number; maxHp: number; step: number; /** Traffic multiplier (default 1). */ rps?: number };
   /** Cards played this turn (for the log). */
   played: string[];
   reports: TurnReport[];

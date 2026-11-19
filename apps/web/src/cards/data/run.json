@@ -1,28 +1,46 @@
 {
-  "title": "Ca trực đêm",
+  "title": "Tháp On-Call",
+  "acts": 3,
   "hp": 80,
   "rewardChoices": 3,
   "restHeal": 0.5,
-  "floors": [
-    {
-      "kind": "battle",
-      "enemy": "swarm",
-      "title": "Trận 1: Đêm botnet"
-    },
-    {
-      "kind": "battle",
-      "enemy": "retry_storm",
-      "title": "Trận 2: Bão retry"
-    },
-    {
-      "kind": "rest",
-      "title": "Nghỉ giữa ca"
-    },
-    {
-      "kind": "battle",
-      "enemy": "herd",
-      "title": "Trận cuối: Thundering Herd",
-      "boss": true
+  "actHeal": 0.6,
+  "map": {
+    "rows": 7,
+    "width": 5,
+    "paths": 4,
+    "weights": {
+      "battle": 45,
+      "event": 25,
+      "elite": 14,
+      "rest": 16
     }
-  ]
+  },
+  "normal": [
+    "swarm",
+    "retry_storm",
+    "herd"
+  ],
+  "bosses": [
+    "swarm",
+    "retry_storm",
+    "herd"
+  ],
+  "fight": {
+    "hp": 0.45,
+    "rps": 0.6
+  },
+  "elite": {
+    "hp": 0.9,
+    "rps": 0.85,
+    "maxHp": 5
+  },
+  "boss": {
+    "hp": 1.0,
+    "rps": 0.9
+  },
+  "actScale": {
+    "hp": 0.2,
+    "rps": 0.08
+  }
 }

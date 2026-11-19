@@ -7,12 +7,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as rules from './rules.ts';
 import * as runs from './run.ts';
+import { generateMap, ELITE_ROW } from './map.ts';
 import type { BattleState, Content, RunState } from './types';
 import type { Summary } from '@/types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -32,9 +33,9 @@ test('content: every id referenced exists', () => {
   const enemies = new Set(content.enemies.map((e) => e.id));
   for (const id of content.battle.startingDeck) assert.ok(cards.has(id), id);
   assert.ok(enemies.has(content.battle.enemy));
-  for (const f of content.run.floors) if (f.kind === 'battle') assert.ok(enemies.has(f.enemy), f.enemy);
+  for (const id of [...content.run.normal, ...content.run.bosses]) assert.ok(enemies.has(id), id);
+  for (const ev of content.events) for (const o of ev.options) for (const e of o.effects) if (e.op === 'addCard') assert.ok(cards.has(e.card), e.card);
   for (const e of content.enemies) for (const i of e.intents) if (i.addCards) assert.ok(cards.has(i.addCards.card));
-  assert.equal(content.run.floors.at(-1)?.kind, 'battle', 'a run ends on a fight');
 });
 
 test('newBattle is deterministic per seed and deals a full hand', () => {
@@ -150,77 +151,239 @@ test('a battle ends when either side reaches 0 HP', () => {
   assert.equal(endTurn(low, summary({ p99Ms: 9999 })).phase, 'lost');
 });
 
+// ---------------------------------------------------------------- map
+
+const { rows } = content.run.map;
+
+test('map: seeded, connected, no crossing edges', () => {
+  for (let seed = 1; seed <= 60; seed++) {
+    for (let act = 1; act <= content.run.acts; act++) {
+      const m = generateMap(content, seed, act);
+      assert.deepEqual(generateMap(content, seed, act), m);
+      const byId = new Map(m.nodes.map((n) => [n.id, n]));
+      const boss = byId.get(m.bossId)!;
+      assert.equal(boss.kind, 'boss');
+      assert.equal(boss.row, rows);
+
+      // every node is reached from row 0, and leads to the boss
+      const seen = new Set<number>();
+      const stack = m.nodes.filter((n) => n.row === 0).map((n) => n.id);
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        stack.push(...byId.get(id)!.next);
+      }
+      assert.equal(seen.size, m.nodes.length, `seed ${seed}: unreachable node`);
+      const leads = (id: number): boolean => id === m.bossId || byId.get(id)!.next.some(leads);
+      for (const n of m.nodes) assert.ok(leads(n.id), `seed ${seed}: dead end at ${n.id}`);
+
+      // edges go one row up, at most one column over, and never cross
+      for (const n of m.nodes)
+        for (const to of n.next) {
+          const t = byId.get(to)!;
+          assert.equal(t.row, n.row + 1);
+          if (t.kind !== 'boss') assert.ok(Math.abs(t.col - n.col) <= 1);
+        }
+      for (let r = 0; r < rows - 1; r++) {
+        const edges = m.nodes.filter((n) => n.row === r).flatMap((n) => n.next.map((to) => [n.col, byId.get(to)!.col]));
+        for (const [a, b] of edges) for (const [c, d] of edges) assert.ok(!((a < c && b > d) || (a > c && b < d)), `seed ${seed}: crossing on row ${r}`);
+      }
+
+      // node kinds
+      const parents = (id: number) => m.nodes.filter((n) => n.next.includes(id));
+      for (const n of m.nodes) {
+        if (n.row === 0) assert.equal(n.kind, 'battle');
+        if (n.row === rows - 1) assert.equal(n.kind, 'rest');
+        if ((n.kind === 'elite' || n.kind === 'rest') && n.row < rows - 1) {
+          assert.ok(n.row >= ELITE_ROW, `seed ${seed}: early ${n.kind}`);
+          assert.ok(!parents(n.id).some((p) => p.kind === n.kind), `seed ${seed}: ${n.kind} twice in a row`);
+        }
+      }
+      assert.ok(m.nodes.some((n) => n.kind === 'elite'), `seed ${seed}: no elite`);
+      assert.ok(m.nodes.filter((n) => n.row === 0).length >= 2, 'at least two ways in');
+    }
+  }
+  assert.notDeepEqual(generateMap(content, 5, 1).nodes, generateMap(content, 5, 2).nodes);
+  assert.notDeepEqual(generateMap(content, 5, 1).nodes, generateMap(content, 6, 1).nodes);
+});
+
 // ---------------------------------------------------------------- run
 
 const win = (run: RunState, hpLeft: number): BattleState => {
   const s = rules.newBattle(content, runs.battleSeed(run), runs.battleSetup(content, run));
   return { ...s, phase: 'won', hp: hpLeft, turn: 6 };
 };
+const lose = (run: RunState): BattleState => ({ ...win(run, 0), phase: 'lost' });
 
-test('run: fight, reward, fight, rest, boss', () => {
-  let run = runs.newRun(content, 11);
-  assert.equal(run.phase, 'battle');
+/** Walk to a node of the given kind (first one found on the way up), handling what is in between. */
+function climbTo(run: RunState, kind: string): RunState {
+  for (let guard = 0; guard < 40; guard++) {
+    if (run.phase === 'map') {
+      const map = runs.towerMap(content, run);
+      const next = runs.reachable(content, run).map((id) => map.nodes.find((n) => n.id === id)!);
+      const target = next.find((n) => n.kind === kind) ?? next[0];
+      run = runs.chooseNode(content, run, target.id);
+      if (target.kind === kind) return run;
+    } else if (run.phase === 'battle') run = runs.finishBattle(content, run, win(run, run.hp));
+    else if (run.phase === 'reward') run = runs.pickReward(content, run, null);
+    else if (run.phase === 'rest') run = runs.rest(content, run, { heal: true });
+    else if (run.phase === 'event') run = runs.chooseEvent(content, run, runs.currentEvent(content, run)!.options.findIndex((o) => !o.effects.some((e) => e.op === 'removeCard')));
+    else if (run.phase === 'cleared') run = runs.nextAct(content, run);
+    else break;
+  }
+  throw new Error(`no ${kind} reached`);
+}
+
+test('run: starts on the map; only reachable nodes can be chosen', () => {
+  const run = runs.newRun(content, 11);
+  assert.equal(run.phase, 'map');
+  assert.equal(run.act, 1);
   assert.deepEqual(run.deck, content.battle.startingDeck);
+  const open = runs.reachable(content, run);
+  assert.ok(open.length >= 2);
+  const map = runs.towerMap(content, run);
+  const far = map.nodes.find((n) => n.row > 0)!;
+  assert.equal(runs.chooseNode(content, run, far.id), run, 'cannot skip rows');
+  assert.equal(runs.pickReward(content, run, 'cache'), run, 'no reward on the map');
 
+  const next = runs.chooseNode(content, run, open[0]);
+  assert.equal(next.phase, 'battle', 'row 0 is a fight');
+  assert.deepEqual(next.path, [open[0]]);
+  assert.equal(next.climbed, 1);
+  assert.equal(runs.chooseNode(content, next, open[1]), next, 'one node at a time');
+});
+
+test('run: fight, reward, back to the map with the hp carried over', () => {
+  let run = runs.chooseNode(content, runs.newRun(content, 11), runs.reachable(content, runs.newRun(content, 11))[0]);
+  const setup = runs.battleSetup(content, run);
+  assert.ok(content.run.normal.includes(setup.enemy!));
+  assert.notEqual(setup.enemy, runs.bossOf(content, 1), 'the boss is not met before the top');
   run = runs.finishBattle(content, run, win(run, 50));
   assert.equal(run.phase, 'reward');
   assert.equal(run.hp, 50);
   assert.equal(run.reward.length, content.run.rewardChoices);
   assert.equal(new Set(run.reward).size, run.reward.length, 'offers are distinct');
-  for (const id of run.reward) assert.ok(!rules.cardDef(content, id).unplayable);
-
   const pick = run.reward[0];
   run = runs.pickReward(content, run, pick);
-  assert.equal(run.deck.length, content.battle.startingDeck.length + 1);
+  assert.equal(run.phase, 'map');
   assert.equal(run.deck.at(-1), pick);
-  assert.equal(run.phase, 'battle');
-  assert.equal(runs.battleSetup(content, run).enemy, 'retry_storm');
-  assert.equal(runs.battleSetup(content, run).hp, 50);
-
-  run = runs.finishBattle(content, run, win(run, 30));
-  run = runs.pickReward(content, run, null);
-  assert.equal(run.phase, 'rest');
-  assert.equal(run.history[1].picked, null);
-
-  const healed = runs.rest(content, run, { heal: true });
-  assert.equal(healed.hp, Math.min(run.maxHp, 30 + Math.ceil(run.maxHp * content.run.restHeal)));
-  const trimmed = runs.rest(content, run, { remove: 0 });
-  assert.equal(trimmed.deck.length, run.deck.length - 1);
-  assert.equal(trimmed.hp, 30);
-
-  run = healed;
-  assert.equal(run.phase, 'battle');
-  assert.equal(runs.battleSetup(content, run).enemy, 'herd');
-  run = runs.finishBattle(content, run, win(run, 10));
-  assert.equal(run.phase, 'won');
-  assert.equal(run.history.filter((h) => h.enemy).length, 3);
+  assert.equal(run.history[0].picked, pick);
+  const open = runs.reachable(content, run);
+  const node = runs.currentNode(content, run)!;
+  assert.deepEqual(open, node.next);
 });
 
-test('run: losing a fight ends the run; invalid moves are ignored', () => {
+test('run: elites and higher floors scale the enemy', () => {
+  let run = climbTo(runs.newRun(content, 21), 'elite');
+  assert.equal(run.phase, 'battle');
+  const setup = runs.battleSetup(content, run);
+  const def = content.enemies.find((e) => e.id === setup.enemy)!;
+  const up = 1 + content.run.actScale.hp * (run.act - 1);
+  const upRps = 1 + content.run.actScale.rps * (run.act - 1);
+  assert.deepEqual(setup.enemyScale, { hp: content.run.elite.hp * up, rps: content.run.elite.rps * upRps });
+  const s = rules.newBattle(content, 1, setup);
+  assert.equal(s.enemy.maxHp, Math.round(def.hp * setup.enemyScale!.hp));
+  const plain = rules.newBattle(content, 1, { enemy: setup.enemy });
+  assert.equal(rules.currentIntent(content, s).botRps, Math.round(rules.currentIntent(content, plain).botRps * setup.enemyScale!.rps));
+  assert.match(runs.battleTitle(content, run), /^Tinh anh/);
+
+  const maxHp = run.maxHp;
+  run = runs.finishBattle(content, run, win(run, 40));
+  assert.equal(run.maxHp, maxHp + content.run.elite.maxHp);
+  assert.equal(run.hp, 40 + content.run.elite.maxHp);
+  assert.equal(run.reward.length, content.run.rewardChoices + 1);
+
+  const third = { ...runs.newRun(content, 21), act: 3 };
+  const node = runs.towerMap(content, third).nodes.find((n) => n.row === 0)!;
+  const high = runs.battleSetup(content, { ...third, node: node.id, phase: 'battle' });
+  const f = content.run.fight;
+  assert.deepEqual(high.enemyScale, { hp: f.hp * (1 + 2 * content.run.actScale.hp), rps: f.rps * (1 + 2 * content.run.actScale.rps) });
+});
+
+test('run: boss clears the floor, the last boss wins the tower', () => {
+  let run = climbTo(runs.newRun(content, 31), 'boss');
+  assert.equal(runs.battleSetup(content, run).enemy, runs.bossOf(content, 1));
+  run = runs.finishBattle(content, run, win(run, 20));
+  assert.equal(run.phase, 'cleared');
+  const map1 = runs.towerMap(content, run).nodes;
+  const heal = runs.actHealOf(content, run);
+  run = runs.nextAct(content, run);
+  assert.equal(run.act, 2);
+  assert.equal(run.phase, 'map');
+  assert.equal(run.node, null);
+  assert.deepEqual(run.path, []);
+  assert.equal(run.hp, 20 + heal);
+  assert.notDeepEqual(runs.towerMap(content, run).nodes, map1, 'a new map each floor');
+
+  run = climbTo(run, 'boss');
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  run = runs.nextAct(content, run);
+  run = climbTo(run, 'boss');
+  assert.equal(run.act, content.run.acts);
+  run = runs.finishBattle(content, run, win(run, 5));
+  assert.equal(run.phase, 'won');
+  assert.equal(runs.nextAct(content, run), run, 'no floor above the last');
+  assert.equal(run.history.filter((h) => h.kind === 'boss').length, content.run.acts);
+});
+
+test('run: losing a fight ends the run', () => {
   let run = runs.newRun(content, 4);
-  assert.equal(runs.pickReward(content, run, 'cache'), run, 'no reward during a fight');
-  assert.equal(runs.rest(content, run, { heal: true }), run);
-  const lost = { ...win(run, 0), phase: 'lost' as const };
-  run = runs.finishBattle(content, run, lost);
+  run = runs.chooseNode(content, run, runs.reachable(content, run)[0]);
+  run = runs.finishBattle(content, run, lose(run));
   assert.equal(run.phase, 'lost');
   assert.equal(run.hp, 0);
-
-  let r2 = runs.finishBattle(content, runs.newRun(content, 4), win(runs.newRun(content, 4), 40));
-  const notOffered = runs.rewardPool(content).find((id) => !r2.reward.includes(id))!;
-  assert.equal(runs.pickReward(content, r2, notOffered), r2);
-  r2 = runs.pickReward(content, r2, r2.reward[1]);
-  assert.equal(r2.phase, 'battle');
+  assert.equal(runs.chooseNode(content, run, runs.currentNode(content, run)!.next[0]), run);
 });
 
-test('run: same seed, same offers and fight seeds; saved runs are validated', () => {
-  const a = runs.finishBattle(content, runs.newRun(content, 99), win(runs.newRun(content, 99), 40));
-  const b = runs.finishBattle(content, runs.newRun(content, 99), win(runs.newRun(content, 99), 40));
-  assert.deepEqual(a.reward, b.reward);
-  assert.notEqual(runs.battleSeed(a), runs.battleSeed({ ...a, floor: a.floor + 1 }));
+test('run: rest stops and events', () => {
+  const base = { ...runs.newRun(content, 8), hp: 30 };
+  const map = runs.towerMap(content, base);
+  const restNode = map.nodes.find((n) => n.kind === 'rest')!;
+  const atRest = { ...base, node: restNode.id, phase: 'rest' as const };
+  const healed = runs.rest(content, atRest, { heal: true });
+  assert.equal(healed.hp, Math.min(base.maxHp, 30 + Math.ceil(base.maxHp * content.run.restHeal)));
+  assert.equal(healed.phase, 'map');
+  const trimmed = runs.rest(content, atRest, { remove: 0 });
+  assert.equal(trimmed.deck.length, base.deck.length - 1);
+  assert.equal(runs.rest(content, { ...atRest, deck: base.deck.slice(0, content.battle.handSize) }, { remove: 0 }).phase, 'rest', 'deck too small');
+
+  const at = (id: string) => ({ ...base, phase: 'event' as const, event: id, node: map.nodes.find((n) => n.row > 0)!.id });
+  const ev = (id: string) => content.events.find((e) => e.id === id)!;
+  const opt = (id: string, op: string) => ev(id).options.findIndex((o) => o.effects.some((e) => e.op === op));
+
+  const friday = runs.chooseEvent(content, at('friday_deploy'), opt('friday_deploy', 'randomCard'));
+  assert.equal(friday.deck.length, base.deck.length + 2);
+  assert.ok(friday.deck.includes('tech_debt'));
+  assert.equal(friday.phase, 'map');
+
+  const blameless = at('blameless');
+  const o = opt('blameless', 'removeCard');
+  assert.equal(runs.chooseEvent(content, blameless, o), blameless, 'removing needs a card');
+  assert.equal(runs.chooseEvent(content, blameless, o, 0).deck.length, base.deck.length - 1);
+  const tougher = runs.chooseEvent(content, blameless, opt('blameless', 'maxHp'));
+  assert.equal(tougher.maxHp, base.maxHp + 4);
+
+  const tool = runs.chooseEvent(content, at('boss_asks'), opt('boss_asks', 'pickCard'));
+  assert.equal(tool.phase, 'reward');
+  assert.equal(tool.hp, 30 - 6);
+  assert.equal(runs.pickReward(content, tool, tool.reward[0]).phase, 'map');
+
+  const nearlyDead = runs.chooseEvent(content, { ...at('pager_3am'), hp: 2 }, opt('pager_3am', 'damage'));
+  assert.equal(nearlyDead.hp, 1, 'events never kill');
+});
+
+test('run: same seed, same run; saved runs are validated', () => {
+  const a = runs.finishBattle(content, climbTo(runs.newRun(content, 99), 'battle'), win(climbTo(runs.newRun(content, 99), 'battle'), 40));
+  const b = runs.finishBattle(content, climbTo(runs.newRun(content, 99), 'battle'), win(climbTo(runs.newRun(content, 99), 'battle'), 40));
+  assert.deepEqual(a, b);
+  assert.notEqual(runs.battleSeed(a), runs.battleSeed({ ...a, climbed: a.climbed + 1 }));
 
   assert.ok(runs.isValidRun(content, JSON.parse(JSON.stringify(a))));
   assert.ok(!runs.isValidRun(content, null));
   assert.ok(!runs.isValidRun(content, { ...a, deck: ['no_such_card'] }));
-  assert.ok(!runs.isValidRun(content, { ...a, version: 2 }));
-  assert.ok(!runs.isValidRun(content, { ...a, phase: 'rest' }), 'floor 0 is not a rest stop');
+  assert.ok(!runs.isValidRun(content, { ...a, version: 1, floor: 0 }), 'old saves start over');
+  assert.ok(!runs.isValidRun(content, { ...a, node: 9999 }));
+  assert.ok(!runs.isValidRun(content, { ...a, act: content.run.acts + 1 }));
+  assert.ok(!runs.isValidRun(content, { ...a, phase: 'rest' }), 'not standing on a rest stop');
 });

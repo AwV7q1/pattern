@@ -1,27 +1,52 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, Check, Coffee, Crown, HeartPulse, LibraryBig, Plus, RotateCcw, Skull, Swords, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, CircleHelp, Coffee, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
-import { CONTENT, loadRun, saveRun } from './content';
-import { battleSeed, battleSetup, currentFloor, finishBattle, newRun, pickReward, rest } from './run';
+import { CONTENT, loadBest, loadRun, recordRun, saveRun } from './content';
+import type { Best } from './content';
+import {
+  actHealOf,
+  battleSeed,
+  battleSetup,
+  battleTitle,
+  bossOf,
+  canRemove,
+  chooseEvent,
+  chooseNode,
+  currentEvent,
+  currentNode,
+  finishBattle,
+  newRun,
+  nextAct,
+  pickReward,
+  rest,
+  stepsPerAct,
+} from './run';
 import { cardDef } from './rules';
-import type { RunState } from './types';
+import type { FloorResult, RunState } from './types';
 import { CardBattle } from './CardBattle';
 import { CardFace } from './Hand';
 import { CardLibrary } from './CardLibrary';
 import { NetBackdrop } from './NetBackdrop';
+import { NODE_INFO, TowerMap } from './TowerMap';
 
 const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
 
 /**
- * A run ("ca trực"): fights chained by `run.ts`, with a reward after each won
- * fight and a rest stop. The run is saved in localStorage between screens.
+ * A run: climbing the tower floor by floor (`run.ts`, `map.ts`). The player
+ * picks a path on each floor's map; the run is saved in localStorage.
  */
 export function CardRun() {
   const [run, setRun] = useState<RunState>(() => loadRun() ?? newRun(CONTENT, randomSeed()));
   useEffect(() => saveRun(run), [run]);
+
+  // count a finished run once, and keep the records shown on screen
+  const [best, setBest] = useState<{ best: Best; record: boolean }>(() => ({ best: loadBest(), record: false }));
+  useEffect(() => {
+    if (run.phase === 'won' || run.phase === 'lost') setBest(recordRun(run));
+  }, [run]);
 
   // a game screen: the app's tab bar steps aside
   const setImmersive = useUi((s) => s.setImmersive);
@@ -31,19 +56,19 @@ export function CardRun() {
   }, [setImmersive]);
 
   const startNew = () => setRun(newRun(CONTENT, randomSeed()));
-  const floor = currentFloor(CONTENT, run);
+  const node = currentNode(CONTENT, run);
 
-  if (run.phase === 'battle' && floor?.kind === 'battle') {
-    const last = run.floor === CONTENT.run.floors.length - 1;
+  if (run.phase === 'battle' && node) {
+    const boss = node.kind === 'boss';
     return (
       <CardBattle
-        key={`${run.seed}:${run.floor}`}
+        key={`${run.seed}:${run.act}:${run.climbed}`}
         seed={battleSeed(run)}
         setup={battleSetup(CONTENT, run)}
-        title={floor.title}
-        progress={<RunMap run={run} compact />}
+        title={battleTitle(CONTENT, run)}
+        progress={<Progress run={run} />}
         deck={run.deck}
-        continueLabel={last ? 'Kết thúc ca trực' : 'Nhận thưởng'}
+        continueLabel={boss ? (run.act >= CONTENT.run.acts ? 'Hoàn thành tháp' : 'Lên tầng') : 'Nhận thưởng'}
         onFinish={(battle) => setRun((r) => finishBattle(CONTENT, r, battle))}
         onAbandon={startNew}
       />
@@ -51,17 +76,20 @@ export function CardRun() {
   }
 
   return (
-    <RunScreen run={run} onNew={startNew}>
+    <RunScreen run={run} best={best.best} onNew={startNew}>
+      {run.phase === 'map' && <TowerMap content={CONTENT} run={run} onChoose={(id) => setRun((r) => chooseNode(CONTENT, r, id))} />}
       {run.phase === 'reward' && <RewardScreen run={run} onPick={(id) => setRun((r) => pickReward(CONTENT, r, id))} />}
       {run.phase === 'rest' && <RestScreen run={run} onChoose={(c) => setRun((r) => rest(CONTENT, r, c))} />}
-      {(run.phase === 'won' || run.phase === 'lost') && <RunEnd run={run} onNew={startNew} />}
+      {run.phase === 'event' && <EventScreen run={run} onChoose={(o, i) => setRun((r) => chooseEvent(CONTENT, r, o, i))} />}
+      {run.phase === 'cleared' && <ActClear run={run} onClimb={() => setRun((r) => nextAct(CONTENT, r))} />}
+      {(run.phase === 'won' || run.phase === 'lost') && <RunEnd run={run} best={best.best} record={best.record} onNew={startNew} />}
     </RunScreen>
   );
 }
 
 // ---------------------------------------------------------------- shell
 
-function RunScreen({ run, onNew, children }: { run: RunState; onNew: () => void; children: React.ReactNode }) {
+function RunScreen({ run, best, onNew, children }: { run: RunState; best: Best; onNew: () => void; children: React.ReactNode }) {
   const [showLibrary, setShowLibrary] = useState(false);
   const over = run.phase === 'won' || run.phase === 'lost';
   useEffect(() => {
@@ -79,7 +107,12 @@ function RunScreen({ run, onNew, children }: { run: RunState; onNew: () => void;
           </Link>
         </Button>
         <span className="font-semibold">{CONTENT.run.title}</span>
-        <RunMap run={run} />
+        <Progress run={run} />
+        {best.runs > 0 && (
+          <span className="flex items-center gap-1 text-xs text-muted-foreground" title={`${best.runs} ca đã chơi, xa nhất ${best.bestClimbed} bậc`}>
+            <Medal className="size-3.5 text-amber-300" /> Thắng tháp {best.wins}/{best.runs}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <span className="flex items-center gap-1 text-rose-300">
             <HeartPulse className="size-4" /> {run.hp}/{run.maxHp}
@@ -100,46 +133,33 @@ function RunScreen({ run, onNew, children }: { run: RunState; onNew: () => void;
           )}
         </div>
       </div>
-      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 py-6">{children}</div>
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">{children}</div>
       {showLibrary && <CardLibrary cards={CONTENT.cards} deck={run.deck} onClose={() => setShowLibrary(false)} />}
     </div>
   );
 }
 
-/** The run's floors as a row of steps: done, current, coming. */
-function RunMap({ run, compact }: { run: RunState; compact?: boolean }) {
+/** "Tầng 2/3 · Bậc 4/9", with a tag for elites and bosses. */
+function Progress({ run }: { run: RunState }) {
+  const node = currentNode(CONTENT, run);
+  const step = node ? node.row + 1 : 0;
+  const tagged = node && (node.kind === 'elite' || node.kind === 'boss') ? node : null;
+  const Icon = tagged ? NODE_INFO[tagged.kind].icon : null;
   return (
-    <ol className="flex items-center gap-1" aria-label="Tiến độ ca trực">
-      {CONTENT.run.floors.map((f, i) => {
-        const done = i < run.floor || (i === run.floor && (run.phase === 'reward' || run.phase === 'won'));
-        const now = i === run.floor && !done;
-        const lostHere = now && run.phase === 'lost';
-        const Icon = f.kind === 'rest' ? Coffee : f.kind === 'battle' && f.boss ? Crown : Swords;
-        const name = f.kind === 'battle' ? (CONTENT.enemies.find((e) => e.id === f.enemy)?.name ?? f.title) : f.title;
-        return (
-          <li key={i} className="flex items-center gap-1">
-            {i > 0 && <span className={cn('h-px w-3', i <= run.floor ? 'bg-amber-300/60' : 'bg-border')} />}
-            <span
-              title={name}
-              aria-current={now ? 'step' : undefined}
-              className={cn(
-                'flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px]',
-                lostHere
-                  ? 'border-rose-400/60 bg-rose-500/15 text-rose-300'
-                  : now
-                    ? 'border-amber-300/70 bg-amber-400/15 text-amber-200'
-                    : done
-                      ? 'border-emerald-400/40 text-emerald-300'
-                      : 'border-border text-muted-foreground',
-              )}
-            >
-              {done ? <Check className="size-3" /> : <Icon className="size-3" />}
-              {!compact && <span className="max-w-[9rem] truncate">{name}</span>}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
+    <span className="flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" aria-label="Tiến độ leo tháp">
+      <span className="font-medium text-foreground">
+        Tầng {run.act}/{CONTENT.run.acts}
+      </span>
+      <span>·</span>
+      <span>
+        Bậc {step}/{stepsPerAct(CONTENT)}
+      </span>
+      {tagged && Icon && (
+        <span className={cn('flex items-center gap-0.5 rounded-full border px-1.5', NODE_INFO[tagged.kind].tone)}>
+          <Icon className="size-3" /> {tagged.kind === 'boss' ? 'Trùm' : 'Tinh anh'}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -148,15 +168,18 @@ function RunMap({ run, compact }: { run: RunState; compact?: boolean }) {
 function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | null) => void }) {
   const [chosen, setChosen] = useState<string | null>(null);
   const last = run.history.at(-1);
+  const fromEvent = last?.kind === 'event';
   const enemy = CONTENT.enemies.find((e) => e.id === last?.enemy);
   return (
-    <div className="mx-auto flex max-w-3xl flex-col items-center gap-6">
+    <div className="mx-auto flex max-w-4xl flex-col items-center gap-6">
       <div className="text-center">
         <div className="mb-1 flex items-center justify-center gap-2 text-2xl font-bold">
-          <Trophy className="size-6 text-amber-300" /> Thắng {enemy?.name ?? 'trận'}
+          <Trophy className="size-6 text-amber-300" /> {fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
         </div>
         <p className="text-sm text-muted-foreground">
-          {last ? `${last.turns} lượt, mất ${last.hpLost} Error Budget. ` : ''}Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.
+          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget. ` : ''}
+          {last?.kind === 'elite' ? `+${CONTENT.run.elite.maxHp} Error Budget tối đa. ` : ''}
+          Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.
         </p>
       </div>
       <div className="flex flex-wrap justify-center gap-5">
@@ -196,54 +219,67 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
 
 // ---------------------------------------------------------------- rest
 
-function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: true } | { remove: number }) => void }) {
-  const [mode, setMode] = useState<'pick' | 'remove'>('pick');
+/** Pick one card of the deck to remove (rest stops, events). */
+function DeckPicker({ run, title, text, onConfirm, onBack }: { run: RunState; title: string; text: string; onConfirm: (index: number) => void; onBack: () => void }) {
   const [chosen, setChosen] = useState<string | null>(null);
-  const heal = Math.min(run.maxHp - run.hp, Math.ceil(run.maxHp * CONTENT.run.restHeal));
-  const canRemove = run.deck.length > CONTENT.battle.handSize;
   const groups = useMemo(() => {
     const m = new Map<string, number>();
     for (const id of run.deck) m.set(id, (m.get(id) ?? 0) + 1);
     return [...m.entries()].map(([id, n]) => ({ def: cardDef(CONTENT, id), n })).sort((a, b) => a.def.cost - b.def.cost || a.def.name.localeCompare(b.def.name, 'vi'));
   }, [run.deck]);
-
-  if (mode === 'remove') {
-    return (
-      <div className="mx-auto flex max-w-[1100px] flex-col items-center gap-5">
-        <div className="text-center">
-          <div className="mb-1 text-xl font-bold">Bỏ 1 lá khỏi bộ bài</div>
-          <p className="text-sm text-muted-foreground">Bộ bài gọn hơn thì rút được lá mạnh thường xuyên hơn.</p>
-        </div>
-        <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(160px,1fr))] justify-items-center gap-4">
-          {groups.map(({ def, n }) => {
-            const on = chosen === def.id;
-            return (
-              <button
-                key={def.id}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setChosen(on ? null : def.id)}
-                className={cn('flex flex-col items-center gap-1.5 rounded-2xl outline-none transition-transform focus-visible:ring-2 focus-visible:ring-rose-300', on ? '-translate-y-1' : 'hover:-translate-y-0.5')}
-              >
-                <div className={cn('h-[224px] w-[160px] rounded-2xl', on && 'ring-2 ring-rose-400 ring-offset-2 ring-offset-background')}>
-                  <CardFace def={def} playable={!on} />
-                </div>
-                <span className="font-mono text-[11px] text-muted-foreground">×{n}</span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="sticky bottom-0 flex gap-2 rounded-xl border bg-card/90 p-2 backdrop-blur">
-          <Button variant="destructive" disabled={!chosen} onClick={() => chosen && onChoose({ remove: run.deck.indexOf(chosen) })}>
-            <Trash2 /> Bỏ {chosen ? cardDef(CONTENT, chosen).name : 'lá đã chọn'}
-          </Button>
-          <Button variant="outline" onClick={() => setMode('pick')}>
-            Quay lại
-          </Button>
-        </div>
+  return (
+    <div className="mx-auto flex max-w-[1100px] flex-col items-center gap-5">
+      <div className="text-center">
+        <div className="mb-1 text-xl font-bold">{title}</div>
+        <p className="text-sm text-muted-foreground">{text}</p>
       </div>
+      <div className="grid w-full grid-cols-[repeat(auto-fill,minmax(160px,1fr))] justify-items-center gap-4">
+        {groups.map(({ def, n }) => {
+          const on = chosen === def.id;
+          return (
+            <button
+              key={def.id}
+              type="button"
+              aria-pressed={on}
+              onClick={() => setChosen(on ? null : def.id)}
+              className={cn('flex flex-col items-center gap-1.5 rounded-2xl outline-none transition-transform focus-visible:ring-2 focus-visible:ring-rose-300', on ? '-translate-y-1' : 'hover:-translate-y-0.5')}
+            >
+              <div className={cn('h-[224px] w-[160px] rounded-2xl', on && 'ring-2 ring-rose-400 ring-offset-2 ring-offset-background')}>
+                <CardFace def={def} playable={!on} />
+              </div>
+              <span className="font-mono text-[11px] text-muted-foreground">×{n}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="sticky bottom-0 flex gap-2 rounded-xl border bg-card/90 p-2 backdrop-blur">
+        <Button variant="destructive" disabled={!chosen} onClick={() => chosen && onConfirm(run.deck.indexOf(chosen))}>
+          <Trash2 /> Bỏ {chosen ? cardDef(CONTENT, chosen).name : 'lá đã chọn'}
+        </Button>
+        <Button variant="outline" onClick={onBack}>
+          Quay lại
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: true } | { remove: number }) => void }) {
+  const [removing, setRemoving] = useState(false);
+  const heal = Math.min(run.maxHp - run.hp, Math.ceil(run.maxHp * CONTENT.run.restHeal));
+  const removable = canRemove(CONTENT, run, 0);
+  const beforeBoss = currentNode(CONTENT, run)?.row === CONTENT.run.map.rows - 1;
+
+  if (removing)
+    return (
+      <DeckPicker
+        run={run}
+        title="Bỏ 1 lá khỏi bộ bài"
+        text="Bộ bài gọn hơn thì rút được lá mạnh thường xuyên hơn."
+        onConfirm={(i) => onChoose({ remove: i })}
+        onBack={() => setRemoving(false)}
+      />
     );
-  }
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col items-center gap-6 pt-6">
@@ -251,7 +287,7 @@ function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: tr
         <div className="mb-1 flex items-center justify-center gap-2 text-2xl font-bold">
           <Coffee className="size-6 text-amber-300" /> Nghỉ giữa ca
         </div>
-        <p className="text-sm text-muted-foreground">Trận cuối sắp tới. Chọn một việc.</p>
+        <p className="text-sm text-muted-foreground">{beforeBoss ? 'Trùm của tầng ở ngay phía trên. Chọn một việc.' : 'Chọn một việc trước khi leo tiếp.'}</p>
       </div>
       <div className="grid w-full gap-4 sm:grid-cols-2">
         <RestOption
@@ -264,9 +300,9 @@ function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: tr
         <RestOption
           icon={<Trash2 className="size-7 text-sky-300" />}
           title="Bỏ bớt 1 lá"
-          text={canRemove ? 'Dọn bộ bài: bỏ một lá yếu hoặc không hợp với trận cuối.' : `Bộ bài cần ít nhất ${CONTENT.battle.handSize + 1} lá.`}
-          disabled={!canRemove}
-          onClick={() => setMode('remove')}
+          text={removable ? 'Dọn bộ bài: bỏ một lá yếu hoặc Tech Debt.' : `Bộ bài cần ít nhất ${CONTENT.battle.handSize + 1} lá.`}
+          disabled={!removable}
+          onClick={() => setRemoving(true)}
         />
       </div>
     </div>
@@ -288,49 +324,153 @@ function RestOption({ icon, title, text, disabled, onClick }: { icon: React.Reac
   );
 }
 
+// ---------------------------------------------------------------- event
+
+function EventScreen({ run, onChoose }: { run: RunState; onChoose: (option: number, removeIndex?: number) => void }) {
+  const [removingFor, setRemovingFor] = useState<number | null>(null);
+  const event = currentEvent(CONTENT, run);
+  if (!event) return null;
+
+  if (removingFor !== null)
+    return (
+      <DeckPicker
+        run={run}
+        title={event.title}
+        text={event.options[removingFor].label}
+        onConfirm={(i) => onChoose(removingFor, i)}
+        onBack={() => setRemovingFor(null)}
+      />
+    );
+
+  return (
+    <div className="mx-auto flex max-w-xl flex-col items-center gap-5 pt-6">
+      <div className="text-center">
+        <div className="mb-2 flex items-center justify-center gap-2 text-2xl font-bold">
+          <CircleHelp className="size-6 text-violet-300" /> {event.title}
+        </div>
+        <p className="text-sm text-muted-foreground">{event.text}</p>
+      </div>
+      <div className="flex w-full flex-col gap-2">
+        {event.options.map((o, i) => {
+          const removes = o.effects.some((e) => e.op === 'removeCard');
+          const blocked = removes && !canRemove(CONTENT, run, 0);
+          return (
+            <button
+              key={i}
+              type="button"
+              disabled={blocked}
+              onClick={() => (removes ? setRemovingFor(i) : onChoose(i))}
+              className="rounded-xl border bg-card/80 px-4 py-3 text-left text-sm transition-colors hover:border-violet-300/60 hover:bg-card disabled:pointer-events-none disabled:opacity-50"
+            >
+              {o.label}
+              {blocked && <span className="block text-xs text-muted-foreground">Bộ bài cần ít nhất {CONTENT.battle.handSize + 1} lá.</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- floor cleared
+
+function ActClear({ run, onClimb }: { run: RunState; onClimb: () => void }) {
+  const fights = run.history.filter((h) => h.act === run.act && h.turns > 0);
+  const lost = fights.reduce((s, h) => s + h.hpLost, 0);
+  const heal = actHealOf(CONTENT, run);
+  const next = CONTENT.enemies.find((e) => e.id === bossOf(CONTENT, run.act + 1));
+  return (
+    <div className="mx-auto flex max-w-lg flex-col items-center gap-5 pt-8 text-center">
+      <Crown className="size-12 text-amber-300" />
+      <div>
+        <div className="text-2xl font-bold">Vượt tầng {run.act}</div>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {fights.length} trận, mất tổng {lost} Error Budget. Đổi ca: hồi {heal} Error Budget ({run.hp} → {run.hp + heal}/{run.maxHp}).
+        </p>
+        <p className="mt-2 text-sm">
+          Tầng {run.act + 1}: địch khoẻ hơn, trùm là <span className="font-semibold text-amber-200">{next?.name}</span>.
+        </p>
+      </div>
+      <Button size="lg" onClick={onClimb}>
+        <ArrowUp /> Leo lên tầng {run.act + 1}
+      </Button>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- end of run
 
-function RunEnd({ run, onNew }: { run: RunState; onNew: () => void }) {
+function HistoryRow({ h }: { h: FloorResult }) {
+  const info = NODE_INFO[h.kind];
+  const fell = h.turns > 0 && !h.won;
+  const Icon = fell ? Skull : info.icon;
+  const name =
+    h.kind === 'rest'
+      ? 'Nghỉ'
+      : h.kind === 'event'
+        ? (CONTENT.events.find((e) => e.id === h.enemy)?.title ?? 'Sự cố')
+        : (CONTENT.enemies.find((e) => e.id === h.enemy)?.name ?? h.enemy);
+  const detail =
+    h.kind === 'rest'
+      ? h.healed !== undefined
+        ? `+${h.healed} máu`
+        : h.removed
+          ? `bỏ ${cardDef(CONTENT, h.removed).name}`
+          : ''
+      : h.kind === 'event'
+        ? (h.option ?? '')
+        : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}`;
+  return (
+    <li className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
+      <Icon className={cn('size-4 shrink-0', fell ? 'text-rose-400' : info.tone.split(' ')[0])} />
+      <span className="shrink-0 font-medium">{name}</span>
+      <span className="truncate text-muted-foreground" title={detail}>
+        {detail}
+      </span>
+      {h.picked && <span className="ml-auto shrink-0 text-xs text-amber-200">+ {cardDef(CONTENT, h.picked).name}</span>}
+    </li>
+  );
+}
+
+function RunEnd({ run, best, record, onNew }: { run: RunState; best: Best; record: boolean; onNew: () => void }) {
   const won = run.phase === 'won';
-  const fights = run.history.filter((h) => h.enemy);
+  const fights = run.history.filter((h) => h.turns > 0);
   const turns = fights.reduce((s, h) => s + h.turns, 0);
   const added = run.deck.length - CONTENT.battle.startingDeck.length;
+  const node = currentNode(CONTENT, run);
+  const acts = [...new Set(run.history.map((h) => h.act))];
   return (
     <div className="mx-auto w-full max-w-lg rounded-xl border bg-card p-6 shadow-2xl">
       <div className="mb-2 flex items-center gap-2 text-2xl font-bold">
         {won ? <Trophy className="size-7 text-amber-300" /> : <Skull className="size-7 text-rose-400" />}
-        {won ? 'Hết ca trực, hệ thống vẫn sống' : 'Ca trực thất bại'}
+        {won ? `Chinh phục ${CONTENT.run.title}` : 'Ca trực thất bại'}
       </div>
-      <p className="mb-4 text-sm text-muted-foreground">
+      <p className="mb-3 text-sm text-muted-foreground">
         {won
-          ? `Bạn qua ${fights.length} trận trong ${turns} lượt và còn ${run.hp}/${run.maxHp} Error Budget.`
-          : `Hết Error Budget ở trận ${fights.length}. Mỗi ca mới là một seed mới: bộ bài, phần thưởng và bài trên tay đều khác.`}
+          ? `Bạn vượt ${CONTENT.run.acts} tầng, ${fights.length} trận trong ${turns} lượt, còn ${run.hp}/${run.maxHp} Error Budget.`
+          : `Hết Error Budget ở tầng ${run.act}, bậc ${node ? node.row + 1 : 0}. Mỗi ca mới là một seed mới: bản đồ, phần thưởng và bài trên tay đều khác.`}
       </p>
-      <ol className="mb-5 space-y-1.5 text-sm">
-        {run.history.map((h, i) => {
-          const enemy = CONTENT.enemies.find((e) => e.id === h.enemy);
-          return (
-            <li key={i} className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
-              {h.enemy ? (
-                <>
-                  {h.won ? <Check className="size-4 text-emerald-300" /> : <Skull className="size-4 text-rose-400" />}
-                  <span className="font-medium">{enemy?.name ?? h.enemy}</span>
-                  <span className="text-muted-foreground">
-                    {h.turns} lượt · −{h.hpLost}
-                  </span>
-                  {h.picked && <span className="ml-auto text-xs text-amber-200">+ {cardDef(CONTENT, h.picked).name}</span>}
-                </>
-              ) : (
-                <>
-                  <Coffee className="size-4 text-amber-300" />
-                  <span className="font-medium">Nghỉ</span>
-                  <span className="text-muted-foreground">{h.healed !== undefined ? `+${h.healed} máu` : h.removed ? `bỏ ${cardDef(CONTENT, h.removed).name}` : ''}</span>
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+        <span className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-amber-200">
+          <Medal className="size-3.5" /> Thắng tháp {best.wins}/{best.runs} ca
+        </span>
+        <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Xa nhất: {best.bestClimbed} bậc</span>
+        {record && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">Kỷ lục mới!</span>}
+      </div>
+      <div className="mb-5 max-h-[40vh] space-y-3 overflow-y-auto pr-1">
+        {acts.map((a) => (
+          <div key={a}>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tầng {a}</div>
+            <ol className="space-y-1 text-sm">
+              {run.history
+                .filter((h) => h.act === a)
+                .map((h, i) => (
+                  <HistoryRow key={i} h={h} />
+                ))}
+            </ol>
+          </div>
+        ))}
+      </div>
       <div className="mb-4 flex justify-between text-xs text-muted-foreground">
         <span>
           Bộ bài cuối: {run.deck.length} lá ({added >= 0 ? '+' : ''}

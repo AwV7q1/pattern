@@ -1,7 +1,7 @@
 // Balance check for the card battle prototype: bots play many seeded fights
 // through the real engine (Node WASM build) and report win rate, turns and HP.
 // Usage: node --experimental-strip-types apps/web/scripts/cards-balance.mjs [fights=20] [--log] [--run]
-// --run: play whole runs (fights, rewards, rest) instead of the single first fight.
+// --run: climb the whole tower (map paths, fights, rewards, rests, events) instead of the single first fight.
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -15,7 +15,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json') };
 
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
@@ -75,38 +75,61 @@ function fight(policy, seed, setup) {
 // Reward picks for the run: what a player who read the cards would take.
 const WANT = ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip'];
 
+// Path picks on the map: rest when hurt, otherwise fights (and events) over elites unless healthy.
+function pickNode(policy, run, rnd) {
+  const map = runs.towerMap(content, run);
+  const open = runs.reachable(content, run).map((id) => map.nodes.find((n) => n.id === id));
+  if (policy !== 'greedy') return open[Math.floor(rnd() * open.length)].id;
+  const hurt = run.hp / run.maxHp;
+  const score = (n) => ({ rest: hurt < 0.5 ? 3 : 0, elite: hurt > 0.75 ? 2 : -1, event: 1, battle: 1, boss: 0 })[n.kind] + rnd() * 0.5;
+  return open.reduce((a, b) => (score(b) > score(a) ? b : a)).id;
+}
+
 function playRun(policy, seed) {
   let run = runs.newRun(content, seed);
   let r = seed;
   const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
   while (run.phase !== 'won' && run.phase !== 'lost') {
-    if (run.phase === 'battle') run = runs.finishBattle(content, run, fight(policy, runs.battleSeed(run), runs.battleSetup(content, run)));
+    if (run.phase === 'map') run = runs.chooseNode(content, run, pickNode(policy, run, rnd));
+    else if (run.phase === 'battle') run = runs.finishBattle(content, run, fight(policy, runs.battleSeed(run), runs.battleSetup(content, run)));
     else if (run.phase === 'reward') {
       const pick = policy === 'idle' ? null : policy === 'random' ? run.reward[Math.floor(rnd() * run.reward.length)] : (WANT.find((id) => run.reward.includes(id)) ?? null);
       run = runs.pickReward(content, run, pick);
-    } else run = runs.rest(content, run, { heal: true });
+    } else if (run.phase === 'rest') {
+      const debt = run.deck.indexOf('tech_debt');
+      run = runs.rest(content, run, policy === 'greedy' && debt >= 0 && run.hp / run.maxHp > 0.7 ? { remove: debt } : { heal: true });
+    } else if (run.phase === 'event') {
+      const ev = runs.currentEvent(content, run);
+      const i = ev.options.findIndex((o) => !o.effects.some((e) => e.op === 'removeCard'));
+      run = runs.chooseEvent(content, run, i);
+    } else if (run.phase === 'cleared') run = runs.nextAct(content, run);
   }
   return run;
 }
 
 if (runMode) {
-  const floors = content.run.floors.filter((f) => f.kind === 'battle').map((f) => f.enemy);
+  const kinds = ['battle', 'elite', 'boss'];
   for (const policy of Object.keys(policies)) {
     let wins = 0;
-    const reached = floors.map(() => 0);
-    const beat = floors.map(() => 0);
-    const hpLost = floors.map(() => 0);
+    let actSum = 0;
+    const cleared = Array(content.run.acts).fill(0);
+    const stat = Object.fromEntries(kinds.map((k) => [k, { n: 0, won: 0, hp: 0 }]));
     for (let seed = 1; seed <= fights; seed++) {
       const run = playRun(policy, seed);
       if (run.phase === 'won') wins++;
-      run.history.filter((h) => h.enemy).forEach((h, i) => {
-        reached[i]++;
-        if (h.won) beat[i]++;
-        hpLost[i] += h.hpLost;
-      });
+      actSum += run.act;
+      for (const h of run.history) {
+        if (h.kind === 'boss' && h.won) cleared[h.act - 1]++;
+        if (!stat[h.kind]) continue;
+        stat[h.kind].n++;
+        if (h.won) stat[h.kind].won++;
+        stat[h.kind].hp += h.hpLost;
+      }
     }
-    const per = floors.map((id, i) => `${id} ${reached[i] ? Math.round((beat[i] / reached[i]) * 100) : '-'}%/-${reached[i] ? (hpLost[i] / reached[i]).toFixed(0) : '-'}hp`).join('  ');
-    console.log(`${policy.padEnd(7)} run win ${String(Math.round((wins / fights) * 100)).padStart(3)}%   ${per}`);
+    const pct = (x) => `${String(Math.round((x / fights) * 100)).padStart(3)}%`;
+    const acts = cleared.map((c, i) => `T${i + 1} ${pct(c)}`).join(' ');
+    const per = kinds.map((k) => `${k} ${stat[k].n ? Math.round((stat[k].won / stat[k].n) * 100) : '-'}%/-${stat[k].n ? (stat[k].hp / stat[k].n).toFixed(0) : '-'}hp`).join('  ');
+    console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}`);
   }
   process.exit(0);
 }

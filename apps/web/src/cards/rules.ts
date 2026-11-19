@@ -54,7 +54,7 @@ export function currentIntent(content: Content, state: BattleState): Intent {
   const def = enemyDef(content, state);
   const loop = Math.floor(state.enemy.step / def.intents.length);
   const base = def.intents[state.enemy.step % def.intents.length];
-  return { ...base, botRps: Math.round(base.botRps * (1 + def.escalation * loop)) };
+  return { ...base, botRps: Math.round(base.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
 }
 
 /** A weaker botnet sends less traffic: 60% at 0 HP, 100% at full HP. */
@@ -116,6 +116,8 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
   const enemy = content.enemies.find((e) => e.id === enemyId);
   if (!enemy) throw new Error(`unknown enemy ${enemyId}`);
   const maxHp = setup.maxHp ?? b.hp;
+  const scale = setup.enemyScale ?? { hp: 1, rps: 1 };
+  const enemyHp = Math.round(enemy.hp * scale.hp);
   const state: BattleState = {
     seed,
     rng: seed >>> 0,
@@ -132,7 +134,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     design: clone(b.design),
     waf: 0,
     temp: { api: 0, db: 0, botCut: 0, hotfix: false },
-    enemy: { id: enemy.id, hp: enemy.hp, maxHp: enemy.hp, step: 0 },
+    enemy: { id: enemy.id, hp: enemyHp, maxHp: enemyHp, step: 0, ...(scale.rps !== 1 && { rps: scale.rps }) },
     played: [],
     reports: [],
     nextUid: 1,
