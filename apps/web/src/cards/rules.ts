@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -37,10 +37,24 @@ const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 // ---------------------------------------------------------------- lookups
 
+/** Upgraded copies are `<id>+`. */
+export const baseId = (id: string) => (id.endsWith('+') ? id.slice(0, -1) : id);
+export const canUpgrade = (content: Content, id: string) => !id.endsWith('+') && !!content.cards.find((c) => c.id === id)?.upgrade;
+
+const upgradedDefs = new WeakMap<CardDef, CardDef>();
+
 export function cardDef(content: Content, id: string): CardDef {
-  const def = content.cards.find((c) => c.id === id);
-  if (!def) throw new Error(`unknown card ${id}`);
-  return def;
+  const def = content.cards.find((c) => c.id === baseId(id));
+  if (!def || (id !== def.id && !def.upgrade)) throw new Error(`unknown card ${id}`);
+  if (id === def.id) return def;
+  // same object every time, so React keys and memos stay stable
+  let up = upgradedDefs.get(def);
+  if (!up) {
+    const u = def.upgrade!;
+    up = { ...def, id, name: `${def.name}+`, cost: u.cost ?? def.cost, text: u.text, effects: u.effects ?? def.effects, upgraded: true };
+    upgradedDefs.set(def, up);
+  }
+  return up;
 }
 
 export function enemyDef(content: Content, state: BattleState): EnemyDef {
@@ -138,11 +152,34 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     played: [],
     reports: [],
     nextUid: 1,
+    relics: (setup.relics ?? []).filter((id) => content.relics.some((r) => r.id === id)),
+    relicCount: {},
+    relicFired: [],
   };
   const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));
   state.drawPile = shuffle(state, deck);
   draw(state, b.handSize);
+  fireRelics(content, state, 'battleStart');
+  fireRelics(content, state, 'turnStart');
+  if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
+}
+
+/** Run the effects of the relics listening to `trigger` (cardPlayed: for a card of type `type`). */
+function fireRelics(content: Content, state: BattleState, trigger: RelicDef['trigger'], type?: CardDef['type']) {
+  for (const id of state.relics) {
+    const relic = content.relics.find((r) => r.id === id);
+    if (!relic || relic.trigger !== trigger) continue;
+    if (trigger === 'cardPlayed') {
+      if (relic.cardType && relic.cardType !== type) continue;
+      if (relic.every) {
+        state.relicCount[id] = (state.relicCount[id] ?? 0) + 1;
+        if (state.relicCount[id] % relic.every !== 0) continue;
+      }
+    }
+    for (const effect of relic.effects) apply(content, state, effect);
+    state.relicFired.push(id);
+  }
 }
 
 // ---------------------------------------------------------------- playing cards
@@ -202,7 +239,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       break;
     }
     case 'purge': {
-      const curses = state.hand.filter((c) => content.cards.find((d) => d.id === c.id)?.unplayable);
+      const curses = state.hand.filter((c) => cardDef(content, c.id).unplayable);
       if (!curses.length) break;
       state.hand = state.hand.filter((c) => !curses.includes(c));
       state.exhausted.push(...curses);
@@ -215,6 +252,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
 export function playCard(content: Content, prev: BattleState, uid: number): BattleState {
   if (!canPlay(content, prev, uid)) return prev;
   const state = clone(prev);
+  state.relicFired = [];
   const idx = state.hand.findIndex((c) => c.uid === uid);
   const [inst] = state.hand.splice(idx, 1);
   const def = cardDef(content, inst.id);
@@ -223,6 +261,7 @@ export function playCard(content: Content, prev: BattleState, uid: number): Batt
   // the card leaves the hand before its effects, so "draw" cannot redraw it
   (def.exhaust ? state.exhausted : state.discard).push(inst);
   for (const effect of def.effects) apply(content, state, effect);
+  fireRelics(content, state, 'cardPlayed', def.type);
   if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
 }
@@ -292,6 +331,7 @@ export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, 
 export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary): BattleState {
   const b = content.battle;
   const state = clone(prev);
+  state.relicFired = [];
   const sec = b.turnMs / 1000;
   const notes: string[] = [];
 
@@ -358,5 +398,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   state.ops = b.opsPerTurn;
   draw(state, b.handSize);
   state.phase = 'player';
+  fireRelics(content, state, 'turnStart');
+  if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
 }

@@ -72,4 +72,4 @@ const CARD_ICON: Record<string, LucideIcon> = {
   tech_debt: Bug,
 };
 
-export const cardIcon = (def: CardDef): LucideIcon => CARD_ICON[def.id] ?? TYPE_ICON[def.type];
+export const cardIcon = (def: CardDef): LucideIcon => CARD_ICON[def.id.replace(/\+$/, '')] ?? TYPE_ICON[def.type];

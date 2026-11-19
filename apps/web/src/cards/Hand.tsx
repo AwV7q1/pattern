@@ -372,7 +372,7 @@ export function CardFace({
         {def.unplayable ? '–' : def.cost}
       </span>
 
-      <p className="mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight">{def.name}</p>
+      <p className={cn('mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight', def.upgraded && 'text-emerald-300')}>{def.name}</p>
       <span className={cn('mx-auto mt-1 flex items-center gap-1 rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
         <TypeIcon aria-hidden className="size-2.5" />
         {style.label}

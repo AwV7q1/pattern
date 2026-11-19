@@ -3,12 +3,13 @@ import enemiesData from './data/enemies.json';
 import battleData from './data/battle.json';
 import runData from './data/run.json';
 import eventsData from './data/events.json';
+import relicsData from './data/relics.json';
 import { isValidRun } from './run';
 import type { Content, RunState } from './types';
 
-export const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData, run: runData, events: eventsData } as unknown as Content;
+export const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData, run: runData, events: eventsData, relics: relicsData } as unknown as Content;
 
-const KEY = 'pattern.cards.run.v2';
+const KEY = 'pattern.cards.run.v3';
 const BEST_KEY = 'pattern.cards.best.v1';
 
 /** The run in progress, kept between visits. Mid-fight progress is not saved: a reload replays the fight from its (seeded) start. */

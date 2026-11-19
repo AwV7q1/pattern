@@ -60,6 +60,10 @@ export interface CardDef {
   exhaust?: boolean;
   /** Curses: cannot be played, just clog the hand. */
   unplayable?: boolean;
+  /** What the upgraded copy (id `<id>+`, from a rest stop) changes. */
+  upgrade?: { cost?: number; text: string; effects?: Effect[] };
+  /** Set on the upgraded copy that `cardDef` builds. */
+  upgraded?: boolean;
 }
 
 export interface Intent {
@@ -115,7 +119,30 @@ export interface BattleConfig {
   design: Design;
 }
 
+export type RelicRarity = 'common' | 'uncommon' | 'rare' | 'boss';
+
+/** A passive item kept for the whole run. Its effects are card effects, fired by the battle rules. */
+export interface RelicDef {
+  id: string;
+  name: string;
+  rarity: RelicRarity;
+  /** Key in `RELIC_ICON` (cardArt.ts). */
+  icon: string;
+  text: string;
+  lesson: string;
+  /** battleStart: once, after the first hand. turnStart: every turn, after the draw. cardPlayed: after a card's effects. */
+  trigger: 'battleStart' | 'turnStart' | 'cardPlayed';
+  /** cardPlayed: only cards of this type count. */
+  cardType?: CardType;
+  /** cardPlayed: fire on every n-th matching card of the fight. */
+  every?: number;
+  effects: Effect[];
+  /** Applied once, when the relic is taken. */
+  pickup?: { maxHp?: number };
+}
+
 export interface Content {
+  relics: RelicDef[];
   cards: CardDef[];
   enemies: EnemyDef[];
   battle: BattleConfig;
@@ -131,6 +158,7 @@ export interface BattleSetup {
   deck?: string[];
   /** Enemy HP and traffic multipliers (elites, bosses, higher floors). */
   enemyScale?: Scale;
+  relics?: string[];
 }
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
@@ -166,6 +194,10 @@ export interface RunConfig {
   hp: number;
   /** Cards offered after each won fight (pick one or skip); elites offer one more. */
   rewardChoices: number;
+  /** Odds of each rarity of the relic an elite drops. */
+  relicWeights: Record<'common' | 'uncommon' | 'rare', number>;
+  /** Boss relics offered after each boss but the last. */
+  bossRelicChoices: number;
   /** Odds of each rarity in a card offer, after normal fights (and events) and after elites. */
   rarityWeights: { battle: RarityWeights; elite: RarityWeights };
   /** Share of max HP restored at a rest stop. */
@@ -203,6 +235,8 @@ export interface RunEvent {
 
 export type RunPhase = 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'cleared' | 'won' | 'lost';
 
+export type RestChoice = { heal: true } | { remove: number } | { upgrade: number };
+
 export interface FloorResult {
   act: number;
   kind: NodeKind;
@@ -214,6 +248,10 @@ export interface FloorResult {
   /** Card taken after the fight (null: skipped), or removed / healed at a rest. */
   picked?: string | null;
   removed?: string;
+  /** Relic taken (elite drop, boss pick). */
+  relic?: string;
+  /** Card upgraded at a rest (its base id). */
+  upgraded?: string;
   healed?: number;
   added?: string[];
   /** Event option taken. */
@@ -221,7 +259,7 @@ export interface FloorResult {
 }
 
 export interface RunState {
-  version: 2;
+  version: 3;
   seed: number;
   /** RNG for rewards and events, advanced only by the run rules. */
   rng: number;
@@ -241,6 +279,10 @@ export interface RunState {
   reward: string[];
   /** Event shown in the `event` phase. */
   event: string | null;
+  /** Relics held (ids), in the order they were taken. */
+  relics: string[];
+  /** Boss relics offered in the `cleared` phase (pick one when climbing). */
+  relicOffer: string[];
   history: FloorResult[];
 }
 
@@ -294,6 +336,12 @@ export interface BattleState {
   played: string[];
   reports: TurnReport[];
   nextUid: number;
+  /** Relics carried into the fight (ids). */
+  relics: string[];
+  /** cardPlayed relics with `every`: matching cards played so far this fight. */
+  relicCount: Record<string, number>;
+  /** Relics that fired since the last card or turn (for the UI flash). */
+  relicFired: string[];
 }
 
 /** What the UI must run through the engine before `resolveTurn`. */

@@ -17,15 +17,15 @@
 //   run = chooseEvent(content, run, option, removeIndex?);
 //   run = nextAct(content, run);                      // after 'cleared'
 
-import { cardDef, nextRandom } from './rules.ts';
+import { canUpgrade, cardDef, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
-import type { BattleSetup, BattleState, Content, MapNode, RunEvent, RarityWeights, RunState, Scale, TowerMap } from './types';
+import type { BattleSetup, BattleState, Content, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, TowerMap } from './types';
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
 export function newRun(content: Content, seed: number): RunState {
   return {
-    version: 2,
+    version: 3,
     seed,
     rng: (seed ^ 0x9e3779b9) >>> 0,
     act: 1,
@@ -38,8 +38,50 @@ export function newRun(content: Content, seed: number): RunState {
     deck: [...content.battle.startingDeck],
     reward: [],
     event: null,
+    relics: [],
+    relicOffer: [],
     history: [],
   };
+}
+
+// ---------------------------------------------------------------- relics
+
+/** Relics of these rarities the run does not hold yet. */
+const relicsLeft = (content: Content, run: RunState, rarities: RelicRarity[]) =>
+  content.relics.filter((r) => rarities.includes(r.rarity) && !run.relics.includes(r.id)).map((r) => r.id);
+
+/** One relic drawn by rarity odds (a rarity with nothing left falls through to the others); null when none is left. */
+export function rollRelic(content: Content, run: RunState, odds: Partial<Record<RelicRarity, number>> = content.run.relicWeights): string | null {
+  const rarities = (Object.keys(odds) as RelicRarity[]).filter((r) => relicsLeft(content, run, [r]).length);
+  if (!rarities.length) return null;
+  const total = rarities.reduce((sum, r) => sum + (odds[r] ?? 0), 0);
+  let roll = nextRandom(run) * total;
+  const rarity = rarities.find((r) => (roll -= odds[r] ?? 0) < 0) ?? rarities[rarities.length - 1];
+  const left = relicsLeft(content, run, [rarity]);
+  return left[Math.floor(nextRandom(run) * left.length)];
+}
+
+/** Take a relic: it joins the run and its pickup bonus applies once. */
+export function gainRelic(content: Content, run: RunState, id: string) {
+  const relic = content.relics.find((r) => r.id === id);
+  if (!relic || run.relics.includes(id)) return;
+  run.relics.push(id);
+  if (relic.pickup?.maxHp) {
+    run.maxHp += relic.pickup.maxHp;
+    run.hp += relic.pickup.maxHp;
+  }
+}
+
+/** Boss relics to pick from after a boss (rare ones once the boss pool runs dry). */
+function bossOffer(content: Content, run: RunState): string[] {
+  const picks: string[] = [];
+  for (let i = 0; i < content.run.bossRelicChoices; i++) {
+    const probe = { ...run, relics: [...run.relics, ...picks] };
+    const id = rollRelic(content, probe, relicsLeft(content, probe, ['boss']).length ? { boss: 1 } : { rare: 1 });
+    run.rng = probe.rng;
+    if (id) picks.push(id);
+  }
+  return picks;
 }
 
 // ---------------------------------------------------------------- map
@@ -113,7 +155,7 @@ function scaleOf(content: Content, run: RunState, node: MapNode): Scale {
 export function battleSetup(content: Content, run: RunState): BattleSetup {
   const node = currentNode(content, run);
   if (!node || (node.kind !== 'battle' && node.kind !== 'elite' && node.kind !== 'boss')) throw new Error(`node ${run.node} is not a fight`);
-  return { enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node) };
+  return { enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics };
 }
 
 /** Title of the current fight, e.g. "Tinh anh: Bão Retry". */
@@ -158,6 +200,7 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
   }
   if (node.kind === 'boss') {
     run.phase = run.act >= content.run.acts ? 'won' : 'cleared';
+    if (run.phase === 'cleared') run.relicOffer = bossOffer(content, run);
     return run;
   }
   let choices = content.run.rewardChoices;
@@ -165,6 +208,11 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
     run.maxHp += content.run.elite.maxHp;
     run.hp += content.run.elite.maxHp;
     choices++;
+    const relic = rollRelic(content, run);
+    if (relic) {
+      gainRelic(content, run, relic);
+      run.history.at(-1)!.relic = relic;
+    }
   }
   run.phase = 'reward';
   run.reward = offer(content, run, choices, content.run.rarityWeights[node.kind === 'elite' ? 'elite' : 'battle']);
@@ -190,15 +238,20 @@ export function pickReward(content: Content, prev: RunState, cardId: string | nu
 export const canRemove = (content: Content, run: RunState, index: number) =>
   index >= 0 && index < run.deck.length && run.deck.length > content.battle.handSize;
 
-/** Heal a share of max HP, or remove one card from the deck (by index). */
-export function rest(content: Content, prev: RunState, choice: { heal: true } | { remove: number }): RunState {
+/** Heal a share of max HP, remove one card from the deck, or upgrade one (by index). */
+export function rest(content: Content, prev: RunState, choice: RestChoice): RunState {
   if (prev.phase !== 'rest') return prev;
   if ('remove' in choice && !canRemove(content, prev, choice.remove)) return prev;
+  if ('upgrade' in choice && !canUpgrade(content, prev.deck[choice.upgrade] ?? '')) return prev;
   const run = clone(prev);
   if ('heal' in choice) {
     const healed = Math.min(run.maxHp - run.hp, Math.ceil(run.maxHp * content.run.restHeal));
     run.hp += healed;
     run.history.push({ act: run.act, kind: 'rest', enemy: '', won: true, turns: 0, hpLost: 0, healed });
+  } else if ('upgrade' in choice) {
+    const id = run.deck[choice.upgrade];
+    run.deck[choice.upgrade] = `${id}+`;
+    run.history.push({ act: run.act, kind: 'rest', enemy: '', won: true, turns: 0, hpLost: 0, upgraded: id });
   } else {
     const [removed] = run.deck.splice(choice.remove, 1);
     run.history.push({ act: run.act, kind: 'rest', enemy: '', won: true, turns: 0, hpLost: 0, removed });
@@ -250,10 +303,16 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
   return run;
 }
 
-/** After a boss: climb to the next floor, healing a share of max HP. */
-export function nextAct(content: Content, prev: RunState): RunState {
-  if (prev.phase !== 'cleared') return prev;
+/** After a boss: take one of the offered boss relics (or none) and climb to the next floor, healing a share of max HP. */
+export function nextAct(content: Content, prev: RunState, relic: string | null = null): RunState {
+  if (prev.phase !== 'cleared' || (relic !== null && !prev.relicOffer.includes(relic))) return prev;
   const run = clone(prev);
+  if (relic) {
+    gainRelic(content, run, relic);
+    const last = run.history.at(-1);
+    if (last) last.relic = relic;
+  }
+  run.relicOffer = [];
   run.act++;
   run.hp = Math.min(run.maxHp, run.hp + Math.ceil(run.maxHp * content.run.actHeal));
   run.node = null;
@@ -274,10 +333,11 @@ export const stepsPerAct = (content: Content) => content.run.map.rows + 1;
 export function isValidRun(content: Content, v: unknown): v is RunState {
   if (!v || typeof v !== 'object') return false;
   const r = v as RunState;
-  const ids = new Set(content.cards.map((c) => c.id));
+  const isCard = (id: unknown) => typeof id === 'string' && (content.cards.some((c) => c.id === id) || (id.endsWith('+') && canUpgrade(content, id.slice(0, -1))));
+  const isRelic = (id: unknown) => content.relics.some((x) => x.id === id);
   if (
     !(
-      r.version === 2 &&
+      r.version === 3 &&
       Number.isInteger(r.seed) &&
       Number.isInteger(r.rng) &&
       Number.isInteger(r.act) &&
@@ -286,9 +346,13 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
       Number.isInteger(r.climbed) &&
       ['map', 'battle', 'reward', 'rest', 'event', 'cleared', 'won', 'lost'].includes(r.phase) &&
       Array.isArray(r.deck) &&
-      r.deck.every((id) => ids.has(id)) &&
+      r.deck.every(isCard) &&
       Array.isArray(r.reward) &&
-      r.reward.every((id) => ids.has(id)) &&
+      r.reward.every(isCard) &&
+      Array.isArray(r.relics) &&
+      r.relics.every(isRelic) &&
+      Array.isArray(r.relicOffer) &&
+      r.relicOffer.every(isRelic) &&
       Array.isArray(r.path) &&
       Array.isArray(r.history) &&
       typeof r.hp === 'number' &&

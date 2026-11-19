@@ -13,7 +13,7 @@ import type { Summary } from '@/types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -406,4 +406,70 @@ test('rarity: every playable card has one, basics are never offered', () => {
   assert.ok(pool.length > 10);
   for (const id of pool) assert.notEqual(content.cards.find((c) => c.id === id)!.rarity, 'basic', id);
   for (const id of content.battle.startingDeck) assert.ok(content.cards.some((c) => c.id === id));
+});
+
+test('upgrades: "+" copies use the upgrade, rest stops upgrade a card once', () => {
+  const up = rules.cardDef(content, 'cache+');
+  assert.equal(up.cost, 1);
+  assert.equal(up.name, `${rules.cardDef(content, 'cache').name}+`);
+  assert.ok(up.upgraded);
+  assert.equal(rules.cardDef(content, 'cache+'), up, 'same object every time');
+  assert.throws(() => rules.cardDef(content, 'tech_debt+'));
+  assert.ok(!rules.canUpgrade(content, 'cache+'));
+
+  const [s, uid] = withCard(rules.newBattle(content, 3), 'patch+');
+  assert.equal(rules.playCard(content, s, uid).enemy.hp, s.enemy.hp - 8);
+
+  const base = runs.newRun(content, 8);
+  const restNode = runs.towerMap(content, base).nodes.find((n) => n.kind === 'rest')!;
+  const atRest = { ...base, node: restNode.id, phase: 'rest' as const };
+  const i = base.deck.indexOf('cache');
+  const done = runs.rest(content, atRest, { upgrade: i });
+  assert.equal(done.deck[i], 'cache+');
+  assert.equal(done.history.at(-1)!.upgraded, 'cache');
+  assert.ok(runs.isValidRun(content, done));
+  assert.equal(runs.rest(content, { ...atRest, deck: done.deck }, { upgrade: i }).phase, 'rest', 'no double upgrade');
+});
+
+test('relics: fire at battle start, turn start and on every n-th card', () => {
+  const plain = rules.newBattle(content, 5);
+  const s = rules.newBattle(content, 5, { relics: ['oncall', 'grafana', 'wiki', 'pager'] });
+  assert.equal(s.ops, plain.ops + 1);
+  assert.equal(s.headroom, 3);
+  assert.equal(s.hand.length, plain.hand.length + 2);
+  assert.deepEqual(s.relicFired, ['oncall', 'wiki', 'grafana'], 'battle start, then turn start');
+
+  // PagerDuty: the 3rd attack card deals 6 more
+  let b: BattleState = s;
+  const hits: number[] = [];
+  for (let k = 0; k < 3; k++) {
+    const [next, uid] = withCard(b, 'patch');
+    b = rules.playCard(content, next, uid);
+    hits.push(next.enemy.hp - b.enemy.hp);
+  }
+  assert.deepEqual(hits, [5, 5, 11]);
+
+  // turnStart fires again on the next turn
+  const t2 = endTurn(s);
+  assert.equal(t2.headroom, 3);
+  assert.ok(t2.relicFired.includes('grafana'));
+});
+
+test('relics: elites drop one, bosses offer a pick, pickups apply once', () => {
+  let run = climbTo(runs.newRun(content, 21), 'elite');
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  assert.equal(run.relics.length, 1);
+  assert.equal(run.history.at(-1)!.relic, run.relics[0]);
+
+  let boss = climbTo(runs.newRun(content, 31), 'boss');
+  boss = runs.finishBattle(content, boss, win(boss, 20));
+  assert.equal(boss.relicOffer.length, content.run.bossRelicChoices);
+  assert.equal(new Set(boss.relicOffer).size, boss.relicOffer.length);
+  assert.equal(runs.nextAct(content, boss, 'not_offered'), boss);
+  const pick = boss.relicOffer.includes('multi_region') ? 'multi_region' : boss.relicOffer[0];
+  const up = runs.nextAct(content, boss, pick);
+  assert.ok(up.relics.includes(pick));
+  assert.deepEqual(up.relicOffer, []);
+  if (pick === 'multi_region') assert.equal(up.maxHp, boss.maxHp + 10);
+  assert.deepEqual(runs.battleSetup(content, climbTo(up, 'battle')).relics, up.relics);
 });

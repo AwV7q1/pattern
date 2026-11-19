@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import type { CardDef, CardType } from './types';
 import { CardFace, TYPE_STYLE } from './Hand';
 import { TYPE_ICON } from './cardArt';
+import { baseId } from './rules';
 
 const TYPE_ORDER: CardType[] = ['infra', 'policy', 'action', 'attack', 'curse'];
 
@@ -18,9 +19,10 @@ export function CardLibrary({ cards, deck, onClose }: { cards: CardDef[]; deck: 
   const [filter, setFilter] = useState<Filter>('all');
   const copies = useMemo(() => {
     const m = new Map<string, number>();
-    for (const id of deck) m.set(id, (m.get(id) ?? 0) + 1);
+    for (const id of deck) m.set(baseId(id), (m.get(baseId(id)) ?? 0) + 1);
     return m;
   }, [deck]);
+  const upgradedCopies = (id: string) => deck.filter((d) => d === `${id}+`).length;
 
   const sorted = useMemo(
     () => [...cards].sort((a, b) => TYPE_ORDER.indexOf(a.type) - TYPE_ORDER.indexOf(b.type) || a.cost - b.cost || a.name.localeCompare(b.name, 'vi')),
@@ -83,7 +85,7 @@ export function CardLibrary({ cards, deck, onClose }: { cards: CardDef[]; deck: 
                     n > 0 ? 'bg-amber-400/15 text-amber-200' : c.unplayable ? 'bg-zinc-500/15 text-zinc-400' : 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {n > 0 ? `Trong bộ ×${n}` : c.unplayable ? 'Do địch nhét vào' : 'Chưa có trong bộ'}
+                  {n > 0 ? `Trong bộ ×${n}${upgradedCopies(c.id) ? ` (${upgradedCopies(c.id)} nâng cấp)` : ''}` : c.unplayable ? 'Do địch nhét vào' : 'Chưa có trong bộ'}
                 </span>
               </div>
             );

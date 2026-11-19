@@ -40,6 +40,7 @@ import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattl
 import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
+import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
@@ -533,6 +534,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-medium text-amber-300">Prototype</span>
         <span className="text-muted-foreground">Lượt {state.turn}</span>
         {progress}
+        <RelicBar relics={CONTENT.relics} ids={state.relics} fired={state.relicFired} />
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant={showLog ? 'secondary' : 'ghost'} className="relative" aria-expanded={showLog} onClick={() => setShowLog((v) => !v)}>
             <ScrollText /> Nhật ký

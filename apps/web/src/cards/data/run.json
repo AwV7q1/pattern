@@ -54,5 +54,11 @@
       "uncommon": 42,
       "rare": 18
     }
-  }
+  },
+  "relicWeights": {
+    "common": 50,
+    "uncommon": 33,
+    "rare": 17
+  },
+  "bossRelicChoices": 3
 }

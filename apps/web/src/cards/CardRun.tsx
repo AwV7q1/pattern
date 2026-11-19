@@ -24,12 +24,13 @@ import {
   rest,
   stepsPerAct,
 } from './run';
-import { cardDef } from './rules';
-import type { FloorResult, RunState } from './types';
+import { canUpgrade, cardDef } from './rules';
+import type { FloorResult, RestChoice, RunState } from './types';
 import { CardBattle } from './CardBattle';
 import { CardFace } from './Hand';
 import { CardLibrary } from './CardLibrary';
 import { NetBackdrop } from './NetBackdrop';
+import { RelicBar, RelicTile } from './Relics';
 import { NODE_INFO, TowerMap } from './TowerMap';
 
 const randomSeed = () => Math.floor(Math.random() * 1_000_000) + 1;
@@ -81,7 +82,7 @@ export function CardRun() {
       {run.phase === 'reward' && <RewardScreen run={run} onPick={(id) => setRun((r) => pickReward(CONTENT, r, id))} />}
       {run.phase === 'rest' && <RestScreen run={run} onChoose={(c) => setRun((r) => rest(CONTENT, r, c))} />}
       {run.phase === 'event' && <EventScreen run={run} onChoose={(o, i) => setRun((r) => chooseEvent(CONTENT, r, o, i))} />}
-      {run.phase === 'cleared' && <ActClear run={run} onClimb={() => setRun((r) => nextAct(CONTENT, r))} />}
+      {run.phase === 'cleared' && <ActClear run={run} onClimb={(relic) => setRun((r) => nextAct(CONTENT, r, relic))} />}
       {(run.phase === 'won' || run.phase === 'lost') && <RunEnd run={run} best={best.best} record={best.record} onNew={startNew} />}
     </RunScreen>
   );
@@ -113,6 +114,7 @@ function RunScreen({ run, best, onNew, children }: { run: RunState; best: Best; 
             <Medal className="size-3.5 text-amber-300" /> Thắng tháp {best.wins}/{best.runs}
           </span>
         )}
+        <RelicBar relics={CONTENT.relics} ids={run.relics} />
         <div className="ml-auto flex items-center gap-2">
           <span className="flex items-center gap-1 text-rose-300">
             <HeartPulse className="size-4" /> {run.hp}/{run.maxHp}
@@ -182,6 +184,15 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
           Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.
         </p>
       </div>
+      {last?.relic && !fromEvent && (() => {
+        const relic = CONTENT.relics.find((r) => r.id === last.relic);
+        return relic ? (
+          <div className="flex flex-col items-center gap-2">
+            <span className="text-xs uppercase tracking-wider text-amber-300">Nhận relic</span>
+            <RelicTile relic={relic} />
+          </div>
+        ) : null;
+      })()}
       <div className="flex flex-wrap justify-center gap-5">
         {run.reward.map((id) => {
           const def = cardDef(CONTENT, id);
@@ -219,14 +230,28 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
 
 // ---------------------------------------------------------------- rest
 
-/** Pick one card of the deck to remove (rest stops, events). */
-function DeckPicker({ run, title, text, onConfirm, onBack }: { run: RunState; title: string; text: string; onConfirm: (index: number) => void; onBack: () => void }) {
+/** Pick one card of the deck to remove (rest stops, events) or to upgrade (rest stops: the chosen card shows its upgrade). */
+function DeckPicker({
+  run,
+  title,
+  text,
+  upgrade,
+  onConfirm,
+  onBack,
+}: {
+  run: RunState;
+  title: string;
+  text: string;
+  upgrade?: boolean;
+  onConfirm: (index: number) => void;
+  onBack: () => void;
+}) {
   const [chosen, setChosen] = useState<string | null>(null);
   const groups = useMemo(() => {
     const m = new Map<string, number>();
-    for (const id of run.deck) m.set(id, (m.get(id) ?? 0) + 1);
+    for (const id of run.deck) if (!upgrade || canUpgrade(CONTENT, id)) m.set(id, (m.get(id) ?? 0) + 1);
     return [...m.entries()].map(([id, n]) => ({ def: cardDef(CONTENT, id), n })).sort((a, b) => a.def.cost - b.def.cost || a.def.name.localeCompare(b.def.name, 'vi'));
-  }, [run.deck]);
+  }, [run.deck, upgrade]);
   return (
     <div className="mx-auto flex max-w-[1100px] flex-col items-center gap-5">
       <div className="text-center">
@@ -244,8 +269,8 @@ function DeckPicker({ run, title, text, onConfirm, onBack }: { run: RunState; ti
               onClick={() => setChosen(on ? null : def.id)}
               className={cn('flex flex-col items-center gap-1.5 rounded-2xl outline-none transition-transform focus-visible:ring-2 focus-visible:ring-rose-300', on ? '-translate-y-1' : 'hover:-translate-y-0.5')}
             >
-              <div className={cn('h-[224px] w-[160px] rounded-2xl', on && 'ring-2 ring-rose-400 ring-offset-2 ring-offset-background')}>
-                <CardFace def={def} playable={!on} />
+              <div className={cn('h-[224px] w-[160px] rounded-2xl', on && (upgrade ? 'ring-2 ring-emerald-400' : 'ring-2 ring-rose-400'), on && 'ring-offset-2 ring-offset-background')}>
+                {upgrade ? <CardFace def={on ? cardDef(CONTENT, `${def.id}+`) : def} playable glowing={on} /> : <CardFace def={def} playable={!on} />}
               </div>
               <span className="font-mono text-[11px] text-muted-foreground">×{n}</span>
             </button>
@@ -253,9 +278,15 @@ function DeckPicker({ run, title, text, onConfirm, onBack }: { run: RunState; ti
         })}
       </div>
       <div className="sticky bottom-0 flex gap-2 rounded-xl border bg-card/90 p-2 backdrop-blur">
-        <Button variant="destructive" disabled={!chosen} onClick={() => chosen && onConfirm(run.deck.indexOf(chosen))}>
-          <Trash2 /> Bỏ {chosen ? cardDef(CONTENT, chosen).name : 'lá đã chọn'}
-        </Button>
+        {upgrade ? (
+          <Button disabled={!chosen} onClick={() => chosen && onConfirm(run.deck.indexOf(chosen))}>
+            <ArrowUp /> Nâng cấp {chosen ? cardDef(CONTENT, chosen).name : 'lá đã chọn'}
+          </Button>
+        ) : (
+          <Button variant="destructive" disabled={!chosen} onClick={() => chosen && onConfirm(run.deck.indexOf(chosen))}>
+            <Trash2 /> Bỏ {chosen ? cardDef(CONTENT, chosen).name : 'lá đã chọn'}
+          </Button>
+        )}
         <Button variant="outline" onClick={onBack}>
           Quay lại
         </Button>
@@ -264,11 +295,25 @@ function DeckPicker({ run, title, text, onConfirm, onBack }: { run: RunState; ti
   );
 }
 
-function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: true } | { remove: number }) => void }) {
+function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: RestChoice) => void }) {
   const [removing, setRemoving] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const upgradable = run.deck.some((id) => canUpgrade(CONTENT, id));
   const heal = Math.min(run.maxHp - run.hp, Math.ceil(run.maxHp * CONTENT.run.restHeal));
   const removable = canRemove(CONTENT, run, 0);
   const beforeBoss = currentNode(CONTENT, run)?.row === CONTENT.run.map.rows - 1;
+
+  if (upgrading)
+    return (
+      <DeckPicker
+        run={run}
+        upgrade
+        title="Nâng cấp 1 lá"
+        text="Chọn một lá để xem bản nâng cấp. Bản nâng cấp giữ nguyên tới hết run."
+        onConfirm={(i) => onChoose({ upgrade: i })}
+        onBack={() => setUpgrading(false)}
+      />
+    );
 
   if (removing)
     return (
@@ -282,14 +327,14 @@ function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: tr
     );
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col items-center gap-6 pt-6">
+    <div className="mx-auto flex max-w-3xl flex-col items-center gap-6 pt-6">
       <div className="text-center">
         <div className="mb-1 flex items-center justify-center gap-2 text-2xl font-bold">
           <Coffee className="size-6 text-amber-300" /> Nghỉ giữa ca
         </div>
         <p className="text-sm text-muted-foreground">{beforeBoss ? 'Trùm của tầng ở ngay phía trên. Chọn một việc.' : 'Chọn một việc trước khi leo tiếp.'}</p>
       </div>
-      <div className="grid w-full gap-4 sm:grid-cols-2">
+      <div className="grid w-full gap-4 sm:grid-cols-3">
         <RestOption
           icon={<HeartPulse className="size-7 text-rose-300" />}
           title={`Hồi ${heal} Error Budget`}
@@ -303,6 +348,13 @@ function RestScreen({ run, onChoose }: { run: RunState; onChoose: (c: { heal: tr
           text={removable ? 'Dọn bộ bài: bỏ một lá yếu hoặc Tech Debt.' : `Bộ bài cần ít nhất ${CONTENT.battle.handSize + 1} lá.`}
           disabled={!removable}
           onClick={() => setRemoving(true)}
+        />
+        <RestOption
+          icon={<ArrowUp className="size-7 text-emerald-300" />}
+          title="Nâng cấp 1 lá"
+          text={upgradable ? 'Viết lại cho tốt hơn: lá mạnh hơn hoặc rẻ hơn.' : 'Mọi lá đã được nâng cấp.'}
+          disabled={!upgradable}
+          onClick={() => setUpgrading(true)}
         />
       </div>
     </div>
@@ -374,13 +426,14 @@ function EventScreen({ run, onChoose }: { run: RunState; onChoose: (option: numb
 
 // ---------------------------------------------------------------- floor cleared
 
-function ActClear({ run, onClimb }: { run: RunState; onClimb: () => void }) {
+function ActClear({ run, onClimb }: { run: RunState; onClimb: (relic: string | null) => void }) {
+  const [chosen, setChosen] = useState<string | null>(null);
   const fights = run.history.filter((h) => h.act === run.act && h.turns > 0);
   const lost = fights.reduce((s, h) => s + h.hpLost, 0);
   const heal = actHealOf(CONTENT, run);
   const next = CONTENT.enemies.find((e) => e.id === bossOf(CONTENT, run.act + 1));
   return (
-    <div className="mx-auto flex max-w-lg flex-col items-center gap-5 pt-8 text-center">
+    <div className="mx-auto flex max-w-3xl flex-col items-center gap-5 pt-8 text-center">
       <Crown className="size-12 text-amber-300" />
       <div>
         <div className="text-2xl font-bold">Vượt tầng {run.act}</div>
@@ -391,8 +444,24 @@ function ActClear({ run, onClimb }: { run: RunState; onClimb: () => void }) {
           Tầng {run.act + 1}: địch khoẻ hơn, trùm là <span className="font-semibold text-amber-200">{next?.name}</span>.
         </p>
       </div>
-      <Button size="lg" onClick={onClimb}>
-        <ArrowUp /> Leo lên tầng {run.act + 1}
+      {run.relicOffer.length > 0 && (
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-sm text-muted-foreground">Phần thưởng trùm: chọn 1 relic mang theo tới hết run.</p>
+          <div className="flex flex-wrap justify-center gap-4">
+            {run.relicOffer.map((id) => {
+              const relic = CONTENT.relics.find((r) => r.id === id)!;
+              const on = chosen === id;
+              return (
+                <button key={id} type="button" aria-pressed={on} onClick={() => setChosen(on ? null : id)} className="rounded-2xl outline-none transition-transform hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-amber-300">
+                  <RelicTile relic={relic} selected={on} />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <Button size="lg" disabled={run.relicOffer.length > 0 && !chosen} onClick={() => onClimb(chosen)}>
+        <ArrowUp /> {chosen ? `Nhận ${CONTENT.relics.find((r) => r.id === chosen)?.name} và leo lên tầng ${run.act + 1}` : `Leo lên tầng ${run.act + 1}`}
       </Button>
     </div>
   );
@@ -416,7 +485,9 @@ function HistoryRow({ h }: { h: FloorResult }) {
         ? `+${h.healed} máu`
         : h.removed
           ? `bỏ ${cardDef(CONTENT, h.removed).name}`
-          : ''
+          : h.upgraded
+            ? `nâng cấp ${cardDef(CONTENT, h.upgraded).name}`
+            : ''
       : h.kind === 'event'
         ? (h.option ?? '')
         : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}`;
@@ -427,7 +498,8 @@ function HistoryRow({ h }: { h: FloorResult }) {
       <span className="truncate text-muted-foreground" title={detail}>
         {detail}
       </span>
-      {h.picked && <span className="ml-auto shrink-0 text-xs text-amber-200">+ {cardDef(CONTENT, h.picked).name}</span>}
+      {h.relic && <span className="ml-auto shrink-0 text-xs text-sky-200">relic {CONTENT.relics.find((r) => r.id === h.relic)?.name}</span>}
+      {h.picked && <span className={cn('shrink-0 text-xs text-amber-200', !h.relic && 'ml-auto')}>+ {cardDef(CONTENT, h.picked).name}</span>}
     </li>
   );
 }

@@ -15,7 +15,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json') };
 
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
@@ -37,7 +37,7 @@ const policies = {
       ? ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot']
       : ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'honeypot', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'];
     for (const id of order) {
-      const c = s.hand.find((h) => h.id === id && rules.canPlay(content, s, h.uid));
+      const c = s.hand.find((h) => rules.baseId(h.id) === id && rules.canPlay(content, s, h.uid));
       if (!c) continue;
       if (id === 'hotfix' && !(intent.chaos || intent.clientRetries)) continue;
       if (id === 'cache' && rules.nodeOf(s.design, 'cache')?.config.hitRate >= 0.95) continue;
@@ -97,12 +97,16 @@ function playRun(policy, seed) {
       run = runs.pickReward(content, run, pick);
     } else if (run.phase === 'rest') {
       const debt = run.deck.indexOf('tech_debt');
-      run = runs.rest(content, run, policy === 'greedy' && debt >= 0 && run.hp / run.maxHp > 0.7 ? { remove: debt } : { heal: true });
+      const healthy = run.hp / run.maxHp > 0.7;
+      const up = WANT.map((id) => run.deck.indexOf(id)).find((i) => i >= 0 && rules.canUpgrade(content, run.deck[i])) ?? run.deck.findIndex((id) => rules.canUpgrade(content, id));
+      const choice =
+        policy !== 'greedy' ? { heal: true } : healthy && debt >= 0 ? { remove: debt } : healthy && up >= 0 ? { upgrade: up } : { heal: true };
+      run = runs.rest(content, run, choice);
     } else if (run.phase === 'event') {
       const ev = runs.currentEvent(content, run);
       const i = ev.options.findIndex((o) => !o.effects.some((e) => e.op === 'removeCard'));
       run = runs.chooseEvent(content, run, i);
-    } else if (run.phase === 'cleared') run = runs.nextAct(content, run);
+    } else if (run.phase === 'cleared') run = runs.nextAct(content, run, policy === 'idle' ? null : (run.relicOffer[0] ?? null));
   }
   return run;
 }
