@@ -336,7 +336,7 @@ const LOOKS: Record<string, Look> = {
         <circle cx="69" cy="80" r="9" fill="#18181b" stroke="#52525b" strokeWidth="2" />
         <circle cx="91" cy="80" r="9" fill="#18181b" stroke="#52525b" strokeWidth="2" />
         <path d="M72 96 L88 96 L84 102 L76 102 Z" fill="#3f3f46" />
-        <circle cx="80" cy="108" r="8" fill={p.main} stroke="#365314" strokeWidth="2" />
+        <circle data-fx="filter" cx="80" cy="108" r="8" fill={p.main} stroke="#365314" strokeWidth="2" style={{ transformOrigin: '80px 108px' }} />
         {[-3, 0, 3].map((d) => (
           <circle key={d} cx={80 + d} cy={108} r="1" fill="#1a2e05" />
         ))}
@@ -350,9 +350,11 @@ const LOOKS: Record<string, Look> = {
           />
         ))}
         {/* a flask in hand */}
-        <g transform="translate(126 104) rotate(14)">
-          <path d="M-3 -12 L3 -12 L3 -5 L9 8 Q10 12 6 12 L-6 12 Q-10 12 -9 8 L-3 -5 Z" fill="#18181b" stroke={p.light} strokeWidth="1.2" />
-          <path d="M-7 4 L7 4 L9 8 Q10 11 6 11 L-6 11 Q-10 11 -9 8 Z" fill={p.main} filter={`url(#${ids.glow})`} />
+        <g data-fx="flask" style={{ transformOrigin: '126px 112px' }}>
+          <g transform="translate(126 104) rotate(14)">
+            <path d="M-3 -12 L3 -12 L3 -5 L9 8 Q10 12 6 12 L-6 12 Q-10 12 -9 8 L-3 -5 Z" fill="#18181b" stroke={p.light} strokeWidth="1.2" />
+            <path d="M-7 4 L7 4 L9 8 Q10 11 6 11 L-6 11 Q-10 11 -9 8 Z" fill={p.main} filter={`url(#${ids.glow})`} />
+          </g>
         </g>
       </>
     ),
@@ -388,10 +390,12 @@ const LOOKS: Record<string, Look> = {
         />
         <circle cx="112" cy="80" r="4.5" fill="#09090b" stroke={p.main} strokeWidth="1.5" />
         <rect x="50" y="56" width="52" height="28" rx="7" fill="#09090b" />
-        <rect x="50" y="92" width="52" height="16" rx="4" fill={p.main} />
-        <text x="76" y="104.5" textAnchor="middle" fontSize="12" fontFamily="monospace" fontWeight="900" fill="#09090b">
-          -70%
-        </text>
+        <g data-fx="deal" style={{ transformOrigin: '76px 100px' }}>
+          <rect x="50" y="92" width="52" height="16" rx="4" fill={p.main} />
+          <text x="76" y="104.5" textAnchor="middle" fontSize="12" fontFamily="monospace" fontWeight="900" fill="#09090b">
+            -70%
+          </text>
+        </g>
         {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
           <rect key={i} x={54 + i * 5.5} y="48" width={i % 3 ? 1.5 : 3} height="5" fill={p.light} opacity="0.6" />
         ))}
