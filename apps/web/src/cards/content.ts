@@ -4,10 +4,11 @@ import battleData from './data/battle.json';
 import runData from './data/run.json';
 import eventsData from './data/events.json';
 import relicsData from './data/relics.json';
+import minionsData from './data/minions.json';
 import { isValidRun } from './run';
 import type { Content, RunState } from './types';
 
-export const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData, run: runData, events: eventsData, relics: relicsData } as unknown as Content;
+export const CONTENT = { cards: cardsData, enemies: enemiesData, battle: battleData, run: runData, events: eventsData, relics: relicsData, minions: minionsData } as unknown as Content;
 
 const KEY = 'pattern.cards.run.v3';
 const BEST_KEY = 'pattern.cards.best.v1';

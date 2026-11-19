@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, MinionDef, MinionState, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -63,6 +63,70 @@ export function enemyDef(content: Content, state: BattleState): EnemyDef {
   return def;
 }
 
+export function minionDef(content: Content, id: string): MinionDef {
+  const def = content.minions.find((m) => m.id === id);
+  if (!def) throw new Error(`unknown minion ${id}`);
+  return def;
+}
+
+/** Most minions alive at once: a summon past this is lost. */
+export const MAX_MINIONS = 3;
+
+export const minionsOf = (state: BattleState): MinionState[] => state.minions ?? [];
+
+/** Bot traffic the minions add this turn (they do not weaken as their master does). */
+export function minionRpsNow(content: Content, state: BattleState): number {
+  return Math.round(minionsOf(state).reduce((sum, m) => sum + minionDef(content, m.id).botRps, 0) * (state.enemy.rps ?? 1));
+}
+
+/** Share of damage the enemy is spared by its guarding minions. */
+export function guardNow(content: Content, state: BattleState): number {
+  return 1 - minionsOf(state).reduce((left, m) => left * (1 - (minionDef(content, m.id).guard ?? 0)), 1);
+}
+
+/** The minion attacks go to now, if any (a dead or unknown target falls back to the enemy). */
+export function targetOf(state: BattleState): MinionState | undefined {
+  return state.target === undefined ? undefined : minionsOf(state).find((m) => m.uid === state.target);
+}
+
+/** Aim attacks at a minion (its uid) or back at the enemy (null). */
+export function setTarget(prev: BattleState, uid: number | null): BattleState {
+  if (prev.phase !== 'player') return prev;
+  if (uid !== null && !minionsOf(prev).some((m) => m.uid === uid)) return prev;
+  if ((prev.target ?? null) === uid) return prev;
+  const state = clone(prev);
+  if (uid === null) delete state.target;
+  else state.target = uid;
+  return state;
+}
+
+/** Damage to the current target: a minion takes it all (the excess is lost), the enemy only what its guards let through. */
+function hitEnemy(content: Content, state: BattleState, dmg: number): { minion?: string; dealt: number; killed?: boolean } {
+  if (dmg <= 0) return { dealt: 0 };
+  const m = targetOf(state);
+  if (m) {
+    const dealt = Math.min(m.hp, dmg);
+    m.hp -= dealt;
+    const killed = m.hp <= 0;
+    if (killed) {
+      state.minions = minionsOf(state).filter((x) => x !== m);
+      delete state.target;
+    }
+    return { minion: minionDef(content, m.id).name, dealt, killed };
+  }
+  const dealt = Math.min(state.enemy.hp, Math.ceil(dmg * (1 - guardNow(content, state))));
+  state.enemy.hp -= dealt;
+  return { dealt };
+}
+
+function summon(content: Content, state: BattleState, id: string, n: number): number {
+  const def = minionDef(content, id);
+  const room = Math.max(0, Math.min(n, MAX_MINIONS - minionsOf(state).length));
+  const hp = Math.round(def.hp * (state.enemy.minionHp ?? 1));
+  for (let i = 0; i < room; i++) state.minions = [...minionsOf(state), { uid: state.nextUid++, id, hp, maxHp: hp }];
+  return room;
+}
+
 /** Intents the enemy draws from now (a boss's second phase has its own). */
 export function intentsNow(content: Content, state: BattleState): Intent[] {
   const def = enemyDef(content, state);
@@ -97,10 +161,10 @@ function pickIntent(content: Content, state: BattleState) {
   state.enemy.recent = [...recent, pick].slice(-2);
 }
 
-/** A weaker botnet sends less traffic: 60% at 0 HP, 100% at full HP. */
+/** A weaker botnet sends less traffic: 60% at 0 HP, 100% at full HP. Minions add theirs on top. */
 export function botRpsNow(content: Content, state: BattleState): number {
   const ratio = state.enemy.hp / state.enemy.maxHp;
-  return Math.round(currentIntent(content, state).botRps * (0.6 + 0.4 * ratio));
+  return Math.round(currentIntent(content, state).botRps * (0.6 + 0.4 * ratio)) + minionRpsNow(content, state);
 }
 
 /** Share of the filtering the bots slip past this turn (intent and passive stack multiplicatively). */
@@ -181,7 +245,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     design: clone(b.design),
     waf: 0,
     temp: { api: 0, db: 0, botCut: 0, hotfix: false },
-    enemy: { id: enemy.id, hp: enemyHp, maxHp: enemyHp, step: 0, ...(scale.rps !== 1 && { rps: scale.rps }) },
+    enemy: { id: enemy.id, hp: enemyHp, maxHp: enemyHp, step: 0, ...(scale.rps !== 1 && { rps: scale.rps }), ...(scale.hp > 1 && { minionHp: scale.hp }) },
     played: [],
     reports: [],
     nextUid: 1,
@@ -189,6 +253,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     relicCount: {},
     relicFired: [],
   };
+  for (const id of enemy.minions ?? []) summon(content, state, id, 1);
   const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));
   state.drawPile = shuffle(state, deck);
   draw(state, b.handSize);
@@ -245,7 +310,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       state.waf = Math.min(effect.max, state.waf + effect.cut);
       break;
     case 'attack':
-      state.enemy.hp = Math.max(0, state.enemy.hp - effect.dmg);
+      hitEnemy(content, state, effect.dmg);
       break;
     case 'headroom':
       state.headroom += effect.n;
@@ -296,7 +361,11 @@ export function playCard(content: Content, prev: BattleState, uid: number): Batt
   (def.exhaust ? state.exhausted : state.discard).push(inst);
   for (const effect of def.effects) apply(content, state, effect);
   fireRelics(content, state, 'cardPlayed', def.type);
-  if (state.enemy.hp <= 0) state.phase = 'won';
+  if (state.enemy.hp <= 0) {
+    state.phase = 'won';
+    state.minions = [];
+    delete state.target;
+  }
   return state;
 }
 
@@ -387,7 +456,10 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   if (state.temp.hotfix && (plan.intent.chaos || plan.intent.clientRetries || plan.intent.cacheHitScale !== undefined)) notes.push('Hotfix đã chặn hiệu ứng sự cố');
 
   state.hp = Math.max(0, state.hp - total);
-  state.enemy.hp = Math.max(0, state.enemy.hp - enemyDamage);
+  const guarded = guardNow(content, state);
+  const hit = hitEnemy(content, state, enemyDamage);
+  if (hit.minion) notes.push(`${hit.minion} mất ${hit.dealt} máu${hit.killed ? ' và bị hạ' : ''}`);
+  else if (hit.dealt < enemyDamage && guarded > 0) notes.push(`Lính che chắn: địch chỉ mất ${hit.dealt}/${enemyDamage} máu`);
 
   if (plan.intent.heal && state.enemy.hp > 0) {
     state.enemy.hp = Math.min(state.enemy.maxHp, state.enemy.hp + plan.intent.heal);
@@ -402,6 +474,17 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   if (regen && state.enemy.hp > 0 && state.enemy.hp < state.enemy.maxHp) {
     state.enemy.hp = Math.min(state.enemy.maxHp, state.enemy.hp + regen);
     notes.push(`${enemyDef(content, state).passive!.label}: hồi ${regen} máu`);
+  }
+  const healers = minionsOf(state).filter((m) => minionDef(content, m.id).heal);
+  if (healers.length && state.enemy.hp > 0 && state.enemy.hp < state.enemy.maxHp) {
+    const amount = healers.reduce((sum, m) => sum + minionDef(content, m.id).heal!, 0);
+    state.enemy.hp = Math.min(state.enemy.maxHp, state.enemy.hp + amount);
+    notes.push(`Lính hồi cho ${enemyDef(content, state).name} ${amount} máu`);
+  }
+  if (plan.intent.summon && state.enemy.hp > 0) {
+    const called = summon(content, state, plan.intent.summon.minion, plan.intent.summon.n);
+    const name = minionDef(content, plan.intent.summon.minion).name;
+    notes.push(called ? `${enemyDef(content, state).name} gọi thêm ${called} ${name}` : `Đã đủ ${MAX_MINIONS} lính, không gọi thêm được`);
   }
   if (plan.intent.wafStrip && state.waf > 0) {
     state.waf = Math.max(0, Math.round((state.waf - plan.intent.wafStrip) * 100) / 100);
@@ -429,6 +512,9 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
 
   if (state.enemy.hp <= 0) {
     state.phase = 'won';
+    if (minionsOf(state).length) report.notes.push('Mất chỉ huy, lính tan rã');
+    state.minions = [];
+    delete state.target;
     return state;
   }
   if (state.hp <= 0) {

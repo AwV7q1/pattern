@@ -17,6 +17,13 @@
       "shop": 8
     }
   },
+  "warmup": [
+    "script_kiddie",
+    "ping_bot",
+    "spam_bot",
+    "uptime_bot"
+  ],
+  "warmupFights": 3,
   "normal": [
     [
       "swarm",

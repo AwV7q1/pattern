@@ -16,7 +16,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json') };
 
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
@@ -51,11 +51,24 @@ const policies = {
   },
 };
 
+// Who attacks go to: greedy takes out guards and healers first, random picks anyone, idle never aims.
+function aim(policy, s, rnd) {
+  const minions = rules.minionsOf(s);
+  if (policy === 'random') {
+    const i = Math.floor(rnd() * (minions.length + 1));
+    return i < minions.length ? minions[i].uid : null;
+  }
+  if (policy !== 'greedy') return null;
+  const support = minions.filter((m) => { const d = rules.minionDef(content, m.id); return d.guard || d.heal; });
+  return support.length ? support.reduce((a, b) => (b.hp < a.hp ? b : a)).uid : null;
+}
+
 function fight(policy, seed, setup) {
   let s = rules.newBattle(content, seed, setup);
   let r = seed;
   const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
   while (s.phase === 'player' && s.turn <= 30) {
+    s = rules.setTarget(s, aim(policy, s, rnd));
     let uid;
     while (s.phase === 'player' && (uid = policies[policy](s, rnd)) != null) s = rules.playCard(content, s, uid);
     if (s.phase !== 'player') break;

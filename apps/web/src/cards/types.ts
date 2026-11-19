@@ -88,8 +88,24 @@ export interface Intent {
   drainOps?: number;
   /** WAF lost right after this turn (rotating proxies, new IPs). */
   wafStrip?: number;
+  /** Minions called in after this turn (at most `MAX_MINIONS` alive). */
+  summon?: { minion: string; n: number };
   /** weighted enemies: odds of this intent (default 1). */
   weight?: number;
+}
+
+/** A small bot fighting next to an enemy. It has its own HP and can be targeted; it flees when its master falls. */
+export interface MinionDef {
+  id: string;
+  name: string;
+  text: string;
+  hp: number;
+  /** Bot traffic it adds every turn while it lives (scaled like its master's traffic). */
+  botRps: number;
+  /** Its master takes this share less damage while it lives (several stack multiplicatively). */
+  guard?: number;
+  /** HP it restores to its master at the end of every turn. */
+  heal?: number;
 }
 
 export interface EnemyDef {
@@ -102,6 +118,8 @@ export interface EnemyDef {
   escalation: number;
   /** cycle (default): intents in order. weighted: drawn by `weight`, never the same one 3 turns running. */
   pattern?: 'cycle' | 'weighted';
+  /** Minions on the field when the fight starts. */
+  minions?: string[];
   /** Below `at` × max HP, the next turn switches to these intents (bosses). */
   phase2?: { at: number; label: string; text: string; intents: Intent[] };
   /** Always on for the whole fight (bosses, some elites). */
@@ -170,6 +188,7 @@ export interface RelicDef {
 
 export interface Content {
   relics: RelicDef[];
+  minions: MinionDef[];
   cards: CardDef[];
   enemies: EnemyDef[];
   battle: BattleConfig;
@@ -246,6 +265,9 @@ export interface RunConfig {
   /** Share of max HP restored when climbing to the next floor. */
   actHeal: number;
   map: { rows: number; width: number; paths: number; weights: Record<'battle' | 'event' | 'elite' | 'rest' | 'shop', number> };
+  /** Gentle enemies for the first `warmupFights` normal fights of floor 1, while the deck is still basic. */
+  warmup: string[];
+  warmupFights: number;
   /** Enemies met in normal fights, one list per floor (wraps around). */
   normal: string[][];
   /** Enemies met in elite fights, one list per floor (wraps around). */
@@ -405,7 +427,13 @@ export interface BattleState {
     /** weighted enemies: index of this turn's intent, and the ones before (newest last). */
     pick?: number;
     recent?: number[];
+    /** HP multiplier for minions summoned in this fight (default 1). */
+    minionHp?: number;
   };
+  /** Minions alive, in the order they came. */
+  minions?: MinionState[];
+  /** uid of the minion attacks go to (absent: the enemy itself). */
+  target?: number;
   /** Cards played this turn (for the log). */
   played: string[];
   reports: TurnReport[];
@@ -416,6 +444,13 @@ export interface BattleState {
   relicCount: Record<string, number>;
   /** Relics that fired since the last card or turn (for the UI flash). */
   relicFired: string[];
+}
+
+export interface MinionState {
+  uid: number;
+  id: string;
+  hp: number;
+  maxHp: number;
 }
 
 /** What the UI must run through the engine before `resolveTurn`. */

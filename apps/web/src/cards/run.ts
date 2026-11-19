@@ -148,9 +148,15 @@ export function poolOf(content: Content, act: number, kind: 'battle' | 'elite'):
   return lists[(act - 1) % lists.length];
 }
 
+/** The first few normal fights of floor 1 use the gentle warmup pool, so the deck can grow before the real floor starts. */
+export function isWarmup(content: Content, run: RunState, kind: MapNode['kind']): boolean {
+  if (kind !== 'battle' || run.act !== 1 || !content.run.warmup?.length) return false;
+  return run.history.filter((h) => h.act === 1 && h.kind === 'battle').length < (content.run.warmupFights ?? 0);
+}
+
 function enemyOf(content: Content, run: RunState, node: MapNode): string {
   if (node.kind === 'boss') return bossOf(content, run.act);
-  const list = poolOf(content, run.act, node.kind === 'elite' ? 'elite' : 'battle');
+  const list = isWarmup(content, run, node.kind) ? content.run.warmup : poolOf(content, run.act, node.kind === 'elite' ? 'elite' : 'battle');
   const r = { rng: (battleSeed(run) ^ 0x5bd1e995) >>> 0 };
   // the fight just before on this floor was against someone else, if the pool allows
   const last = run.history.filter((h) => h.act === run.act && h.kind === node.kind).at(-1)?.enemy;
@@ -177,6 +183,7 @@ export function battleTitle(content: Content, run: RunState): string {
   const enemy = content.enemies.find((e) => e.id === battleSetup(content, run).enemy)!;
   if (node?.kind === 'boss') return `Trùm tầng ${run.act}: ${enemy.name}`;
   if (node?.kind === 'elite') return `Tinh anh: ${enemy.name}`;
+  if (node && isWarmup(content, run, node.kind)) return `Khởi động: ${enemy.name}`;
   return enemy.name;
 }
 

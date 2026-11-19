@@ -1,0 +1,12 @@
+[
+  { "id": "spam_msg", "name": "Tin Rác", "text": "Một tài khoản spam con: thêm ~150 rps.", "hp": 6, "botRps": 150 },
+  { "id": "bot_con", "name": "Kiến Thợ", "text": "Một con bot nhỏ trong bầy: thêm ~250 rps.", "hp": 8, "botRps": 250 },
+  { "id": "cron_job", "name": "Job Cron", "text": "Một job chạy đúng 00:00: thêm ~350 rps.", "hp": 8, "botRps": 350 },
+  { "id": "phone", "name": "Điện Thoại Click", "text": "Một máy trong trại click: thêm ~250 rps.", "hp": 7, "botRps": 250 },
+  { "id": "scalper", "name": "Bot Đầu Cơ", "text": "Gom hàng để bán lại: thêm ~400 rps.", "hp": 10, "botRps": 400 },
+  { "id": "zombie", "name": "Máy Tính Ma", "text": "Máy của ai đó bị chiếm quyền: thêm ~450 rps.", "hp": 10, "botRps": 450 },
+  { "id": "proxy_shield", "name": "Proxy Che Chắn", "text": "Proxy giấu máy chỉ huy: còn nó thì địch chỉ chịu 50% sát thương.", "hp": 12, "botRps": 100, "guard": 0.5 },
+  { "id": "hydra_head", "name": "Đầu Hydra", "text": "Một nhánh botnet: thêm ~300 rps, che cho thân chính 30% sát thương.", "hp": 12, "botRps": 300, "guard": 0.3 },
+  { "id": "poison_node", "name": "Node Nhiễm Độc", "text": "Node cache bị chiếm: thêm ~200 rps và hồi cho chủ 4 máu mỗi lượt.", "hp": 10, "botRps": 200, "heal": 4 },
+  { "id": "c2_relay", "name": "Trạm C2", "text": "Trạm chuyển lệnh: thêm ~200 rps, hồi cho chủ 3 máu mỗi lượt.", "hp": 12, "botRps": 200, "heal": 3 }
+]

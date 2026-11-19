@@ -3,11 +3,12 @@ import { cn } from '@/lib/utils';
 import type { Intent } from './types';
 
 /**
- * The enemy, drawn in SVG. Each enemy has its own body (ant drone, storm
- * cloud, bull, spider, RAM stick, alarm clock, vacuum, burglar, loris,
- * sneaker, phone rack, braces, camera, megaphone, worm, padlock, hooded
- * shadow, hydra, plague doctor, price tag, crowned lord) and palette; the
- * current intent sets its stance on top of that body:
+ * The enemy, drawn in SVG. Each enemy has its own body (warmup kid, radar,
+ * mailbox, heart monitor, ant drone, storm cloud, bull, spider, RAM stick,
+ * alarm clock, vacuum, burglar, loris, sneaker, phone rack, braces, camera,
+ * megaphone, worm, padlock, hooded shadow, hydra, plague doctor, price tag,
+ * crowned lord) and palette; the current intent sets its stance on top of
+ * that body. Minions get a small body of their own (`MinionAvatar`).
  *
  * - probe: scanning beam, a reticle eye
  * - spike: spikes out, angry slits, shaking
@@ -68,6 +69,114 @@ const BODY_ANIM: Record<BotStance, string> = {
 // ---------------------------------------------------------------- bodies
 
 const LOOKS: Record<string, Look> = {
+  // warmup: a kid in a backwards cap and headphones; tiny skulls of copied scripts
+  script_kiddie: {
+    palette: { main: '#a3e635', light: '#d9f99d', dark: '#1a2e05' },
+    eyes: { l: [70, 86], r: [90, 86], s: 0.9 },
+    minions: 5,
+    minion: (p) => (
+      <g opacity="0.75">
+        <circle r="3.2" fill={p.light} />
+        <rect x="-2" y="1.5" width="4" height="2.4" rx="0.6" fill={p.light} />
+        <circle cx="-1.2" cy="-0.4" r="0.8" fill="#18181b" />
+        <circle cx="1.2" cy="-0.4" r="0.8" fill="#18181b" />
+      </g>
+    ),
+    body: (p, ids) => (
+      <>
+        {/* hoodie */}
+        <path d="M46 140 Q48 110 80 108 Q112 110 114 140 Z" fill="#27272a" stroke={p.main} strokeOpacity="0.5" />
+        <path d="M74 112 L72 128 M86 112 L88 128" stroke={p.light} strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="80" cy="82" r="28" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
+        {/* cap, worn backwards */}
+        <path d="M52 76 Q54 50 80 50 Q106 50 108 76 Z" fill={p.main} opacity="0.9" />
+        <path d="M100 62 Q118 62 122 70 L104 72 Z" fill={p.dark} stroke={p.main} />
+        {/* headphones */}
+        <path d="M50 84 Q50 46 80 44 Q110 46 110 84" fill="none" stroke="#52525b" strokeWidth="4" />
+        <rect x="44" y="76" width="10" height="18" rx="4" fill="#3f3f46" stroke={p.main} />
+        <rect x="106" y="76" width="10" height="18" rx="4" fill="#3f3f46" stroke={p.main} />
+        <rect x="60" y="78" width="40" height="16" rx="8" fill="#09090b" />
+        <path d="M74 100 Q80 104 86 100" fill="none" stroke={p.light} strokeWidth="1.5" strokeLinecap="round" />
+      </>
+    ),
+  },
+
+  // warmup: a radar dish sending out ping rings
+  ping_bot: {
+    palette: { main: '#38bdf8', light: '#bae6fd', dark: '#082f49' },
+    eyes: { l: [71, 84], r: [89, 84], s: 0.85 },
+    minions: 4,
+    minion: (p) => (
+      <g fill="none" stroke={p.light} strokeWidth="1.2" opacity="0.7">
+        <circle r="1.5" fill={p.light} />
+        <path d="M3 -3 A4.5 4.5 0 0 1 3 3" />
+        <path d="M5.5 -5 A7.5 7.5 0 0 1 5.5 5" />
+      </g>
+    ),
+    body: (p, ids) => (
+      <>
+        {[22, 32, 42].map((r, i) => (
+          <circle key={r} cx="80" cy="84" r={r + 14} fill="none" stroke={p.main} strokeOpacity={0.35 - i * 0.1} style={{ animation: `bot-float 2s ease-in-out ${i * 0.3}s infinite` }} />
+        ))}
+        <path d="M70 112 L64 136 M90 112 L96 136 M66 128 H94" stroke="#52525b" strokeWidth="3" strokeLinecap="round" />
+        <circle cx="80" cy="84" r="27" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
+        <path d="M80 57 V40" stroke="#71717a" strokeWidth="2.5" />
+        <circle cx="80" cy="38" r="4" fill={p.main} filter={`url(#${ids.glow})`} className="animate-pulse" />
+        <rect x="62" y="77" width="36" height="15" rx="7.5" fill="#09090b" />
+        <text x="80" y="104" textAnchor="middle" fontSize="7" fontFamily="monospace" fill={p.light}>
+          PING
+        </text>
+      </>
+    ),
+  },
+
+  // warmup: a mailbox robot spitting envelopes
+  spam_bot: {
+    palette: { main: '#f59e0b', light: '#fde68a', dark: '#451a03' },
+    eyes: { l: [70, 74], r: [90, 74], s: 0.9 },
+    minions: 6,
+    minion: (p) => (
+      <g opacity="0.8">
+        <rect x="-4" y="-3" width="8" height="6" rx="1" fill="#27272a" stroke={p.light} strokeWidth="0.9" />
+        <path d="M-3.6 -2.4 L0 0.6 L3.6 -2.4" fill="none" stroke={p.light} strokeWidth="0.9" />
+      </g>
+    ),
+    body: (p, ids) => (
+      <>
+        <rect x="76" y="110" width="8" height="28" fill="#52525b" />
+        <path d="M50 66 Q50 46 80 46 Q110 46 110 66 V110 H50 Z" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
+        <rect x="58" y="66" width="44" height="16" rx="8" fill="#09090b" />
+        <rect x="60" y="92" width="40" height="5" rx="2.5" fill="#09090b" stroke={p.main} strokeOpacity="0.6" />
+        {/* the flag is up: mail to send */}
+        <path d="M110 70 H122 V54 H132 V62 H122" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinejoin="round" />
+        {[0, 1].map((i) => (
+          <g key={i} transform={`translate(${70 + i * 18} 98) rotate(${i ? 12 : -10})`} style={{ animation: `bot-float 1.8s ease-in-out ${i * 0.6}s infinite` }}>
+            <rect x="-7" y="0" width="14" height="10" rx="1.5" fill="#fafafa" stroke={p.main} />
+            <path d="M-6 1 L0 6 L6 1" fill="none" stroke={p.main} />
+          </g>
+        ))}
+      </>
+    ),
+  },
+
+  // warmup: a heart monitor on legs, its screen showing a pulse line
+  uptime_bot: {
+    palette: { main: '#34d399', light: '#a7f3d0', dark: '#022c22' },
+    eyes: { l: [68, 70], r: [92, 70], s: 0.85 },
+    minions: 6,
+    minion: (p) => <path d="M-5 0 H-2 L-1 -3 L1 3 L2 0 H5" fill="none" stroke={p.light} strokeWidth="1.2" opacity="0.75" />,
+    body: (p, ids) => (
+      <>
+        <path d="M64 114 L58 138 M96 114 L102 138" stroke="#52525b" strokeWidth="3" strokeLinecap="round" />
+        <rect x="44" y="48" width="72" height="66" rx="10" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
+        <rect x="54" y="62" width="52" height="16" rx="8" fill="#09090b" />
+        <rect x="54" y="84" width="52" height="22" rx="3" fill="#09090b" stroke={p.main} strokeOpacity="0.5" />
+        <path d="M56 96 H70 L74 88 L79 104 L83 92 L86 96 H104" fill="none" stroke={p.main} strokeWidth="2" strokeLinejoin="round" filter={`url(#${ids.glow})`} />
+        <circle cx="108" cy="54" r="2.5" fill="#22c55e" className="animate-pulse" />
+      </>
+    ),
+  },
+
   // a red ant drone with antennae and mandibles; a swarm of tiny ants
   swarm: {
     palette: { main: '#f43f5e', light: '#fda4af', dark: '#4c0519' },
@@ -1060,6 +1169,159 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
         </g>
 
         <StanceFront stance={stance} />
+      </svg>
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------- minions
+
+/** Small bodies for the minions that fight next to an enemy, drawn in a 48×48 box. */
+const MINION_LOOKS: Record<string, { color: string; body: (c: string) => ReactNode }> = {
+  // an envelope with a red badge
+  spam_msg: {
+    color: '#f59e0b',
+    body: (c) => (
+      <>
+        <rect x="9" y="14" width="30" height="21" rx="3" fill="#27272a" stroke={c} strokeWidth="2" />
+        <path d="M10 16 L24 27 L38 16" fill="none" stroke={c} strokeWidth="2" strokeLinejoin="round" />
+        <circle cx="37" cy="14" r="5" fill="#ef4444" />
+        <text x="37" y="16.5" textAnchor="middle" fontSize="7" fontWeight="bold" fill="#fff">!</text>
+      </>
+    ),
+  },
+  // a tiny red ant
+  bot_con: {
+    color: '#f43f5e',
+    body: (c) => (
+      <>
+        {[-1, 1].map((d) => [0, 1, 2].map((k) => <path key={`${d}${k}`} d={`M${24 + d * 4} ${24 + k * 3} l${d * 9} ${-4 + k * 4}`} stroke="#71717a" strokeWidth="1.6" strokeLinecap="round" />))}
+        <ellipse cx="24" cy="32" rx="6" ry="5" fill="#3f3f46" stroke={c} />
+        <ellipse cx="24" cy="21" rx="9" ry="8" fill="#27272a" stroke={c} strokeWidth="1.8" />
+        <path d="M20 14 Q17 8 14 6 M28 14 Q31 8 34 6" fill="none" stroke="#a1a1aa" strokeWidth="1.4" strokeLinecap="round" />
+      </>
+    ),
+  },
+  // a gear with a clock face
+  cron_job: {
+    color: '#a78bfa',
+    body: (c) => (
+      <>
+        {Array.from({ length: 8 }, (_, i) => (
+          <rect key={i} x="22" y="7" width="4" height="7" rx="1" fill={c} transform={`rotate(${i * 45} 24 24)`} />
+        ))}
+        <circle cx="24" cy="24" r="12" fill="#27272a" stroke={c} strokeWidth="2" />
+        <path d="M24 17 V24 L29 27" fill="none" stroke="#e4e4e7" strokeWidth="2" strokeLinecap="round" />
+      </>
+    ),
+  },
+  // a phone with a tapping finger mark
+  phone: {
+    color: '#22d3ee',
+    body: (c) => (
+      <>
+        <rect x="15" y="7" width="18" height="34" rx="3.5" fill="#18181b" stroke={c} strokeWidth="2" />
+        <rect x="18" y="11" width="12" height="22" rx="1" fill={c} opacity="0.25" />
+        <circle cx="24" cy="22" r="3" fill={c} />
+        <circle cx="24" cy="22" r="6" fill="none" stroke={c} strokeOpacity="0.6" />
+        <circle cx="24" cy="37" r="1.5" fill="#71717a" />
+      </>
+    ),
+  },
+  // a shopping bag with a greedy grin
+  scalper: {
+    color: '#fb923c',
+    body: (c) => (
+      <>
+        <path d="M18 16 Q18 8 24 8 Q30 8 30 16" fill="none" stroke={c} strokeWidth="2" />
+        <path d="M11 16 H37 L35 40 H13 Z" fill="#27272a" stroke={c} strokeWidth="2" strokeLinejoin="round" />
+        <circle cx="19" cy="24" r="2" fill={c} />
+        <circle cx="29" cy="24" r="2" fill={c} />
+        <path d="M18 31 Q24 36 30 31" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" />
+      </>
+    ),
+  },
+  // a hijacked laptop with a skull on screen
+  zombie: {
+    color: '#84cc16',
+    body: (c) => (
+      <>
+        <rect x="10" y="11" width="28" height="19" rx="2" fill="#18181b" stroke={c} strokeWidth="2" />
+        <path d="M6 34 H42 L39 38 H9 Z" fill="#3f3f46" stroke={c} strokeWidth="1.5" />
+        <circle cx="24" cy="19" r="5" fill={c} opacity="0.85" />
+        <rect x="21" y="22" width="6" height="4" rx="1" fill={c} opacity="0.85" />
+        <circle cx="22" cy="19" r="1.3" fill="#18181b" />
+        <circle cx="26" cy="19" r="1.3" fill="#18181b" />
+      </>
+    ),
+  },
+  // a shield with a mask
+  proxy_shield: {
+    color: '#60a5fa',
+    body: (c) => (
+      <>
+        <path d="M24 6 L39 12 V23 Q39 35 24 42 Q9 35 9 23 V12 Z" fill="#1e293b" stroke={c} strokeWidth="2.2" strokeLinejoin="round" />
+        <path d="M14 21 Q24 16 34 21 Q33 27 28 27 Q24 24 20 27 Q15 27 14 21 Z" fill={c} opacity="0.9" />
+        <circle cx="19.5" cy="22.5" r="1.6" fill="#0f172a" />
+        <circle cx="28.5" cy="22.5" r="1.6" fill="#0f172a" />
+      </>
+    ),
+  },
+  // one serpent head on a neck
+  hydra_head: {
+    color: '#10b981',
+    body: (c) => (
+      <>
+        <path d="M18 44 Q12 32 20 24 Q26 18 22 12" fill="none" stroke={c} strokeWidth="6" strokeLinecap="round" />
+        <ellipse cx="25" cy="12" rx="10" ry="7" fill="#064e3b" stroke={c} strokeWidth="2" />
+        <circle cx="27" cy="10" r="2" fill="#fde047" />
+        <path d="M34 14 l5 1 l-4 2" fill="none" stroke="#f43f5e" strokeWidth="1.4" strokeLinecap="round" />
+      </>
+    ),
+  },
+  // a cracked cache cylinder dripping green
+  poison_node: {
+    color: '#a3e635',
+    body: (c) => (
+      <>
+        <ellipse cx="24" cy="12" rx="12" ry="4.5" fill="#3f3f46" stroke={c} strokeWidth="1.8" />
+        <path d="M12 12 V32 Q24 39 36 32 V12" fill="#27272a" stroke={c} strokeWidth="1.8" />
+        <path d="M12 22 Q24 28 36 22" fill="none" stroke={c} strokeOpacity="0.5" />
+        <path d="M27 14 L23 21 L27 24 L22 31" fill="none" stroke="#d4d4d8" strokeWidth="1.3" />
+        <path d="M18 34 Q17 40 18.5 42 Q20 40 19 34 Z" fill={c} />
+        <path d="M30 35 Q29 39 30.5 40.5 Q32 39 31 35 Z" fill={c} />
+      </>
+    ),
+  },
+  // a radio mast sending waves
+  c2_relay: {
+    color: '#f472b6',
+    body: (c) => (
+      <>
+        <path d="M24 16 L15 42 M24 16 L33 42 M18 33 H30 M20 26 H28" stroke="#a1a1aa" strokeWidth="1.8" strokeLinecap="round" />
+        <circle cx="24" cy="14" r="3.5" fill={c} />
+        <path d="M16 8 Q12 14 16 20 M32 8 Q36 14 32 20 M12 5 Q6 14 12 23 M36 5 Q42 14 36 23" fill="none" stroke={c} strokeWidth="1.6" strokeLinecap="round" opacity="0.8" />
+      </>
+    ),
+  },
+};
+
+export interface MinionAvatarProps {
+  minionId: string;
+  hpRatio: number;
+  /** Bobs out of step with the others. */
+  index?: number;
+  className?: string;
+}
+
+export const MinionAvatar = forwardRef<HTMLDivElement, MinionAvatarProps>(function MinionAvatar({ minionId, hpRatio, index = 0, className }, ref) {
+  const look = MINION_LOOKS[minionId] ?? MINION_LOOKS.bot_con;
+  return (
+    <div ref={ref} className={cn('relative size-12', className)}>
+      <svg viewBox="0 0 48 48" className="size-full overflow-visible" aria-hidden>
+        <circle cx="24" cy="24" r="23" fill={look.color} opacity="0.12" />
+        <g style={{ transformOrigin: '24px 24px', animation: `bot-bob 2.4s ease-in-out ${index * 0.5}s infinite` }}>{look.body(look.color)}</g>
+        {hpRatio < 0.5 && <path d="M33 10 L29 17 L32 19 L27 26" fill="none" stroke="#d4d4d8" strokeWidth="1.2" strokeLinecap="round" opacity="0.85" />}
       </svg>
     </div>
   );

@@ -13,7 +13,7 @@ import type { Summary } from '@/types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -33,7 +33,12 @@ test('content: every id referenced exists', () => {
   const enemies = new Set(content.enemies.map((e) => e.id));
   for (const id of content.battle.startingDeck) assert.ok(cards.has(id), id);
   assert.ok(enemies.has(content.battle.enemy));
-  for (const id of [...content.run.normal.flat(), ...content.run.elites.flat(), ...content.run.bosses]) assert.ok(enemies.has(id), id);
+  for (const id of [...content.run.warmup, ...content.run.normal.flat(), ...content.run.elites.flat(), ...content.run.bosses]) assert.ok(enemies.has(id), id);
+  const minions = new Set(content.minions.map((m) => m.id));
+  for (const e of content.enemies) {
+    for (const id of e.minions ?? []) assert.ok(minions.has(id), id);
+    for (const i of [...e.intents, ...(e.phase2?.intents ?? [])]) if (i.summon) assert.ok(minions.has(i.summon.minion), i.summon.minion);
+  }
   for (const ev of content.events) for (const o of ev.options) for (const e of o.effects) if (e.op === 'addCard') assert.ok(cards.has(e.card), e.card);
   for (const e of content.enemies) for (const i of e.intents) if (i.addCards) assert.ok(cards.has(i.addCards.card));
 });
@@ -258,7 +263,7 @@ test('run: starts on the map; only reachable nodes can be chosen', () => {
 test('run: fight, reward, back to the map with the hp carried over', () => {
   let run = runs.chooseNode(content, runs.newRun(content, 11), runs.reachable(content, runs.newRun(content, 11))[0]);
   const setup = runs.battleSetup(content, run);
-  assert.ok(runs.poolOf(content, 1, 'battle').includes(setup.enemy!));
+  assert.ok(content.run.warmup.includes(setup.enemy!), 'the first fight is a warmup');
   assert.notEqual(setup.enemy, runs.bossOf(content, 1), 'the boss is not met before the top');
   run = runs.finishBattle(content, run, win(run, 50));
   assert.equal(run.phase, 'reward');
@@ -561,9 +566,10 @@ test('run: every floor has its own normal and elite enemies', () => {
       }
     }
   }
-  // a floor's fights land on that floor's pool
+  // a floor's fights land on that floor's pool (past floor 1's warmup fights)
+  const warm = Array.from({ length: content.run.warmupFights }, () => ({ act: 1, kind: 'battle' as const, enemy: 'script_kiddie', won: true, turns: 3, hpLost: 0 }));
   for (const act of [1, 2, 3]) {
-    const run = { ...runs.newRun(content, 5), act };
+    const run = { ...runs.newRun(content, 5), act, history: warm };
     const node = runs.towerMap(content, run).nodes.find((n) => n.row === 0)!;
     const setup = runs.battleSetup(content, { ...run, node: node.id, phase: 'battle' });
     assert.ok(runs.poolOf(content, act, 'battle').includes(setup.enemy!), `floor ${act}: ${setup.enemy}`);
@@ -598,4 +604,75 @@ test('enemies: bypass, wafStrip, drainOps and regen', () => {
   const hurt = endTurn({ ...worm, enemy: { ...worm.enemy, hp: 20 } });
   assert.equal(hurt.enemy.hp, 23);
   assert.equal(endTurn(worm).enemy.hp, worm.enemy.maxHp);
+});
+
+test('run: the first normal fights of floor 1 are warmups, then the floor pool takes over', () => {
+  let run = runs.newRun(content, 21);
+  const met: string[] = [];
+  while (met.length < content.run.warmupFights + 2) {
+    const map = runs.towerMap(content, run);
+    const open = runs.reachable(content, run);
+    // walk battle nodes where possible
+    const id = open.find((n) => map.nodes.find((x) => x.id === n)!.kind === 'battle') ?? open[0];
+    run = runs.chooseNode(content, run, id);
+    if (run.phase === 'battle') {
+      const setup = runs.battleSetup(content, run);
+      if (runs.currentNode(content, run)!.kind === 'battle') met.push(setup.enemy!);
+      run = runs.finishBattle(content, run, win(run, run.hp));
+    }
+    if (run.phase === 'reward') run = runs.pickReward(content, run, null);
+    if (run.phase === 'event') run = runs.chooseEvent(content, run, 0);
+    if (run.phase === 'rest') run = runs.rest(content, run, { heal: true });
+    if (run.phase === 'shop') run = runs.leaveShop(content, run);
+    if (run.phase !== 'map') break;
+  }
+  const n = content.run.warmupFights;
+  for (const id of met.slice(0, n)) assert.ok(content.run.warmup.includes(id), `${id} is a warmup`);
+  for (const id of met.slice(n)) assert.ok(runs.poolOf(content, 1, 'battle').includes(id), `${id} is a floor-1 enemy`);
+  const easy = (id: string) => Math.max(...content.enemies.find((e) => e.id === id)!.intents.map((i) => i.botRps));
+  for (const id of content.run.warmup) for (const hard of runs.poolOf(content, 1, 'battle')) assert.ok(easy(id) < easy(hard), `${id} is gentler than ${hard}`);
+});
+
+test('minions: add traffic, take aimed hits, guard and heal their master, flee when it falls', () => {
+  const spam = rules.newBattle(content, 4, { enemy: 'spam_bot' });
+  assert.equal(spam.minions!.length, 1);
+  const m = spam.minions![0];
+  assert.equal(rules.botRpsNow(content, spam) - rules.botRpsNow(content, { ...spam, minions: [] }), content.minions.find((x) => x.id === 'spam_msg')!.botRps);
+
+  // an aimed attack hits the minion only; a kill drops the aim back on the enemy
+  const aimed = rules.setTarget(spam, m.uid);
+  assert.equal(aimed.target, m.uid);
+  assert.equal(spam.target, undefined, 'previous state is not mutated');
+  assert.equal(rules.setTarget(spam, 999), spam, 'unknown minions cannot be aimed at');
+  const [withPatch, p1] = withCard(aimed, 'patch');
+  const scratched = rules.playCard(content, withPatch, p1);
+  assert.equal(scratched.enemy.hp, spam.enemy.hp, 'the enemy is untouched');
+  assert.equal(scratched.minions![0].hp, m.hp - 5);
+  const [withBlock, p2] = withCard(scratched, 'block_ip');
+  const killed = rules.playCard(content, withBlock, p2);
+  assert.equal(killed.minions!.length, 0);
+  assert.equal(killed.target, undefined);
+  assert.equal(killed.enemy.hp, spam.enemy.hp, 'the excess is lost');
+
+  // a guard halves damage to its master
+  const apt = rules.newBattle(content, 4, { enemy: 'apt_group' });
+  const [aptPatch, p3] = withCard(apt, 'honeypot');
+  assert.equal(rules.playCard(content, aptPatch, p3).enemy.hp, apt.enemy.hp - 6);
+
+  // a healer mends its master at the end of the turn; summons stop at MAX_MINIONS
+  const poisoner = rules.newBattle(content, 4, { enemy: 'cache_poisoner' });
+  const healer = { uid: 900, id: 'poison_node', hp: 10, maxHp: 10 };
+  const hurt = { ...poisoner, enemy: { ...poisoner.enemy, hp: 30 }, minions: [healer] };
+  assert.equal(endTurn(hurt).enemy.hp, 30 + 4);
+  const debt = content.enemies.find((e) => e.id === 'cache_poisoner')!.intents.findIndex((i) => i.summon);
+  const full = { ...hurt, enemy: { ...hurt.enemy, pick: debt }, minions: [1, 2, 3].map((uid) => ({ ...healer, uid })) };
+  assert.equal(endTurn(full).minions!.length, rules.MAX_MINIONS);
+  const room = endTurn({ ...full, minions: [healer] });
+  assert.equal(room.minions!.length, 2, 'the summon adds one');
+
+  // the master falls: the fight is won and the minions flee
+  const [lastHit, p4] = withCard({ ...spam, enemy: { ...spam.enemy, hp: 3 } }, 'patch');
+  const won = rules.playCard(content, lastHit, p4);
+  assert.equal(won.phase, 'won');
+  assert.deepEqual(won.minions, []);
 });

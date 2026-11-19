@@ -5,7 +5,9 @@ import {
   ArrowRight,
   Bot,
   Bug,
+  Crosshair,
   Filter,
+  UserPlus,
   TriangleAlert,
   User,
   Users,
@@ -39,13 +41,35 @@ import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import type { Design, WindowMetrics } from '@/types';
-import { apiOut, botCutNow, botRpsNow, bypassNow, canPlay, cardDef, currentIntent, intentsNow, legitRpsNow, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
+import {
+  apiOut,
+  botCutNow,
+  botRpsNow,
+  bypassNow,
+  canPlay,
+  cardDef,
+  currentIntent,
+  guardNow,
+  intentsNow,
+  legitRpsNow,
+  minionDef,
+  minionRpsNow,
+  minionsOf,
+  newBattle,
+  nodeOf,
+  planTurn,
+  playCard,
+  resolveTurn,
+  scoreTurn,
+  setTarget,
+  targetOf,
+} from './rules';
 import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
-import { BotAvatar, type BotRank } from './BotAvatar';
+import { BotAvatar, MinionAvatar, type BotRank } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
@@ -70,6 +94,14 @@ const TYPE_FX: Record<CardDef['type'], string> = {
 
 const n0 = (v: number) => Math.round(v).toLocaleString('vi-VN');
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+/** HP the minions there before lost between two states (a minion gone counts its whole HP; new ones are ignored). */
+function minionLoss(prev: BattleState, next: BattleState): number {
+  const after = new Map(minionsOf(next).map((m) => [m.uid, m.hp]));
+  // a won fight clears the minions: they fled, they were not hit
+  if (next.phase === 'won') return 0;
+  return minionsOf(prev).reduce((sum, m) => sum + Math.max(0, m.hp - (after.get(m.uid) ?? 0)), 0);
+}
 
 /** $/h of a design with this turn's temporary instances. */
 function costOf(design: Design, temp: BattleState['temp']) {
@@ -182,12 +214,19 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const deckRef = useRef<HTMLDivElement>(null);
   const discardRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
+  /** Minion avatars by uid (bolts aimed at a minion land there). */
+  const minionEls = useRef<Record<number, HTMLDivElement | null>>({});
+  /** Where attacks land now: the targeted minion, or the enemy. */
+  const aimEl = (s: BattleState) => {
+    const m = targetOf(s);
+    return (m && minionEls.current[m.uid]) || botRef.current;
+  };
 
 
   /** Green bolts from your gateway into the bot. */
-  const counterFx = useCallback(async (damage: number) => {
+  const counterFx = useCallback(async (damage: number, at?: HTMLElement | null) => {
     const layer = fxRef.current;
-    const bot = botRef.current;
+    const bot = at ?? botRef.current;
     const source = shieldRef.current ?? gateRef.current;
     if (!layer || !bot || !source) return;
     await bolts(layer, anchor(source, layer), anchor(bot, layer, 0.5, 0.5), damage, () => {
@@ -300,8 +339,15 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     setState(next);
     reshuffleFx(state, next);
     const dmg = state.enemy.hp - next.enemy.hp;
+    const minionHit = minionLoss(state, next);
+    const aimed = aimEl(state);
     // the system takes the card in first; an attack card then fires from it
     void cardFx(def, pos, next).then(async () => {
+      if (minionHit > 0) {
+        await counterFx(minionHit, aimed);
+        const layer = fxRef.current;
+        if (layer && aimed) floatText(layer, anchor(aimed, layer, 0.5, 0), `−${minionHit}`, '#fb7185');
+      }
       if (dmg > 0) {
         await counterFx(dmg);
         setFlash({ key: Date.now(), player: 0, enemy: dmg });
@@ -381,7 +427,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
    * on every node, the live numbers in the middle and drains the Error Budget
    * (headroom first) and the bot's HP by its share of the turn's damage.
    */
-  const replayPhase = async (plan: TurnPlan, windows: WindowMetrics[], r: TurnReport, start: BattleState) => {
+  const replayPhase = async (plan: TurnPlan, windows: WindowMetrics[], r: TurnReport, start: BattleState, end: BattleState) => {
     const layer = fxRef.current;
     const ids = plan.input.design.nodes.map((n) => n.id);
     const n = windows.length;
@@ -395,6 +441,10 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     const rawTotal = r.damage.absorbed + hpLoss;
     let cum = 0;
     let prev = { hp: start.hp, headroom: start.headroom, enemyHp: start.enemy.hp };
+    // the filtered traffic hits the target: a minion (shown by the bolts) or the enemy, past its guards
+    const enemyLoss = Math.max(0, start.enemy.hp - end.enemy.hp);
+    const aimed = aimEl(start);
+    const minionHit = minionLoss(start, end);
     for (let i = 0; i < n; i++) {
       if (skip.current) break;
       const w = windows[i];
@@ -405,7 +455,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       const cur = {
         hp: start.hp - lost,
         headroom: start.headroom - absorbed,
-        enemyHp: Math.max(0, start.enemy.hp - Math.floor((r.enemyDamage * (i + 1)) / n)),
+        enemyHp: Math.max(0, start.enemy.hp - Math.floor((enemyLoss * (i + 1)) / n)),
       };
       const nodes: Record<string, NodeLoad> = {};
       w.nodes.forEach((nw, k) => {
@@ -446,6 +496,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           if (hpAt) floatText(layer, hpAt, `−${prev.hp - cur.hp}`, '#fb7185');
         }
         if (cur.enemyHp < prev.enemyHp) void counterFx(prev.enemyHp - cur.enemyHp);
+        else if (minionHit > 0 && i % 2 === 0) void counterFx(Math.max(1, Math.round(minionHit / n)), aimed);
       }
       prev = cur;
       await wait(stepMs);
@@ -476,8 +527,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       const { summary, windows } = await engine;
       const next = resolveTurn(CONTENT, state, plan, summary);
       const r = next.reports.at(-1)!;
-      await replayPhase(plan, windows, r, state);
-      setFlash({ key: Date.now(), player: r.damage.total, enemy: r.enemyDamage });
+      await replayPhase(plan, windows, r, state, next);
+      setFlash({ key: Date.now(), player: r.damage.total, enemy: Math.max(0, state.enemy.hp - next.enemy.hp) });
       setState(next);
       reshuffleFx(state, next);
       // a finished fight keeps its last hand in the rules: leave it in the pile on screen
@@ -598,7 +649,17 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
             <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
               {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
-              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={intentsNow(CONTENT, state)} intent={intent} rank={rank} botRef={botRef} usersRef={usersRef} attacking={resolving} />
+              <BotSide
+                state={state}
+                enemyHp={live?.enemyHp ?? state.enemy.hp}
+                intents={intentsNow(CONTENT, state)}
+                intent={intent}
+                rank={rank}
+                botRef={botRef}
+                usersRef={usersRef}
+                attacking={resolving}
+                onAim={resolving ? undefined : () => setState((s) => setTarget(s, null))}
+              />
                 <HpBar
                   icon={<Skull />}
                   label={enemy.name}
@@ -609,6 +670,9 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                   pop={flash?.enemy ?? 0}
                   barClass="from-rose-600 to-orange-500"
                 />
+              {minionsOf(state).length > 0 && !over && (
+                <MinionRow state={state} minionEls={minionEls} onAim={resolving ? undefined : (uid) => setState((s) => setTarget(s, uid))} />
+              )}
             </div>
           </div>
 
@@ -963,6 +1027,7 @@ function intentEffects(intent: Intent): IntentEffect[] {
   if (intent.bypass) out.push({ icon: EyeOff, text: `lách ${Math.round(intent.bypass * 100)}% bộ lọc`, tone: 'bad', lasting: true });
   if (intent.wafStrip) out.push({ icon: ShieldOff, text: `WAF −${Math.round(intent.wafStrip * 100)}%`, tone: 'warn', lasting: true });
   if (intent.drainOps) out.push({ icon: Unplug, text: `lượt sau −${intent.drainOps} Ops`, tone: 'warn', lasting: true });
+  if (intent.summon) out.push({ icon: UserPlus, text: `gọi ${intent.summon.n} ${minionDef(CONTENT, intent.summon.minion).name}`, tone: 'warn', lasting: true });
   if (intent.heal) out.push({ icon: HeartPulse, text: `hồi ${intent.heal} máu`, tone: 'heal' });
   return out;
 }
@@ -1001,13 +1066,19 @@ function IntentTrack({ intents, step, pick }: { intents: Intent[]; step: number;
   );
 }
 
-/** An enemy's passive (bosses, some elites) and a boss's phase, as small badges under its intents. */
+/** An enemy's passive (bosses, some elites), a boss's phase and its minions' guard, as small badges under its intents. */
 function BossTraits({ state }: { state: BattleState }) {
   const def = CONTENT.enemies.find((e) => e.id === state.enemy.id);
-  if (!def?.passive && !def?.phase2) return null;
+  const guard = guardNow(CONTENT, state);
+  if (!def || (!def.passive && !def.phase2 && !guard)) return null;
   const phase2 = state.enemy.phase === 2;
   return (
     <div className="flex flex-wrap justify-center gap-1.5 text-[11px]">
+      {guard > 0 && (
+        <span className="flex items-center gap-1 rounded-full border border-sky-400/50 bg-sky-500/15 px-2 py-0.5 text-sky-200" title="Lính đang che chắn: hạ chúng để đánh trúng đủ sát thương">
+          <Shield className="size-3" /> Được che −{Math.round(guard * 100)}% sát thương
+        </span>
+      )}
       {def.passive && (
         <span className="rounded-full border border-violet-400/50 bg-violet-500/15 px-2 py-0.5 text-violet-200" title={def.passive.text}>
           Nội tại: {def.passive.label}
@@ -1034,6 +1105,7 @@ function BotSide({
   botRef,
   usersRef,
   attacking,
+  onAim,
 }: {
   state: BattleState;
   enemyHp: number;
@@ -1043,9 +1115,14 @@ function BotSide({
   botRef: React.RefObject<HTMLDivElement | null>;
   usersRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
+  /** With minions on the field: aim attacks back at the enemy. */
+  onAim?: () => void;
 }) {
   const Icon = INTENT_ICON[intent.icon];
   const raw = botRpsNow(CONTENT, state);
+  const fromMinions = minionRpsNow(CONTENT, state);
+  const hasMinions = minionsOf(state).length > 0;
+  const aimed = hasMinions && !targetOf(state);
   const cut = botCutNow(state, bypassNow(CONTENT, state));
   const effects = intentEffects(intent);
   const hotfixed = (e: IntentEffect) => state.temp.hotfix && e.tone !== 'heal' && !e.lasting;
@@ -1090,6 +1167,7 @@ function BotSide({
           <p className="mb-2 text-muted-foreground">{intent.text}</p>
           <div className="space-y-1.5 font-mono">
             <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
+            {fromMinions > 0 && <Row icon={<Users className="text-orange-300" />} label="… trong đó từ lính" value={`${n0(fromMinions)} rps`} />}
             <Row lg icon={<Filter className="text-emerald-400" />} label="Bị lọc (WAF + rate limit)" value={`${Math.round(cut * 100)}%`} good={cut > 0} />
             <Row lg icon={<ShieldAlert className="text-amber-300" />} label="Lọt vào hệ thống" value={`${n0(raw * (1 - cut))} rps`} />
             <Row lg icon={<Users className="text-sky-300" />} label="Người dùng thật" value={`${n0(legitRpsNow(CONTENT, state))} rps`} />
@@ -1112,7 +1190,12 @@ function BotSide({
         </div>
       </div>
 
-      <div className="relative">
+      <div
+        className={cn('relative rounded-full', hasMinions && onAim && 'cursor-pointer')}
+        onClick={hasMinions ? onAim : undefined}
+        title={hasMinions ? (aimed ? 'Đang nhắm vào chỉ huy' : 'Bấm để nhắm đòn đánh vào chỉ huy') : undefined}
+      >
+        {aimed && <AimBadge className="right-6 top-6" />}
         <BotAvatar
           ref={botRef}
           enemyId={state.enemy.id}
@@ -1122,6 +1205,69 @@ function BotSide({
           hpRatio={enemyHp / state.enemy.maxHp}
           className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
         <UserRing usersRef={usersRef} />
+      </div>
+    </div>
+  );
+}
+
+/** The crosshair on whatever attacks land on now. */
+function AimBadge({ className }: { className?: string }) {
+  return (
+    <span className={cn('absolute z-10 flex size-6 items-center justify-center rounded-full border border-rose-300 bg-rose-500/80 text-white shadow-[0_0_10px_rgba(244,63,94,0.7)]', className)}>
+      <Crosshair className="size-4" />
+    </span>
+  );
+}
+
+/** The minions next to the enemy: each with its HP and what it does. Clicking one aims attacks (cards and filtered traffic) at it. */
+function MinionRow({
+  state,
+  minionEls,
+  onAim,
+}: {
+  state: BattleState;
+  minionEls: React.RefObject<Record<number, HTMLDivElement | null>>;
+  onAim?: (uid: number) => void;
+}) {
+  const target = targetOf(state);
+  const scale = state.enemy.rps ?? 1;
+  return (
+    <div className="flex w-full flex-col items-center gap-1">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Lính đi kèm · bấm để nhắm</span>
+      <div className="flex flex-wrap justify-center gap-1.5">
+        {minionsOf(state).map((m, i) => {
+          const def = minionDef(CONTENT, m.id);
+          const on = target?.uid === m.uid;
+          return (
+            <button
+              key={m.uid}
+              type="button"
+              disabled={!onAim}
+              onClick={() => onAim?.(m.uid)}
+              title={`${def.name}: ${def.text}`}
+              aria-pressed={on}
+              className={cn(
+                'relative flex w-[88px] flex-col items-center rounded-lg border bg-card/60 px-1 pb-1 pt-0.5 transition-colors',
+                on ? 'border-rose-400 bg-rose-500/10 shadow-[0_0_10px_rgba(244,63,94,0.45)]' : 'border-border hover:border-rose-400/60',
+              )}
+            >
+              {on && <AimBadge className="-right-1.5 -top-1.5 size-5 [&_svg]:size-3.5" />}
+              <MinionAvatar ref={(el) => void (minionEls.current[m.uid] = el)} minionId={m.id} hpRatio={m.hp / m.maxHp} index={i} className="size-10" />
+              <span className="w-full truncate text-center text-[10px] font-medium">{def.name}</span>
+              <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-orange-500 transition-all duration-500" style={{ width: `${(m.hp / m.maxHp) * 100}%` }} />
+              </div>
+              <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+                <span>
+                  {m.hp}/{m.maxHp}
+                </span>
+                <span className="text-amber-300">+{n0(def.botRps * scale)}</span>
+                {def.guard && <Shield className="size-3 text-sky-300" />}
+                {def.heal && <HeartPulse className="size-3 text-emerald-300" />}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
