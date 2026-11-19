@@ -9,22 +9,14 @@
 // - phase 2: crown tilted and glowing red, eye wide open, packets race, RGB glitches;
 // - defeat: the body switches off like an old CRT (glitch, a line, a dot) and the
 //   crown drops to the floor.
-// The SVG layers live here; BotAvatar places them. The motion functions take the
-// avatar's wrapper element, like botMotion.ts, and look the layers up by data-fx.
+// The pattern every move set in moves/ follows (see kit.ts).
 import type { ReactNode } from 'react';
-import { reduced } from './fx';
+import { fx, isEnraged, reduced, wait, type MoveSet, type Palette } from './kit';
 
 export const LORD = 'ddos_lord';
 export const LORD_DIE_MS = 2600;
 
-interface Palette {
-  main: string;
-  light: string;
-  dark: string;
-}
-
 const RED = '#ef4444';
-const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const hexPts = (cx: number, cy: number, r: number) =>
   Array.from({ length: 6 }, (_, i) => `${(cx + r * Math.cos((i * Math.PI) / 3)).toFixed(1)},${(cy + r * Math.sin((i * Math.PI) / 3)).toFixed(1)}`).join(' ');
 
@@ -198,9 +190,6 @@ export function LordExtra({ p, enraged, bodyId, glow }: { p: Palette; enraged: b
 
 // ---------------------------------------------------------------- motion
 
-const fx = (el: Element, k: string) => el.querySelector<SVGElement>(`[data-fx="${k}"]`);
-const isEnraged = (el: Element) => el.getAttribute('data-enraged') === 'true';
-
 /** "Flood": rear back, charge the third eye, fire a beam of packets at your system. */
 export async function lordStrike(el: Element): Promise<void> {
   const body = el.querySelector('svg');
@@ -346,3 +335,14 @@ export async function lordSummon(el: Element): Promise<void> {
   await anim.finished.catch(() => undefined);
   spins.forEach((a) => a.updatePlaybackRate(1));
 }
+
+export const lordMoves: MoveSet = {
+  gait: { kf: 'gait-levitate', s: 3.4 },
+  back: ({ p, enraged }) => <LordBack p={p} enraged={enraged} />,
+  extra: ({ p, enraged, bodyId, glow }) => <LordExtra p={p} enraged={enraged} bodyId={bodyId} glow={glow} />,
+  front: ({ p, enraged }) => <LordFront p={p} enraged={enraged} />,
+  strike: lordStrike,
+  hit: lordHit,
+  summon: lordSummon,
+  die: { cls: 'bot-die-lord', ms: LORD_DIE_MS },
+};

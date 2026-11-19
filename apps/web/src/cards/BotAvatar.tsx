@@ -1,7 +1,8 @@
 import { forwardRef, useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Intent } from './types';
-import { LORD, LordBack, LordExtra, LordFront, lordBody } from './ddosLord';
+import { lordBody } from './moves/ddosLord';
+import { movesOf, type LayerProps } from './moves';
 import { botDieMs, dieClass, gaitStyle, minionGaitStyle, type BotTier } from './botMotion';
 
 /**
@@ -25,6 +26,10 @@ import { botDieMs, dieClass, gaitStyle, minionGaitStyle, type BotTier } from './
  * slither… see botMotion.ts) and its tier adds a layer: warmup mini bots are
  * smaller and twinkle, elites flex inside a spinning gold rim, floor bosses
  * breathe over a shadow that sends out shockwaves. Defeat plays by tier.
+ *
+ * Most enemies also have a move set of their own (moves/): props that move on
+ * their own, a signature strike, hit reaction, summon and defeat. Body parts
+ * those moves touch are tagged with data-fx.
  */
 
 export type BotStance = Intent['icon'];
@@ -96,8 +101,10 @@ const LOOKS: Record<string, Look> = {
         <path d="M74 112 L72 128 M86 112 L88 128" stroke={p.light} strokeWidth="1.5" strokeLinecap="round" />
         <circle cx="80" cy="82" r="28" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         {/* cap, worn backwards */}
-        <path d="M52 76 Q54 50 80 50 Q106 50 108 76 Z" fill={p.main} opacity="0.9" />
-        <path d="M100 62 Q118 62 122 70 L104 72 Z" fill={p.dark} stroke={p.main} />
+        <g data-fx="cap" style={{ transformOrigin: '80px 64px' }}>
+          <path d="M52 76 Q54 50 80 50 Q106 50 108 76 Z" fill={p.main} opacity="0.9" />
+          <path d="M100 62 Q118 62 122 70 L104 72 Z" fill={p.dark} stroke={p.main} />
+        </g>
         {/* headphones */}
         <path d="M50 84 Q50 46 80 44 Q110 46 110 84" fill="none" stroke="#52525b" strokeWidth="4" />
         <rect x="44" y="76" width="10" height="18" rx="4" fill="#3f3f46" stroke={p.main} />
@@ -128,7 +135,7 @@ const LOOKS: Record<string, Look> = {
         <path d="M70 112 L64 136 M90 112 L96 136 M66 128 H94" stroke="#52525b" strokeWidth="3" strokeLinecap="round" />
         <circle cx="80" cy="84" r="27" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
         <path d="M80 57 V40" stroke="#71717a" strokeWidth="2.5" />
-        <circle cx="80" cy="38" r="4" fill={p.main} filter={`url(#${ids.glow})`} className="animate-pulse" />
+        <circle data-fx="lamp" cx="80" cy="38" r="4" fill={p.main} filter={`url(#${ids.glow})`} className="animate-pulse" style={{ transformOrigin: '80px 38px' }} />
         <rect x="62" y="77" width="36" height="15" rx="7.5" fill="#09090b" />
         <text x="80" y="104" textAnchor="middle" fontSize="7" fontFamily="monospace" fill={p.light}>
           PING
@@ -155,7 +162,9 @@ const LOOKS: Record<string, Look> = {
         <rect x="58" y="66" width="44" height="16" rx="8" fill="#09090b" />
         <rect x="60" y="92" width="40" height="5" rx="2.5" fill="#09090b" stroke={p.main} strokeOpacity="0.6" />
         {/* the flag is up: mail to send */}
-        <path d="M110 70 H122 V54 H132 V62 H122" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinejoin="round" />
+        <g data-fx="flag" style={{ transformOrigin: '122px 70px', animation: 'sp-flag 1.6s ease-in-out infinite' }}>
+          <path d="M110 70 H122 V54 H132 V62 H122" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinejoin="round" />
+        </g>
         {[0, 1].map((i) => (
           <g key={i} transform={`translate(${70 + i * 18} 98) rotate(${i ? 12 : -10})`} style={{ animation: `bot-float 1.8s ease-in-out ${i * 0.6}s infinite` }}>
             <rect x="-7" y="0" width="14" height="10" rx="1.5" fill="#fafafa" stroke={p.main} />
@@ -178,8 +187,19 @@ const LOOKS: Record<string, Look> = {
         <rect x="44" y="48" width="72" height="66" rx="10" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" />
         <rect x="54" y="62" width="52" height="16" rx="8" fill="#09090b" />
         <rect x="54" y="84" width="52" height="22" rx="3" fill="#09090b" stroke={p.main} strokeOpacity="0.5" />
-        <path d="M56 96 H70 L74 88 L79 104 L83 92 L86 96 H104" fill="none" stroke={p.main} strokeWidth="2" strokeLinejoin="round" filter={`url(#${ids.glow})`} />
-        <circle cx="108" cy="54" r="2.5" fill="#22c55e" className="animate-pulse" />
+        <path
+          data-fx="ecg"
+          d="M56 96 H70 L74 88 L79 104 L83 92 L86 96 H104"
+          pathLength={100}
+          fill="none"
+          stroke={p.main}
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeDasharray="78 22"
+          filter={`url(#${ids.glow})`}
+          style={{ transformOrigin: '80px 96px', animation: 'ut-ecg 1.4s linear infinite' }}
+        />
+        <circle data-fx="lamp" cx="108" cy="54" r="2.5" fill="#22c55e" className="animate-pulse" />
       </>
     ),
   },
@@ -1073,6 +1093,8 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
   const bodyId = `${uid}-body`;
   const tier = tierOf(rank, mini);
   const quake = enraged ? 1.6 : 2.6;
+  const own = movesOf(enemyId);
+  const layer: LayerProps = { p, enraged, tier, bodyId, glow: ids.glow };
   return (
     <div
       ref={ref}
@@ -1151,7 +1173,7 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
           </g>
         )}
 
-        {enemyId === LORD && <LordBack p={p} enraged={enraged} />}
+        {own?.back?.(layer)}
 
         {/* orbiting minions */}
         <g data-fx="orbit" style={{ transformOrigin: '80px 80px', animation: `spin ${orbit}s linear infinite` }}>
@@ -1199,7 +1221,7 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
               {look.body(p, ids)}
               <Eyes look={look} stance={stance} dying={dying} glow={ids.glow} />
             </g>
-            {enemyId === LORD && <LordExtra p={p} enraged={enraged} bodyId={bodyId} glow={ids.glow} />}
+            {own?.extra?.(layer)}
             {tier === 'elite' && (
               <>
                 <circle cx="80" cy="80" r="50" fill="none" stroke="#fbbf24" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.8" style={{ transformOrigin: '80px 80px', animation: 'spin 14s linear infinite' }} />
@@ -1235,7 +1257,7 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
             />
           ))}
 
-        {enemyId === LORD && <LordFront p={p} enraged={enraged} />}
+        {own?.front?.(layer)}
 
         <StanceFront stance={stance} />
       </svg>

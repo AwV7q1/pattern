@@ -1,0 +1,251 @@
+/* Keyframes for the per-enemy move sets (moves/*.tsx). Defeat classes go on the
+   avatar's wrapper; inner layers are found by data-fx and need !important to
+   beat their inline idle animation. */
+@media (prefers-reduced-motion: reduce) {
+  [class*='bot-die-'] {
+    animation: none !important;
+    opacity: 0.25;
+    filter: grayscale(1);
+  }
+  [class*='bot-die-'] .bot-avatar [data-fx] {
+    animation: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------- DDoS Lord (ddosLord.tsx) */
+@keyframes gait-levitate {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-9px) rotate(-1.5deg); }
+  65% { transform: translateY(-4px) rotate(1.5deg); }
+}
+@keyframes lord-cape {
+  0%, 100% { d: path("M24 140 Q34 104 60 104 L100 104 Q126 104 136 140 Q122 134 108 141 Q94 134 80 141 Q66 134 52 141 Q38 134 24 140 Z"); }
+  50% { d: path("M20 142 Q34 104 60 104 L100 104 Q126 104 140 138 Q122 145 108 137 Q94 145 80 137 Q66 145 52 137 Q38 145 20 142 Z"); }
+}
+@keyframes lord-crown {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-5px) rotate(2deg); }
+}
+@keyframes lord-leak {
+  0%, 100% { opacity: 0.25; transform: scaleX(0.8); }
+  50% { opacity: 0.7; transform: scaleX(1); }
+}
+@keyframes lord-eye {
+  0%, 62%, 100% { transform: scaleY(0.15); }
+  68% { transform: scaleY(1.2); }
+  72%, 90% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
+@keyframes lord-stare {
+  0%, 100% { transform: scale(1.15); }
+  50% { transform: scale(1.35, 1.25); }
+}
+@keyframes lord-rgb {
+  0%, 84%, 94%, 100% { opacity: 0; transform: none; }
+  86% { opacity: 0.8; transform: translateX(var(--dx)); }
+  89% { opacity: 0.5; transform: translate(calc(var(--dx) * -0.6), -1px); }
+  92% { opacity: 0.8; transform: translateX(var(--dx)) skewX(-8deg); }
+}
+@keyframes lord-burst {
+  0% { transform: scale(0.6); opacity: 1; stroke-width: 6; }
+  100% { transform: scale(3); opacity: 0; stroke-width: 1; }
+}
+/* defeat: the box holds, the body switches off like a CRT, the crown drops */
+@keyframes lord-die {
+  0%, 88% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes lord-crt {
+  0% { transform: none; filter: none; }
+  6% { transform: translateX(-5px) skewX(10deg); filter: hue-rotate(90deg); }
+  12% { transform: translateX(4px) skewX(-8deg); filter: none; }
+  18% { transform: translateX(-3px) scaleY(0.9); filter: hue-rotate(-90deg) brightness(1.5); }
+  24% { transform: none; filter: none; }
+  30% { transform: translateX(6px) skewX(-14deg); filter: brightness(2); }
+  36% { transform: scale(1.06); filter: brightness(1.5); }
+  48% { transform: scale(1.35, 0.03); filter: brightness(4); }
+  58% { transform: scale(0.02, 0.03); filter: brightness(5); }
+  62%, 100% { transform: scale(0); }
+}
+@keyframes lord-dot {
+  0%, 55% { opacity: 0; transform: scale(1); }
+  60% { opacity: 1; transform: scale(1.6); }
+  72%, 100% { opacity: 0; transform: scale(0); }
+}
+@keyframes lord-crown-fall {
+  0% { transform: none; }
+  30% { transform: translateY(-10px) rotate(-6deg); }
+  50% { transform: translateY(-14px) rotate(5deg); animation-timing-function: ease-in; }
+  64% { transform: translateY(98px) rotate(26deg); animation-timing-function: ease-out; }
+  70% { transform: translateY(84px) rotate(20deg); animation-timing-function: ease-in; }
+  76% { transform: translateY(98px) rotate(24deg); animation-timing-function: ease-out; }
+  80% { transform: translateY(93px) rotate(22deg); animation-timing-function: ease-in; }
+  84%, 100% { transform: translateY(98px) rotate(23deg); }
+}
+.bot-die-lord { animation: lord-die 2.6s linear forwards; }
+.bot-die-lord [data-fx='core'],
+.bot-die-lord [data-fx='eye'],
+.bot-die-lord [data-fx='rgb'] { animation: lord-crt 2.6s ease-in forwards !important; transform-origin: 80px 80px !important; }
+.bot-die-lord [data-fx='crt-dot'] { animation: lord-dot 2.6s linear forwards; }
+.bot-die-lord [data-fx='crown'] { animation: lord-crown-fall 2.6s linear forwards !important; }
+/* crack lines and the light under the crown go out with the body */
+.bot-die-lord [data-fx='core'] ~ :not([data-fx='crown']):not([data-fx='crt-dot']):not([data-fx='eye']):not([data-fx='rgb']) {
+  opacity: 0 !important;
+  transition: opacity 250ms 1.1s;
+}
+.bot-die-lord [data-fx='ring'],
+.bot-die-lord [data-fx='orbit'] { opacity: 0 !important; transition: opacity 500ms; }
+
+/* ---------------------------------------------------------------- warmup mini bots (warmup.tsx) */
+/* Script Kiddie: nods to the beat, notes float out of its headphones */
+@keyframes sk-groove {
+  0%, 50%, 100% { transform: translateY(0) rotate(0deg); }
+  12% { transform: translateY(3px) rotate(-3deg); }
+  25% { transform: translateY(-2px) rotate(0deg); }
+  62% { transform: translateY(3px) rotate(3deg); }
+  75% { transform: translateY(-2px) rotate(0deg); }
+}
+@keyframes sk-note {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0deg) scale(0.6); }
+  20% { opacity: 1; }
+  100% { opacity: 0; transform: translate(6px, -30px) rotate(20deg) scale(1.1); }
+}
+/* defeat: "RAGE QUIT", it jumps and flips off to the right */
+@keyframes kiddie-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes kiddie-flip {
+  0%, 30% { transform: none; }
+  40% { transform: translateY(6px) scale(1.1, 0.9); }
+  55% { transform: translate(14px, -30px) rotate(90deg); }
+  100% { transform: translate(70px, 40px) rotate(400deg) scale(0.3); opacity: 0; }
+}
+@keyframes kiddie-quit {
+  0%, 8% { opacity: 0; transform: scale(2.2) rotate(-12deg); }
+  18% { opacity: 1; transform: scale(1) rotate(-6deg); }
+  24% { transform: scale(1.08) rotate(-6deg); }
+  70% { opacity: 1; transform: scale(1) rotate(-6deg); }
+  100% { opacity: 0; transform: translateY(-10px) rotate(-6deg); }
+}
+.bot-die-kiddie { animation: kiddie-die 1.5s linear forwards; }
+.bot-die-kiddie [data-fx='core'] { animation: kiddie-flip 1.5s ease-in forwards !important; transform-origin: 80px 110px !important; }
+.bot-die-kiddie [data-fx='cap'] { animation: kiddie-flip 1.5s ease-in 0.1s forwards; transform-origin: 80px 64px; }
+.bot-die-kiddie [data-fx='quit'] { animation: kiddie-quit 1.5s ease-out forwards; }
+.bot-die-kiddie [data-fx='notes'],
+.bot-die-kiddie [data-fx='core'] ~ * { opacity: 0 !important; transition: opacity 200ms; }
+
+/* Bot Ping: tilts its head to listen, its antenna sends out rings */
+@keyframes pg-tilt {
+  0%, 20%, 100% { transform: rotate(0deg); }
+  30%, 45% { transform: rotate(-7deg) translateY(-1px); }
+  55%, 75% { transform: rotate(6deg) translateY(-1px); }
+  85% { transform: rotate(0deg); }
+}
+@keyframes pg-emit {
+  0% { opacity: 0.8; transform: scale(0.3); }
+  100% { opacity: 0; transform: scale(3.2); }
+}
+/* defeat: the lamp goes red and out, it sinks and tips, "Request timed out." */
+@keyframes ping-die {
+  0%, 80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes ping-sink {
+  0%, 25% { transform: none; filter: none; }
+  45% { transform: translateY(-4px); filter: none; }
+  100% { transform: translateY(26px) rotate(-24deg) scale(0.9); filter: grayscale(1) brightness(0.6); }
+}
+@keyframes ping-lamp {
+  0% { fill: #ef4444; }
+  15%, 25% { fill: #ef4444; opacity: 1; }
+  20%, 30% { opacity: 0.2; }
+  45%, 100% { fill: #3f3f46; opacity: 1; }
+}
+@keyframes ping-lost {
+  0%, 35% { opacity: 0; }
+  50%, 90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+.bot-die-ping { animation: ping-die 1.7s linear forwards; }
+.bot-die-ping [data-fx='core'] { animation: ping-sink 1.7s ease-in forwards !important; transform-origin: 80px 130px !important; }
+.bot-die-ping [data-fx='lamp'] { animation: ping-lamp 1.7s linear forwards !important; }
+.bot-die-ping [data-fx='emit'] { opacity: 0; transition: opacity 300ms; }
+.bot-die-ping [data-fx='lost'] { animation: ping-lost 1.7s linear forwards; }
+
+/* Bot Spam Form: waddles, the mail flag waves */
+@keyframes sp-waddle {
+  0%, 100% { transform: rotate(-5deg) translateY(0); }
+  25% { transform: rotate(0deg) translateY(-4px); }
+  50% { transform: rotate(5deg) translateY(0); }
+  75% { transform: rotate(0deg) translateY(-4px); }
+}
+@keyframes sp-flag {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-14deg); }
+}
+/* defeat: the flag falls, it tips forward and the mail bursts out */
+@keyframes spam-die {
+  0%, 82% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes spam-tip {
+  0%, 20% { transform: none; }
+  32% { transform: rotate(8deg); }
+  60% { transform: rotate(-78deg) translateY(4px); animation-timing-function: ease-out; }
+  68% { transform: rotate(-70deg) translateY(2px); }
+  76%, 100% { transform: rotate(-78deg) translateY(4px); filter: grayscale(0.8); }
+}
+@keyframes spam-flag {
+  0%, 15% { transform: none; }
+  35%, 100% { transform: rotate(100deg); }
+}
+@keyframes spam-mail {
+  0%, 52% { opacity: 0; transform: none; }
+  58% { opacity: 1; transform: translate(calc(var(--dx) * 0.3), calc(var(--dy) * 0.5)) scale(1.1); }
+  80% { opacity: 1; transform: translate(var(--dx), var(--dy)) rotate(calc(var(--i) * 70deg)); }
+  100% { opacity: 0; transform: translate(var(--dx), calc(var(--dy) + 30px)) rotate(calc(var(--i) * 90deg)); }
+}
+.bot-die-spam { animation: spam-die 1.6s linear forwards; }
+.bot-die-spam [data-fx='core'] { animation: spam-tip 1.6s ease-in forwards !important; transform-origin: 66px 138px !important; }
+.bot-die-spam [data-fx='flag'] { animation: spam-flag 1.6s ease-in forwards !important; }
+.bot-die-spam [data-fx='mail'] { animation: spam-mail 1.6s ease-out forwards; }
+
+/* Bot Kiểm Tra Uptime: paces to its heartbeat, the line scrolls across its screen */
+@keyframes ut-pace {
+  0%, 100% { transform: translateY(0) scale(1); }
+  8% { transform: translateY(-3px) scale(1.04); }
+  16% { transform: translateY(0) scale(1); }
+  24% { transform: translateY(-2px) scale(1.02); }
+  50% { transform: translateX(-2px) rotate(-1.5deg); }
+  75% { transform: translateX(2px) rotate(1.5deg); }
+}
+@keyframes ut-ecg {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
+}
+/* defeat: flatline, the lamp dies, its legs give way */
+@keyframes uptime-die {
+  0%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes uptime-flat {
+  0%, 20% { d: path("M56 96 H70 L74 88 L79 104 L83 92 L86 96 H104"); }
+  40%, 100% { d: path("M56 96 H70 L74 96 L79 96 L83 96 L86 96 H104"); stroke: #ef4444; stroke-dasharray: none; }
+}
+@keyframes uptime-slump {
+  0%, 45% { transform: none; filter: none; }
+  55% { transform: scale(1.02, 0.96); }
+  75% { transform: translateY(10px) scale(1.08, 0.78) rotate(4deg); }
+  100% { transform: translateY(14px) scale(1.08, 0.74) rotate(6deg); filter: grayscale(1) brightness(0.7); }
+}
+@keyframes uptime-zero {
+  0%, 40% { opacity: 0; transform: translateY(4px); }
+  50%, 88% { opacity: 1; transform: none; }
+  100% { opacity: 0; }
+}
+.bot-die-uptime { animation: uptime-die 1.9s linear forwards; }
+.bot-die-uptime [data-fx='core'] { animation: uptime-slump 1.9s ease-in forwards !important; transform-origin: 80px 138px !important; }
+.bot-die-uptime [data-fx='ecg'] { animation: uptime-flat 1.9s linear forwards !important; }
+.bot-die-uptime [data-fx='lamp'] { animation: none; fill: #3f3f46; transition: fill 200ms 0.6s; }
+.bot-die-uptime [data-fx='zero'] { animation: uptime-zero 1.9s linear forwards; }
