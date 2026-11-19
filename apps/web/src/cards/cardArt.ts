@@ -1,0 +1,75 @@
+// Card artwork: one icon per card, falling back to the card type's icon so a
+// new card in cards.json renders without touching this file.
+
+import {
+  Archive,
+  Ban,
+  BookOpen,
+  Bug,
+  Cable,
+  ChevronsUp,
+  CircleSlash,
+  Coffee,
+  Copy,
+  FileCog,
+  FileSearch,
+  Fingerprint,
+  Gauge,
+  Hourglass,
+  ListOrdered,
+  ListPlus,
+  Recycle,
+  RefreshCw,
+  Rocket,
+  Server,
+  ShieldCheck,
+  Skull,
+  Swords,
+  Target,
+  Timer,
+  TrendingDown,
+  Unplug,
+  Wrench,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
+import type { CardDef, CardType } from './types';
+
+export const TYPE_ICON: Record<CardType, LucideIcon> = {
+  infra: Server,
+  policy: FileCog,
+  action: Zap,
+  attack: Swords,
+  curse: Skull,
+};
+
+const CARD_ICON: Record<string, LucideIcon> = {
+  scale_api: Server,
+  replica: Copy,
+  cache: Zap,
+  timeout: Timer,
+  backoff: Hourglass,
+  breaker: Unplug,
+  rate_limit: Gauge,
+  burst: Rocket,
+  stale: Archive,
+  hotfix: Wrench,
+  runbook: BookOpen,
+  coffee: Coffee,
+  block_ip: Ban,
+  waf: ShieldCheck,
+  honeypot: Target,
+  index: ListOrdered,
+  vertical: ChevronsUp,
+  bigger_queue: ListPlus,
+  load_shed: TrendingDown,
+  pool: Cable,
+  retry_budget: RefreshCw,
+  captcha: Fingerprint,
+  refactor: Recycle,
+  postmortem: FileSearch,
+  null_route: CircleSlash,
+  tech_debt: Bug,
+};
+
+export const cardIcon = (def: CardDef): LucideIcon => CARD_ICON[def.id] ?? TYPE_ICON[def.type];

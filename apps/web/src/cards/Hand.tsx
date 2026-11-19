@@ -3,13 +3,14 @@ import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { CardDef, CardType } from './types';
 import { reduced } from './fx';
+import { TYPE_ICON, cardIcon } from './cardArt';
 
-export const TYPE_STYLE: Record<CardType, { label: string; ring: string; head: string; chip: string }> = {
-  infra: { label: 'Hạ tầng', ring: 'border-sky-500/60', head: 'from-sky-500/25', chip: 'bg-sky-500/20 text-sky-300' },
-  policy: { label: 'Chính sách', ring: 'border-violet-500/60', head: 'from-violet-500/25', chip: 'bg-violet-500/20 text-violet-300' },
-  action: { label: 'Hành động', ring: 'border-emerald-500/60', head: 'from-emerald-500/25', chip: 'bg-emerald-500/20 text-emerald-300' },
-  attack: { label: 'Phản công', ring: 'border-rose-500/60', head: 'from-rose-500/25', chip: 'bg-rose-500/20 text-rose-300' },
-  curse: { label: 'Lời nguyền', ring: 'border-zinc-600', head: 'from-zinc-500/20', chip: 'bg-zinc-500/20 text-zinc-400' },
+export const TYPE_STYLE: Record<CardType, { label: string; ring: string; frame: string; art: string; icon: string; chip: string }> = {
+  infra: { label: 'Hạ tầng', ring: 'border-sky-400/70', frame: 'from-sky-950 to-zinc-950', art: 'from-sky-400/45 via-sky-800/40 to-slate-950', icon: 'text-sky-100', chip: 'bg-sky-500/20 text-sky-300' },
+  policy: { label: 'Chính sách', ring: 'border-violet-400/70', frame: 'from-violet-950 to-zinc-950', art: 'from-violet-400/45 via-violet-800/40 to-slate-950', icon: 'text-violet-100', chip: 'bg-violet-500/20 text-violet-300' },
+  action: { label: 'Hành động', ring: 'border-emerald-400/70', frame: 'from-emerald-950 to-zinc-950', art: 'from-emerald-400/45 via-emerald-800/40 to-slate-950', icon: 'text-emerald-100', chip: 'bg-emerald-500/20 text-emerald-300' },
+  attack: { label: 'Phản công', ring: 'border-rose-400/70', frame: 'from-rose-950 to-zinc-950', art: 'from-rose-400/45 via-rose-800/40 to-slate-950', icon: 'text-rose-100', chip: 'bg-rose-500/20 text-rose-300' },
+  curse: { label: 'Lời nguyền', ring: 'border-zinc-600', frame: 'from-zinc-900 to-zinc-950', art: 'from-zinc-500/30 via-zinc-800/40 to-zinc-950', icon: 'text-zinc-400', chip: 'bg-zinc-500/20 text-zinc-400' },
 };
 
 const CARD_W = 160;
@@ -64,8 +65,8 @@ interface Drag {
 /**
  * The hand: cards fanned out along an arc at the bottom of the screen, a
  * card rises when hovered and can be dragged into `dropRef` to play it.
- * Keyboard: Enter/Space on a focused card plays it (clicks do not, so a
- * misclick never spends Ops).
+ * Dragging is the only way to play a card: no clicks or keys, so nothing is
+ * played by accident.
  */
 export function Hand({
   cards,
@@ -170,7 +171,7 @@ export function Hand({
     onDragChange?.(!drag?.active ? 'idle' : drag.over ? 'over' : 'dragging', dragDef);
   }, [drag?.active, drag?.over, dragDef, onDragChange]);
 
-  // the hovered card can be played away (keyboard) or leave the hand
+  // the hovered card can be played away or leave the hand
   useEffect(() => {
     if (hover !== null && !cards.some((c) => c.uid === hover)) setHover(null);
   }, [cards, hover]);
@@ -228,13 +229,6 @@ export function Hand({
                   aria-disabled={!c.playable}
                   onFocus={() => setHover(c.uid)}
                   onBlur={() => setHover((h) => (h === c.uid ? null : h))}
-                  onClick={(e) => {
-                    // keyboard activation only (detail 0); mouse plays by dragging
-                    if (e.detail === 0 && c.playable) {
-                      const r = e.currentTarget.getBoundingClientRect();
-                      onPlay(c.uid, { x: r.left + r.width / 2, y: r.top - 120 });
-                    }
-                  }}
                   onPointerDown={(e) => {
                     if (!c.playable || e.button !== 0) return;
                     const r = e.currentTarget.getBoundingClientRect();
@@ -278,14 +272,19 @@ export function Hand({
                   }}
                 >
                   <div
-                    className="size-full"
+                    className="relative size-full"
                     data-theta={theta}
                     ref={(el) => {
                       if (el) flyEls.current.set(c.uid, el);
                       else flyEls.current.delete(c.uid);
                     }}
                   >
-                    <CardFace def={c.def} playable={c.playable} index={i + 1} lifted={lifted} />
+                    <CardFace def={c.def} playable={c.playable} lifted={lifted} />
+                    {lifted && (
+                      <p className="pointer-events-none absolute bottom-full left-1/2 mb-2 w-[220px] -translate-x-1/2 rounded-lg border border-white/10 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[11px] italic leading-snug text-muted-foreground shadow-lg shadow-black/60">
+                        {c.def.lesson}
+                      </p>
+                    )}
                   </div>
                 </button>
               </div>
@@ -315,47 +314,60 @@ export function Hand({
 export function CardFace({
   def,
   playable,
-  index,
   lifted,
   glowing,
+  lesson,
 }: {
   def: CardDef;
   playable: boolean;
-  index?: number;
   lifted?: boolean;
   glowing?: boolean;
+  /** Show the real-world lesson at the bottom (library; the hand shows it in a bubble). */
+  lesson?: boolean;
 }) {
   const style = TYPE_STYLE[def.type];
+  const Icon = cardIcon(def);
+  const TypeIcon = TYPE_ICON[def.type];
   return (
     <div
       className={cn(
-        'relative flex size-full flex-col overflow-hidden rounded-xl border-2 bg-card text-left shadow-xl shadow-black/50 transition-[box-shadow,filter] duration-200',
+        'relative flex size-full select-none flex-col overflow-hidden rounded-2xl border-2 bg-gradient-to-b p-1.5 text-left shadow-xl shadow-black/50 transition-[box-shadow,filter] duration-200',
+        style.frame,
         style.ring,
         !playable && 'brightness-75 saturate-50',
         lifted && 'shadow-2xl shadow-black/70',
         glowing && 'shadow-[0_0_28px_6px_rgba(251,191,36,0.45)]',
       )}
     >
-      <div className={cn('bg-gradient-to-b to-transparent px-3 pb-2 pt-3', style.head)}>
-        <div className="flex items-start gap-2">
-          <span
-            className={cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-full border-2 font-mono text-sm font-bold',
-              def.unplayable ? 'border-zinc-600 text-zinc-500' : 'border-amber-300 bg-amber-400/20 text-amber-200',
-            )}
-          >
-            {def.unplayable ? '–' : def.cost}
-          </span>
-          <span className="text-sm font-semibold leading-tight">{def.name}</span>
-        </div>
-        <span className={cn('mt-1.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', style.chip)}>{style.label}</span>
+      {/* artwork */}
+      <div className={cn('relative h-[72px] shrink-0 overflow-hidden rounded-xl bg-gradient-to-br ring-1 ring-inset ring-white/10', style.art)}>
+        <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,.35)_1px,transparent_1px)] [background-size:10px_10px]" />
+        <Icon aria-hidden className={cn('absolute -bottom-4 -right-3 size-[78px] opacity-15', style.icon)} strokeWidth={1.25} />
+        <Icon aria-hidden className={cn('absolute left-1/2 top-1/2 size-9 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]', style.icon)} strokeWidth={1.75} />
+        {def.exhaust && (
+          <span className="absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-px text-[9px] font-medium text-amber-200">Tiêu hao</span>
+        )}
       </div>
-      <p className="flex-1 px-3 text-xs leading-snug">{def.text}</p>
-      {def.exhaust && <p className="px-3 text-[10px] text-amber-300/80">Tiêu hao</p>}
-      <p className="border-t px-3 py-2 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>
-      {index !== undefined && <span className="absolute right-2 top-2 font-mono text-[10px] text-muted-foreground/60">{index}</span>}
+      {/* cost: a gem that overlaps the artwork's corner */}
+      <span
+        className={cn(
+          'absolute left-0.5 top-0.5 flex size-8 items-center justify-center rounded-full border-2 font-mono text-base font-black shadow-md shadow-black/60',
+          def.unplayable ? 'border-zinc-600 bg-zinc-800 text-zinc-500' : 'border-amber-200 bg-gradient-to-br from-amber-300 to-amber-600 text-amber-950',
+        )}
+        aria-label={def.unplayable ? 'Không thể đánh' : `${def.cost} Ops`}
+      >
+        {def.unplayable ? '–' : def.cost}
+      </span>
+
+      <p className="mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight">{def.name}</p>
+      <span className={cn('mx-auto mt-1 flex items-center gap-1 rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
+        <TypeIcon aria-hidden className="size-2.5" />
+        {style.label}
+      </span>
+      <p className="flex flex-1 items-center justify-center px-1 pt-1 text-center text-[11px] leading-snug text-foreground/90">{def.text}</p>
+      {lesson && <p className="mt-1 border-t border-white/10 px-1 pt-1.5 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>}
       {lifted && !playable && (
-        <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-black/70 py-1 text-center text-xs font-medium text-amber-200">
+        <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-black/75 py-1 text-center text-xs font-medium text-amber-200">
           {def.unplayable ? 'Không thể đánh' : 'Không đủ Ops'}
         </span>
       )}

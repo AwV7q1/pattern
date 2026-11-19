@@ -15,6 +15,7 @@ import {
   Heart,
   HeartPulse,
   Info,
+  LibraryBig,
   ScrollText,
   X,
   LoaderCircle,
@@ -43,6 +44,7 @@ import battleData from './data/battle.json';
 import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn } from './rules';
 import type { BattleState, CardDef, Content, Intent, TurnPlan, TurnReport } from './types';
 import { NetBackdrop } from './NetBackdrop';
+import { CardLibrary } from './CardLibrary';
 import { BotAvatar } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
@@ -119,6 +121,7 @@ export function CardBattle() {
   /** The first-turn guide popover, closed with "Đã hiểu". */
   const [hintOpen, setHintOpen] = useState(true);
   const [showLog, setShowLog] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   /** How many turn reports the player has looked at (the rest light the badge). */
   const [seenReports, setSeenReports] = useState(0);
   const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
@@ -476,26 +479,16 @@ export function CardBattle() {
     }
   };
 
-  // keyboard: 1-9 play a card, E ends the turn
-  const keys = useRef({ play, endTurn });
-  keys.current = { play, endTurn };
+  // no gameplay hotkeys (they were too easy to hit by accident); Escape only closes panels
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (/^[1-9]$/.test(e.key)) {
-        const card = state.hand[Number(e.key) - 1];
-        if (card) keys.current.play(card.uid);
-      } else if (e.key === 'e' || e.key === 'E') {
-        void keys.current.endTurn();
-      } else if (e.key === 'l' || e.key === 'L') {
-        setShowLog((v) => !v);
-      } else if (e.key === 'Escape') {
-        setShowLog(false);
-      }
+      if (e.key !== 'Escape') return;
+      setShowLibrary(false);
+      setShowLog(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [state.hand]);
+  }, []);
 
   // an open log counts as read
   useEffect(() => {
@@ -537,6 +530,9 @@ export function CardBattle() {
             {unseen > 0 && (
               <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-amber-400 font-mono text-[10px] font-bold text-black">{unseen}</span>
             )}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setShowLibrary(true)}>
+            <LibraryBig /> Thư viện
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setShowRules((v) => !v)}>
             <Info /> Luật chơi
@@ -619,7 +615,7 @@ export function CardBattle() {
             <Pile pileRef={deckRef} count={state.drawPile.length} label="Chồng rút" tone="draw" />
             {state.exhausted.length > 0 && <span className="pb-0.5">Tiêu hao {state.exhausted.length}</span>}
           </div>
-          <span className="hidden lg:inline">Kéo bài lên để đánh · phím 1–9 · E kết thúc lượt</span>
+          <span className="hidden lg:inline">Kéo bài lên đấu trường để đánh</span>
         </div>
         <div className="absolute bottom-4 right-6 z-30 flex items-end gap-4">
           <Pile pileRef={discardRef} count={state.discard.length + (discarding ? state.hand.length : 0)} label="Chồng bỏ" tone="discard" />
@@ -649,6 +645,8 @@ export function CardBattle() {
       </div>
 
       {splash && <PlayedSplash key={splash.key} def={splash.def} x={splash.x} y={splash.y} onDone={() => setSplash(null)} />}
+
+      {showLibrary && <CardLibrary cards={CONTENT.cards} deck={CONTENT.battle.startingDeck} onClose={() => setShowLibrary(false)} />}
 
       {over && <EndScreen state={state} seed={seed} onLog={() => setShowLog(true)} onRetry={() => restart(seed)} onNew={() => restart(randomSeed())} />}
     </div>
@@ -1302,7 +1300,7 @@ function LogDrawer({ open, reports, onClose }: { open: boolean; reports: TurnRep
       <div className="flex items-center gap-2 border-b px-4 py-2.5">
         <ScrollText className="size-4 text-muted-foreground" />
         <span className="text-sm font-semibold">Nhật ký</span>
-        <span className="text-xs text-muted-foreground">{reports.length} lượt · phím L</span>
+        <span className="text-xs text-muted-foreground">{reports.length} lượt</span>
         <Button size="icon" variant="ghost" className="ml-auto size-7" aria-label="Đóng nhật ký" onClick={onClose}>
           <X />
         </Button>
