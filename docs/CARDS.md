@@ -117,7 +117,7 @@ Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế
 | Trùm | Tầng | Nội tại |
 |---|---|---|
 | Kẻ Đầu Độc Cache | 1 | Cache hit luôn ×0.7 |
-| Black Friday | 2 | Người dùng thật ×1.6 |
+| Black Friday | 2 | Người dùng thật ×1.3 |
 | Lãnh Chúa DDoS | 3 | WAF mất 10% mỗi lượt |
 
 ### Tạo hình địch
@@ -249,6 +249,7 @@ pnpm balance:cards            # 20 trận mỗi chiến thuật (idle, random, g
 pnpm balance:cards 50 --log   # in diễn biến từng lượt
 pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng và nơi bot chết
 pnpm balance:cards 40 --run --by-enemy  # thêm tỉ lệ thắng, máu mất, số lượt theo từng địch
+pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật (greedy chậm nhất); trận quá 30 lượt tính là thua do giằng co
 ```
 
 Mục tiêu hiện tại cho trận đầu:

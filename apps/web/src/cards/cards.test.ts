@@ -546,7 +546,7 @@ test('bosses: weighted intents, second phase, passives', () => {
   // passives: WAF decays, real users are many more, cache is poisoned (even with Hotfix)
   const waf = endTurn({ ...boss('ddos_lord'), waf: 0.5 });
   assert.equal(waf.waf, 0.4);
-  assert.equal(rules.planTurn(content, boss('black_friday')).legitRps, Math.round(content.battle.legitRps * 1.6));
+  assert.equal(rules.planTurn(content, boss('black_friday')).legitRps, Math.round(content.battle.legitRps * 1.3));
   const poisoned = boss('cache_poisoner');
   const [withCache, uid] = withCard({ ...poisoned, temp: { ...poisoned.temp, hotfix: true } }, 'cache');
   const plan = rules.planTurn(content, rules.playCard(content, withCache, uid));

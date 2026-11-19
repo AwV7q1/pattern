@@ -3,6 +3,7 @@
 // Usage: node --experimental-strip-types apps/web/scripts/cards-balance.mjs [fights=20] [--log] [--run]
 // --run: climb the whole tower (map paths, fights, rewards, rests, events) instead of the single first fight.
 // --by-enemy (with --run): also list win rate and HP lost per enemy.
+// --only=greedy: run just these policies (comma list).
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -22,6 +23,7 @@ const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
 const runMode = process.argv.includes('--run');
 const byEnemy = process.argv.includes('--by-enemy');
+const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',');
 const run = (input) => JSON.parse(wasm.run_headless(JSON.stringify(input)));
 
 // Policies: which card to play next (uid) or null to end the turn.
@@ -63,6 +65,7 @@ function aim(policy, s, rnd) {
   return support.length ? support.reduce((a, b) => (b.hp < a.hp ? b : a)).uid : null;
 }
 
+let stalls = 0;
 function fight(policy, seed, setup) {
   let s = rules.newBattle(content, seed, setup);
   let r = seed;
@@ -83,6 +86,12 @@ function fight(policy, seed, setup) {
           `-> -${t.damage.total} HP (${s.hp}), botnet -${t.enemyDamage} (${s.enemy.hp})`,
       );
     }
+  }
+  // 30 turns with nobody down (the enemy heals as fast as it is hit): a stalemate,
+  // counted as a loss so a run cannot replay the same fight forever
+  if (s.phase === 'player') {
+    stalls++;
+    s = { ...s, phase: 'lost' };
   }
   return s;
 }
@@ -144,13 +153,14 @@ function playRun(policy, seed) {
 
 if (runMode) {
   const kinds = ['battle', 'elite', 'boss'];
-  for (const policy of Object.keys(policies)) {
+  for (const policy of Object.keys(policies).filter((p) => !only || only.includes(p))) {
     let wins = 0;
     let actSum = 0;
     const cleared = Array(content.run.acts).fill(0);
     const stat = Object.fromEntries(kinds.map((k) => [k, { n: 0, won: 0, hp: 0 }]));
     const deaths = {};
     const foes = {};
+    stalls = 0;
     for (let seed = 1; seed <= fights; seed++) {
       const run = playRun(policy, seed);
       if (run.phase === 'won') wins++;
@@ -174,7 +184,7 @@ if (runMode) {
     const acts = cleared.map((c, i) => `T${i + 1} ${pct(c)}`).join(' ');
     const per = kinds.map((k) => `${k} ${stat[k].n ? Math.round((stat[k].won / stat[k].n) * 100) : '-'}%/-${stat[k].n ? (stat[k].hp / stat[k].n).toFixed(0) : '-'}hp`).join('  ');
     const died = Object.entries(deaths).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ');
-    console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}${died ? `   chết: ${died}` : ''}`);
+    console.log(`${policy.padEnd(7)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}${died ? `   chết: ${died}` : ''}${stalls ? `   giằng co 30 lượt: ${stalls}` : ''}`);
     if (byEnemy && policy !== 'idle')
       for (const [k, f] of Object.entries(foes).sort())
         console.log(`    ${k.padEnd(34)} ${String(f.n).padStart(3)} trận  thắng ${String(Math.round((f.won / f.n) * 100)).padStart(3)}%  -${(f.hp / f.n).toFixed(0).padStart(2)}hp  ${(f.turns / f.n).toFixed(1)} lượt`);
@@ -182,7 +192,7 @@ if (runMode) {
   process.exit(0);
 }
 
-for (const policy of Object.keys(policies)) {
+for (const policy of Object.keys(policies).filter((p) => !only || only.includes(p))) {
   let wins = 0;
   let turns = 0;
   let hpLeft = 0;
