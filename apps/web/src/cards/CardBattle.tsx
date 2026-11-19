@@ -290,17 +290,17 @@ export function CardBattle() {
       spreadFrom: 34,
       onHit: () => glow(gate, 'rgba(251,113,133,0.6)', 200),
     });
-    // your real users, from the crowd above the system down into the gateway
+    // your real users: they arrive from the bot's side too, mixed into the same traffic
     const users = usersRef.current;
     void wave(layer, {
       from: users ? anchor(users, layer, 0.5, 0.9) : { x: to.x, y: -12 },
-      to: anchor(gate, layer, 0.5, 0.1),
+      to,
       count: clamp(Math.round(plan.legitRps / 120), 1, 4),
       kind: 'user',
       window: ms,
       flight: 820,
-      spreadFrom: 10,
-      arc: 14,
+      spreadFrom: 12,
+      arc: 40,
       onHit: () => glow(gate, 'rgba(125,211,252,0.55)', 200),
     });
     if (users) pulse(users, 1.06, 260);
@@ -517,7 +517,6 @@ export function CardBattle() {
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
             <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.system))}>
               {sides.system && <TargetTag side="system" over={dragState === 'over'} />}
-              <UserCrowd usersRef={usersRef} active={resolving} />
               <div className="w-full">
                 <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
               </div>
@@ -553,6 +552,7 @@ export function CardBattle() {
                   pop={flash?.enemy ?? 0}
                   barClass="from-rose-600 to-orange-500"
                 />
+              <UserCrowd usersRef={usersRef} active={resolving} />
             </div>
           </div>
 
@@ -652,12 +652,13 @@ function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
 }
 
 /**
- * Your real users: a small crowd above the system, over the gateway they
- * send their requests into. Bobs gently while a turn plays.
+ * Your real users: a small crowd on the bot's side of the arena, since their
+ * requests reach your gateway the same way the bot's do. Bobs gently while
+ * a turn plays.
  */
 function UserCrowd({ usersRef, active }: { usersRef: React.RefObject<HTMLDivElement | null>; active: boolean }) {
   return (
-    <div className="flex w-full justify-end pr-6">
+    <div className="mt-2 flex w-full justify-center">
       <div ref={usersRef} className="flex flex-col items-center gap-1" title="Người dùng thật gửi request vào cổng Nginx">
         <div className={cn('flex -space-x-2.5', active && 'animate-bounce [animation-duration:1.6s]')}>
           {['bg-sky-500/30', 'bg-sky-400/40', 'bg-sky-500/30'].map((bg, i) => (
