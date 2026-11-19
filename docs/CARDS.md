@@ -67,6 +67,45 @@ Ngoài traffic, retry, chaos (`api` hoặc `db`), cache và thẻ nợ, ý đị
 
 Nội tại (`passive`) không chỉ dành cho trùm: một số tinh anh có `bypass` (luôn lách bộ lọc), `regen` (hồi máu mỗi lượt) hoặc `wafDecay`.
 
+### Trận khởi động
+
+3 trận thường đầu tiên của tầng 1 (`run.json` `warmupFights`) bốc từ nhóm `warmup`: địch ít máu, traffic thấp (tối đa ~1500 rps trước hệ số tầng), mỗi con dạy một cơ chế. Phần thưởng vẫn như trận thường (chọn 1 trong 3 lá + vàng), nên người chơi có bài để xây bộ bài trước khi gặp địch thật của tầng. Tên trận hiện "Khởi động: …".
+
+| Địch | Dạy gì |
+|---|---|
+| Script Kiddie | Spike và retry nhẹ |
+| Bot Ping | Traffic tăng dần, một lượt dồn |
+| Bot Spam Form | Lính và chọn mục tiêu (kéo theo Tin Rác) |
+| Bot Kiểm Tra Uptime | Chaos nhẹ (API chậm ×1.5), để thử Hotfix |
+
+### Lính đi kèm
+
+Một số địch đánh cùng lính (`data/minions.json`). Lính có máu riêng, cộng thêm traffic mỗi lượt, và có thể:
+
+| Trường | Hiệu ứng |
+|---|---|
+| `botRps` | Traffic cộng thêm mỗi lượt (theo hệ số traffic của trận), không giảm khi chỉ huy yếu đi |
+| `guard` | Chỉ huy chịu ít sát thương hơn khi lính còn sống (nhiều lính nhân dồn) |
+| `heal` | Hồi máu cho chỉ huy cuối mỗi lượt |
+
+- Địch có thể ra trận cùng lính (`minions` trên địch) hoặc gọi thêm qua ý định (`summon: { minion, n }`). Tối đa 3 lính cùng lúc (`MAX_MINIONS`).
+- Bấm một lính để nhắm: lá Phản công và sát thương từ bot bị lọc đều dồn vào lính đó. Sát thương thừa khi lính chết bị mất, mục tiêu quay về chỉ huy. Bấm chỉ huy để nhắm lại chỉ huy.
+- Hạ chỉ huy là thắng: lính tan rã.
+- Máu lính nhân theo hệ số máu của trận nếu lớn hơn 1 (trùm, tầng cao).
+
+| Lính | Đi cùng | Vai trò |
+|---|---|---|
+| Tin Rác | Bot Spam Form | Traffic |
+| Kiến Thợ | Botnet Bầy Kiến | Traffic |
+| Job Cron | Cron Nửa Đêm (gọi) | Traffic |
+| Điện Thoại Click | Trại Click Farm | Traffic |
+| Bot Đầu Cơ | Black Friday (gọi) | Traffic |
+| Máy Tính Ma | Lãnh Chúa DDoS (gọi) | Traffic |
+| Proxy Che Chắn | Nhóm APT, Lãnh Chúa DDoS | Che 50% sát thương |
+| Đầu Hydra | Botnet Hydra | Traffic, che 30% |
+| Node Nhiễm Độc | Kẻ Đầu Độc Cache (gọi) | Traffic, hồi 4 máu/lượt |
+| Trạm C2 | Nhóm APT | Traffic, hồi 3 máu/lượt |
+
 ### Trùm
 
 Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế mà địch thường không có:
@@ -108,6 +147,12 @@ Mỗi địch có thân và bảng màu riêng (`BotAvatar.tsx`, bảng `LOOKS`,
 | Kẻ Đầu Độc Cache | Áo choàng mặt nạ phòng độc, nhỏ giọt độc, cầm lọ thuốc |
 | Black Friday | Thẻ giá đen "-70%", túi mua sắm và đồng xu bay quanh |
 | Lãnh Chúa DDoS | Đội vương miện, mắt thứ ba, áo choàng, đạo quân bot nhỏ |
+| Script Kiddie | Cậu nhóc đội mũ lưỡi trai ngược, đeo tai nghe, áo hoodie |
+| Bot Ping | Ăng-ten radar phát vòng sóng "PING" |
+| Bot Spam Form | Hộp thư robot dựng cờ, phun phong bì |
+| Bot Kiểm Tra Uptime | Màn hình nhịp tim có chân |
+
+Lính có thân nhỏ riêng (`MinionAvatar`, bảng `MINION_LOOKS`): phong bì, kiến con, bánh răng đồng hồ, điện thoại, túi mua sắm, laptop đầu lâu, khiên mặt nạ, đầu rắn, ổ cache nứt nhỏ giọt, cột phát sóng.
 
 Ý định của lượt quyết định tư thế, vẽ chồng lên thân:
 
@@ -128,6 +173,7 @@ Trùm ở pha 2 có vòng lửa, địch tinh anh có viền vàng, dưới nử
 |---|---|
 | `apps/web/src/cards/data/cards.json` | Định nghĩa lá bài: chi phí, hiệu ứng (`effects`), mô tả, bài học thực tế |
 | `apps/web/src/cards/data/enemies.json` | Địch: máu, chuỗi ý định, mức leo thang mỗi vòng |
+| `apps/web/src/cards/data/minions.json` | Lính đi kèm: máu, traffic, che chắn, hồi máu |
 | `apps/web/src/cards/data/relics.json` | Relic: độ hiếm, lúc kích hoạt, hiệu ứng |
 | `apps/web/src/cards/data/run.json` | Tháp: số tầng, bản đồ, hệ số địch, vàng, cửa hàng, tỉ lệ độ hiếm |
 | `apps/web/src/cards/run.ts` | **Luật của tháp**: bản đồ, phần thưởng, nghỉ, sự cố, cửa hàng, relic, lên tầng |

@@ -1153,7 +1153,8 @@
       }
     ],
     "minions": [
-      "proxy_shield"
+      "proxy_shield",
+      "c2_relay"
     ]
   },
   {
