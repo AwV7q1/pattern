@@ -5,9 +5,11 @@ import type { MoveSet } from './kit';
 import { lordMoves, LORD } from './ddosLord';
 import { WARMUP } from './warmup';
 import { BOSSES } from './bosses';
+import { FLOOR1 } from './floor1';
 
 export const MOVES: Record<string, MoveSet> = {
   ...WARMUP,
+  ...FLOOR1,
   ...BOSSES,
   [LORD]: lordMoves,
 };

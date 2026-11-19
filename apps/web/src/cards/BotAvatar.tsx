@@ -217,24 +217,28 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <path d="M68 50 Q60 34 50 24" fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" />
-        <path d="M92 50 Q100 34 110 24" fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" />
-        <circle cx="50" cy="24" r="4" fill={p.main} filter={`url(#${ids.glow})`} />
-        <circle cx="110" cy="24" r="4" fill={p.main} filter={`url(#${ids.glow})`} />
+        {[-1, 1].map((d) => (
+          <g key={d} data-fx="antenna" style={{ transformOrigin: `${80 + d * 12}px 50px`, animation: `sw-twitch 1.9s ease-in-out ${d > 0 ? 0.4 : 0}s infinite` }}>
+            <path d={`M${80 + d * 12} 50 Q${80 + d * 20} 34 ${80 + d * 30} 24`} fill="none" stroke="#71717a" strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx={80 + d * 30} cy="24" r="4" fill={p.main} filter={`url(#${ids.glow})`} />
+          </g>
+        ))}
         {/* thorax and legs */}
         <ellipse cx="80" cy="122" rx="18" ry="10" fill="#27272a" stroke={p.main} strokeOpacity="0.6" />
-        {[-1, 1].map((d) =>
-          [0, 1, 2].map((k) => (
-            <path
-              key={`${d}${k}`}
-              d={`M${80 + d * 14} ${118 + k * 4} l${d * 14} ${-6 + k * 7} l${d * 6} ${6 + k * 2}`}
-              fill="none"
-              stroke="#52525b"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          )),
-        )}
+        <g data-fx="legs" style={{ transformOrigin: '80px 122px' }}>
+          {[-1, 1].map((d) =>
+            [0, 1, 2].map((k) => (
+              <path
+                key={`${d}${k}`}
+                d={`M${80 + d * 14} ${118 + k * 4} l${d * 14} ${-6 + k * 7} l${d * 6} ${6 + k * 2}`}
+                fill="none"
+                stroke="#52525b"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            )),
+          )}
+        </g>
         <ellipse cx="80" cy="78" rx="36" ry="32" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
         <ellipse cx="80" cy="76" rx="27" ry="15" fill="#09090b" />
         {/* mandibles */}
@@ -267,13 +271,15 @@ const LOOKS: Record<string, Look> = {
       return (
         <>
           {/* lightning */}
-          <g filter={`url(#${ids.glow})`} className="animate-pulse">
+          <g data-fx="lightning" filter={`url(#${ids.glow})`} className="animate-pulse">
             <path d="M66 108 L60 124 L66 124 L60 138" fill="none" stroke="#fde047" strokeWidth="2.5" strokeLinejoin="round" />
             <path d="M96 110 L102 122 L96 122 L101 134" fill="none" stroke="#fde047" strokeWidth="2" strokeLinejoin="round" />
           </g>
-          {[72, 82, 90].map((x, i) => (
-            <line key={x} x1={x} y1={114 + i * 3} x2={x - 3} y2={126 + i * 3} stroke={p.light} strokeWidth="1.5" strokeLinecap="round" opacity="0.6" />
-          ))}
+          <g data-fx="rain">
+            {[72, 82, 90].map((x, i) => (
+              <line key={x} x1={x} y1={114 + i * 3} x2={x - 3} y2={126 + i * 3} stroke={p.light} strokeWidth="1.5" strokeLinecap="round" opacity="0.6" style={{ animation: `rs-rain 0.7s linear ${i * 0.23}s infinite` }} />
+            ))}
+          </g>
           {/* outline: the same puffs, a little bigger, under the fill */}
           {puffs.map(([x, y, r]) => (
             <circle key={`o${x}${y}`} cx={x} cy={y} r={r + 2} fill={p.main} opacity="0.85" />
@@ -300,8 +306,10 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <path d="M52 58 Q26 52 20 26 Q34 44 58 48 Z" fill="#e7e5e4" stroke={p.main} strokeWidth="1.5" strokeOpacity="0.7" />
-        <path d="M108 58 Q134 52 140 26 Q126 44 102 48 Z" fill="#e7e5e4" stroke={p.main} strokeWidth="1.5" strokeOpacity="0.7" />
+        <g data-fx="horns">
+          <path d="M52 58 Q26 52 20 26 Q34 44 58 48 Z" fill="#e7e5e4" stroke={p.main} strokeWidth="1.5" strokeOpacity="0.7" />
+          <path d="M108 58 Q134 52 140 26 Q126 44 102 48 Z" fill="#e7e5e4" stroke={p.main} strokeWidth="1.5" strokeOpacity="0.7" />
+        </g>
         <path d="M46 62 L32 70 L46 78 Z" fill="#3f3f46" stroke={p.main} strokeOpacity="0.5" />
         <path d="M114 62 L128 70 L114 78 Z" fill="#3f3f46" stroke={p.main} strokeOpacity="0.5" />
         <rect x="44" y="46" width="72" height="66" rx="22" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
@@ -309,7 +317,7 @@ const LOOKS: Record<string, Look> = {
         <ellipse cx="80" cy="104" rx="22" ry="13" fill="#27272a" stroke={p.main} strokeOpacity="0.5" />
         <ellipse cx="72" cy="103" rx="3.5" ry="2.5" fill={p.main} filter={`url(#${ids.glow})`} />
         <ellipse cx="88" cy="103" rx="3.5" ry="2.5" fill={p.main} filter={`url(#${ids.glow})`} />
-        <circle cx="80" cy="117" r="6" fill="none" stroke="#fbbf24" strokeWidth="2.5" />
+        <circle data-fx="ring" cx="80" cy="117" r="6" fill="none" stroke="#fbbf24" strokeWidth="2.5" style={{ transformOrigin: '80px 111px' }} />
       </>
     ),
   },
@@ -434,19 +442,21 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <line x1="80" y1="0" x2="80" y2="52" stroke={p.light} strokeOpacity="0.5" strokeDasharray="2 2" />
-        {[-1, 1].map((d) =>
-          [0, 1, 2, 3].map((k) => (
-            <path
-              key={`${d}${k}`}
-              d={`M${80 + d * 18} ${72 + k * 8} Q${80 + d * (44 + k * 2)} ${48 + k * 14} ${80 + d * (56 - k * 2)} ${94 + k * 12}`}
-              fill="none"
-              stroke="#52525b"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          )),
-        )}
+        <line data-fx="thread" x1="80" y1="0" x2="80" y2="52" stroke={p.light} strokeOpacity="0.5" strokeDasharray="2 2" style={{ transformOrigin: '80px 0px' }} />
+        {[-1, 1].map((d) => (
+          <g key={d} data-fx="legs" style={{ transformOrigin: `${80 + d * 18}px 84px`, animation: `cr-legs 1.3s ease-in-out ${d > 0 ? 0.65 : 0}s infinite` }}>
+            {[0, 1, 2, 3].map((k) => (
+              <path
+                key={k}
+                d={`M${80 + d * 18} ${72 + k * 8} Q${80 + d * (44 + k * 2)} ${48 + k * 14} ${80 + d * (56 - k * 2)} ${94 + k * 12}`}
+                fill="none"
+                stroke="#52525b"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              />
+            ))}
+          </g>
+        ))}
         <ellipse cx="80" cy="114" rx="22" ry="18" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="1.5" />
         <path d="M74 106 L86 106 L80 114 L86 122 L74 122 L80 114 Z" fill={p.main} filter={`url(#${ids.glow})`} />
         <circle cx="80" cy="78" r="28" fill={`url(#${ids.head})`} stroke={p.main} strokeWidth="2" strokeOpacity="0.85" />
@@ -468,7 +478,7 @@ const LOOKS: Record<string, Look> = {
     ),
     body: (p, ids) => (
       <>
-        <ellipse cx="80" cy="138" rx="36" ry="6" fill={p.main} opacity="0.4" />
+        <ellipse data-fx="pool" cx="80" cy="138" rx="36" ry="6" fill={p.main} opacity="0.4" style={{ transformOrigin: '80px 138px' }} />
         {[56, 80, 104].map((x, i) => (
           <path key={x} d={`M${x} 114 q-3 6 0 8 q3 -2 0 -8`} fill={p.main} style={{ animation: `bot-drip 1.8s ease-in ${i * 0.5}s infinite` }} />
         ))}
@@ -480,7 +490,7 @@ const LOOKS: Record<string, Look> = {
         {[48, 70, 92].map((x) => (
           <rect key={x} x={x} y="88" width="18" height="10" rx="1.5" fill="#18181b" stroke={p.main} strokeOpacity="0.5" />
         ))}
-        <text x="80" y="55" textAnchor="middle" fontSize="9" fontFamily="monospace" fontWeight="bold" fill={p.light}>
+        <text data-fx="ram" x="80" y="55" textAnchor="middle" fontSize="9" fontFamily="monospace" fontWeight="bold" fill={p.light} style={{ transformOrigin: '80px 52px' }}>
           99% RAM
         </text>
       </>
@@ -502,7 +512,7 @@ const LOOKS: Record<string, Look> = {
       <>
         <path d="M58 114 L48 132 M102 114 L112 132" stroke="#52525b" strokeWidth="5" strokeLinecap="round" />
         <path d="M62 34 Q80 20 98 34" fill="none" stroke="#71717a" strokeWidth="4" strokeLinecap="round" />
-        <g style={{ transformOrigin: '80px 34px', animation: 'bot-rage 0.3s linear infinite' }}>
+        <g data-fx="bells" style={{ transformOrigin: '80px 34px', animation: 'bot-rage 0.3s linear infinite' }}>
           <circle cx="50" cy="42" r="13" fill={p.main} stroke={p.dark} strokeWidth="2" />
           <circle cx="110" cy="42" r="13" fill={p.main} stroke={p.dark} strokeWidth="2" />
         </g>
@@ -513,7 +523,7 @@ const LOOKS: Record<string, Look> = {
         })}
         <rect x="58" y="68" width="44" height="20" rx="10" fill="#09090b" />
         <rect x="62" y="96" width="36" height="14" rx="3" fill="#09090b" />
-        <text x="80" y="107" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="#ef4444" className="animate-pulse">
+        <text data-fx="display" x="80" y="107" textAnchor="middle" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="#ef4444" className="animate-pulse" style={{ transformOrigin: '80px 103px' }}>
           00:00
         </text>
       </>
