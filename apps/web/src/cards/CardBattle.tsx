@@ -290,20 +290,24 @@ export function CardBattle() {
       spreadFrom: 34,
       onHit: () => glow(gate, 'rgba(251,113,133,0.6)', 200),
     });
-    // your real users: they arrive from the bot's side too, mixed into the same traffic
-    const users = usersRef.current;
-    void wave(layer, {
-      from: users ? anchor(users, layer, 0.5, 0.9) : { x: to.x, y: -12 },
-      to,
-      count: clamp(Math.round(plan.legitRps / 120), 1, 4),
-      kind: 'user',
-      window: ms,
-      flight: 820,
-      spreadFrom: 12,
-      arc: 40,
-      onHit: () => glow(gate, 'rgba(125,211,252,0.55)', 200),
-    });
-    if (users) pulse(users, 1.06, 260);
+    // your real users stand around the bot: each request leaves from one of them
+    const users = Array.from(usersRef.current?.querySelectorAll<HTMLElement>('[data-user]') ?? []);
+    const n = clamp(Math.round(plan.legitRps / 120), 1, 4);
+    for (let k = 0; k < n; k++) {
+      const u = users[Math.floor(Math.random() * users.length)];
+      void wave(layer, {
+        from: u ? anchor(u, layer) : { x: from.x, y: -12 },
+        to,
+        count: 1,
+        kind: 'user',
+        window: ms,
+        flight: 820,
+        spreadFrom: 0,
+        arc: 40,
+        onHit: () => glow(gate, 'rgba(125,211,252,0.55)', 200),
+      });
+      if (u) pulse(u, 1.25, 220);
+    }
   };
 
   /**
@@ -541,7 +545,7 @@ export function CardBattle() {
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
             <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
               {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
-              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} attacking={resolving} />
+              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={enemy.intents} intent={intent} botRef={botRef} usersRef={usersRef} attacking={resolving} />
                 <HpBar
                   icon={<Skull />}
                   label={enemy.name}
@@ -552,7 +556,6 @@ export function CardBattle() {
                   pop={flash?.enemy ?? 0}
                   barClass="from-rose-600 to-orange-500"
                 />
-              <UserCrowd usersRef={usersRef} active={resolving} />
             </div>
           </div>
 
@@ -651,26 +654,31 @@ function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
   );
 }
 
+/** Where your real users stand around the bot: an ellipse, mostly to its sides. */
+const USER_SPOTS = [150, 180, 210, 330, 0, 30].map((deg, i) => {
+  const t = (deg * Math.PI) / 180;
+  return { x: Math.round(Math.cos(t) * 122), y: Math.round(Math.sin(t) * 78), delay: i * 0.45 };
+});
+
 /**
- * Your real users: a small crowd on the bot's side of the arena, since their
- * requests reach your gateway the same way the bot's do. Bobs gently while
- * a turn plays.
+ * Your real users, mingling around the bot: their requests reach your
+ * gateway the same way the bot's do, so they share its side of the arena.
+ * Each one drifts gently; the request animation leaves from one of them.
  */
-function UserCrowd({ usersRef, active }: { usersRef: React.RefObject<HTMLDivElement | null>; active: boolean }) {
+function UserRing({ usersRef }: { usersRef: React.RefObject<HTMLDivElement | null> }) {
   return (
-    <div className="mt-2 flex w-full justify-center">
-      <div ref={usersRef} className="flex flex-col items-center gap-1" title="Người dùng thật gửi request vào cổng Nginx">
-        <div className={cn('flex -space-x-2.5', active && 'animate-bounce [animation-duration:1.6s]')}>
-          {['bg-sky-500/30', 'bg-sky-400/40', 'bg-sky-500/30'].map((bg, i) => (
-            <span key={i} className={cn('flex items-center justify-center rounded-full border-2 border-background text-sky-200', bg, i === 1 ? 'z-10 size-10' : 'mt-1.5 size-8')}>
-              <User className={i === 1 ? 'size-5' : 'size-4'} />
-            </span>
-          ))}
-        </div>
-        <span className="flex items-center gap-1 rounded-full bg-sky-950/70 px-2 py-0.5 text-[11px] font-medium text-sky-200">
-          Người dùng thật · {n0(CONTENT.battle.legitRps)} rps
+    <div ref={usersRef} aria-hidden className="pointer-events-none absolute inset-0">
+      <style>{`@keyframes user-drift { 0%, 100% { translate: 0 0; } 50% { translate: 0 -5px; } } @media (prefers-reduced-motion: reduce) { [data-user] { animation: none !important; } }`}</style>
+      {USER_SPOTS.map((p, i) => (
+        <span
+          key={i}
+          data-user
+          className="absolute -ml-3.5 -mt-3.5 flex size-7 items-center justify-center rounded-full border border-sky-400/40 bg-sky-950/80 text-sky-200 shadow-[0_0_10px_rgba(56,189,248,0.25)]"
+          style={{ left: `calc(50% + ${p.x}px)`, top: `calc(50% + ${p.y}px)`, animation: `user-drift 3s ease-in-out ${p.delay}s infinite` }}
+        >
+          <User className="size-4" />
         </span>
-      </div>
+      ))}
     </div>
   );
 }
@@ -936,6 +944,7 @@ function BotSide({
   intents,
   intent,
   botRef,
+  usersRef,
   attacking,
 }: {
   state: BattleState;
@@ -943,6 +952,7 @@ function BotSide({
   intents: Intent[];
   intent: Intent;
   botRef: React.RefObject<HTMLDivElement | null>;
+  usersRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
 }) {
   const Icon = INTENT_ICON[intent.icon];
@@ -1012,7 +1022,10 @@ function BotSide({
         </div>
       </div>
 
-      <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
+      <div className="relative">
+        <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
+        <UserRing usersRef={usersRef} />
+      </div>
     </div>
   );
 }
