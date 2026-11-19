@@ -152,7 +152,7 @@ Mỗi địch có thân và bảng màu riêng (`BotAvatar.tsx`, bảng `LOOKS`,
 | Bot Spam Form | Hộp thư robot dựng cờ, phun phong bì |
 | Bot Kiểm Tra Uptime | Màn hình nhịp tim có chân |
 
-Lính có thân nhỏ riêng (`MinionAvatar`, bảng `MINION_LOOKS`): phong bì, kiến con, bánh răng đồng hồ, điện thoại, túi mua sắm, laptop đầu lâu, khiên mặt nạ, đầu rắn, ổ cache nứt nhỏ giọt, cột phát sóng.
+Lính có thân nhỏ riêng (`MinionAvatar`, thân và chuyển động trong `moves/minions.tsx`): phong bì, kiến con, bánh răng đồng hồ, điện thoại, túi mua sắm, laptop đầu lâu, khiên mặt nạ, đầu rắn, ổ cache nứt nhỏ giọt, cột phát sóng.
 
 Ý định của lượt quyết định tư thế, vẽ chồng lên thân:
 
@@ -223,7 +223,20 @@ Lãnh Chúa DDoS, trùm cuối, có bộ chuyển động công phu nhất (`mov
 
 Khi địch gọi lính, một vòng sóng cam toả ra quanh nó. Màn tổng kết chờ hiệu ứng bị hạ chạy xong mới hiện.
 
-Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, bánh răng tích tắc, điện thoại rung, túi mua sắm lao lên, laptop zombie lê bước, khiên và cột phát sóng phập phồng, đầu rắn uốn lượn, ổ cache lơ lửng. Lính xuất hiện thì rơi xuống, nhảy vào đánh cùng chủ, trúng đòn thì bẹp lại, chết thì loé sáng và rơi, còn khi chủ bị hạ thì quay lưng bỏ chạy.
+Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất hiện thì rơi xuống; khi chủ bị hạ thì quay lưng bỏ chạy.
+
+| Lính | Đứng yên | Ra đòn | Trúng đòn | Bị hạ |
+| --- | --- | --- | --- | --- |
+| Tin Rác | Bay phấp phới | Nắp mở, ba lá thư nhỏ bay ra | Chấm "!" phồng to | Vo viên rồi bị ném đi |
+| Kiến Thợ | Nhảy, râu ngọ nguậy | Quay đầu, chạy tới cắn "phập" | Bị lật nghiêng, chân quẫy | Lật ngửa, chân đạp rồi co lại |
+| Job Cron | Tích tắc | Kim quay vèo tới 00:00, chuông reng toả vòng | Bánh răng kẹt, kim giật | Răng cưa văng ra, kim quay lỏng |
+| Điện Thoại Click | Rung, vòng chạm lan | Nghiêng tới, gõ liên tục, "+1" bay ra | Màn hình nứt loé | Màn tối, ngã úp mặt |
+| Bot Đầu Cơ | Lao tới lui | Há miệng nuốt mấy hộp hàng, phình ra | Rơi một đồng xu | Xẹp như túi rỗng, hàng đổ ra |
+| Máy Tính Ma | Lê bước | Đầu lâu giật nhiễu, mã 0/1 phun ra | Màn hình nhiễu | Màn xanh ":(" rồi gập máy |
+| Proxy Che Chắn | Phập phồng | Húc khiên, bắn sóng xung kích | Gợn sóng, tia lửa bật ra (khiên không lùi) | Nứt đôi, mặt nạ rơi |
+| Đầu Hydra | Uốn lượn, lè lưỡi | Ngửa ra rồi mổ tới, phun nọc | Giật lùi, nheo mắt | Gục xuống đất, nhắm mắt |
+| Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
+| Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
 ## Cấu trúc code
 
@@ -239,6 +252,7 @@ Lính cũng có dáng riêng: phong bì bay phấp phới, kiến con nhảy, b�
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
 | `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
+| `apps/web/src/cards/moves/minions.tsx` | Thân và chuyển động riêng của từng loại lính |
 | `apps/web/src/cards/botMotion.ts` | Chuyển động chung của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp; chuyển sang bộ riêng nếu địch có |
 | `apps/web/src/cards/moves/` | Bộ chuyển động riêng từng địch (`kit.tsx` mô tả cấu trúc `MoveSet`; `warmup`, `floor1`–`floor3`, `bosses`, `ddosLord`), keyframes trong `moves.css` |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |

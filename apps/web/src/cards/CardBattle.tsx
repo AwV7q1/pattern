@@ -70,7 +70,7 @@ import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
-import { botDieMs, MINION_EXIT_MS, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
+import { botDieMs, MINION_EXIT_MS, minionDieClass, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
@@ -1274,7 +1274,7 @@ function MinionRow({
   const alive = minionsOf(state);
   const gone = useLeavers(alive, MINION_EXIT_MS);
   // fallen minions stay a moment for their exit: they die, or flee when their master falls
-  const shown = [...alive.map((m) => ({ m, exit: undefined as string | undefined })), ...gone.map((m) => (state.phase === 'won' ? { m, exit: 'minion-flee' } : { m: { ...m, hp: 0 }, exit: 'minion-die' }))].sort((a, b) => a.m.uid - b.m.uid);
+  const shown = [...alive.map((m) => ({ m, exit: undefined as string | undefined })), ...gone.map((m) => (state.phase === 'won' ? { m, exit: 'minion-flee' } : { m: { ...m, hp: 0 }, exit: minionDieClass(m.id) }))].sort((a, b) => a.m.uid - b.m.uid);
   if (!shown.length) return null;
   return (
     <div className="flex w-full flex-col items-center gap-1">

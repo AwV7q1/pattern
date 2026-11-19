@@ -18,5 +18,6 @@ export const MOVES: Record<string, MoveSet> = {
   [LORD]: lordMoves,
 };
 
+export { MINIONS, minionOf, knock, type MinionMoves } from './minions';
 export const movesOf = (enemyId: string | null | undefined): MoveSet | undefined => (enemyId ? MOVES[enemyId] : undefined);
 export type { MoveSet, LayerProps } from './kit';

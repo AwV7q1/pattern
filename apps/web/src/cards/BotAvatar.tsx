@@ -2,7 +2,7 @@ import { forwardRef, useId, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { Intent } from './types';
 import { lordBody } from './moves/ddosLord';
-import { movesOf, type LayerProps } from './moves';
+import { MINIONS, minionOf, movesOf, type LayerProps } from './moves';
 import { botDieMs, dieClass, gaitStyle, minionGaitStyle, type BotTier } from './botMotion';
 
 /**
@@ -1315,136 +1315,6 @@ export const BotAvatar = forwardRef<HTMLDivElement, BotAvatarProps>(function Bot
 
 // ---------------------------------------------------------------- minions
 
-/** Small bodies for the minions that fight next to an enemy, drawn in a 48×48 box. */
-const MINION_LOOKS: Record<string, { color: string; body: (c: string) => ReactNode }> = {
-  // an envelope with a red badge
-  spam_msg: {
-    color: '#f59e0b',
-    body: (c) => (
-      <>
-        <rect x="9" y="14" width="30" height="21" rx="3" fill="#27272a" stroke={c} strokeWidth="2" />
-        <path d="M10 16 L24 27 L38 16" fill="none" stroke={c} strokeWidth="2" strokeLinejoin="round" />
-        <circle cx="37" cy="14" r="5" fill="#ef4444" />
-        <text x="37" y="16.5" textAnchor="middle" fontSize="7" fontWeight="bold" fill="#fff">!</text>
-      </>
-    ),
-  },
-  // a tiny red ant
-  bot_con: {
-    color: '#f43f5e',
-    body: (c) => (
-      <>
-        {[-1, 1].map((d) => [0, 1, 2].map((k) => <path key={`${d}${k}`} d={`M${24 + d * 4} ${24 + k * 3} l${d * 9} ${-4 + k * 4}`} stroke="#71717a" strokeWidth="1.6" strokeLinecap="round" />))}
-        <ellipse cx="24" cy="32" rx="6" ry="5" fill="#3f3f46" stroke={c} />
-        <ellipse cx="24" cy="21" rx="9" ry="8" fill="#27272a" stroke={c} strokeWidth="1.8" />
-        <path d="M20 14 Q17 8 14 6 M28 14 Q31 8 34 6" fill="none" stroke="#a1a1aa" strokeWidth="1.4" strokeLinecap="round" />
-      </>
-    ),
-  },
-  // a gear with a clock face
-  cron_job: {
-    color: '#a78bfa',
-    body: (c) => (
-      <>
-        {Array.from({ length: 8 }, (_, i) => (
-          <rect key={i} x="22" y="7" width="4" height="7" rx="1" fill={c} transform={`rotate(${i * 45} 24 24)`} />
-        ))}
-        <circle cx="24" cy="24" r="12" fill="#27272a" stroke={c} strokeWidth="2" />
-        <path d="M24 17 V24 L29 27" fill="none" stroke="#e4e4e7" strokeWidth="2" strokeLinecap="round" />
-      </>
-    ),
-  },
-  // a phone with a tapping finger mark
-  phone: {
-    color: '#22d3ee',
-    body: (c) => (
-      <>
-        <rect x="15" y="7" width="18" height="34" rx="3.5" fill="#18181b" stroke={c} strokeWidth="2" />
-        <rect x="18" y="11" width="12" height="22" rx="1" fill={c} opacity="0.25" />
-        <circle cx="24" cy="22" r="3" fill={c} />
-        <circle cx="24" cy="22" r="6" fill="none" stroke={c} strokeOpacity="0.6" />
-        <circle cx="24" cy="37" r="1.5" fill="#71717a" />
-      </>
-    ),
-  },
-  // a shopping bag with a greedy grin
-  scalper: {
-    color: '#fb923c',
-    body: (c) => (
-      <>
-        <path d="M18 16 Q18 8 24 8 Q30 8 30 16" fill="none" stroke={c} strokeWidth="2" />
-        <path d="M11 16 H37 L35 40 H13 Z" fill="#27272a" stroke={c} strokeWidth="2" strokeLinejoin="round" />
-        <circle cx="19" cy="24" r="2" fill={c} />
-        <circle cx="29" cy="24" r="2" fill={c} />
-        <path d="M18 31 Q24 36 30 31" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" />
-      </>
-    ),
-  },
-  // a hijacked laptop with a skull on screen
-  zombie: {
-    color: '#84cc16',
-    body: (c) => (
-      <>
-        <rect x="10" y="11" width="28" height="19" rx="2" fill="#18181b" stroke={c} strokeWidth="2" />
-        <path d="M6 34 H42 L39 38 H9 Z" fill="#3f3f46" stroke={c} strokeWidth="1.5" />
-        <circle cx="24" cy="19" r="5" fill={c} opacity="0.85" />
-        <rect x="21" y="22" width="6" height="4" rx="1" fill={c} opacity="0.85" />
-        <circle cx="22" cy="19" r="1.3" fill="#18181b" />
-        <circle cx="26" cy="19" r="1.3" fill="#18181b" />
-      </>
-    ),
-  },
-  // a shield with a mask
-  proxy_shield: {
-    color: '#60a5fa',
-    body: (c) => (
-      <>
-        <path d="M24 6 L39 12 V23 Q39 35 24 42 Q9 35 9 23 V12 Z" fill="#1e293b" stroke={c} strokeWidth="2.2" strokeLinejoin="round" />
-        <path d="M14 21 Q24 16 34 21 Q33 27 28 27 Q24 24 20 27 Q15 27 14 21 Z" fill={c} opacity="0.9" />
-        <circle cx="19.5" cy="22.5" r="1.6" fill="#0f172a" />
-        <circle cx="28.5" cy="22.5" r="1.6" fill="#0f172a" />
-      </>
-    ),
-  },
-  // one serpent head on a neck
-  hydra_head: {
-    color: '#10b981',
-    body: (c) => (
-      <>
-        <path d="M18 44 Q12 32 20 24 Q26 18 22 12" fill="none" stroke={c} strokeWidth="6" strokeLinecap="round" />
-        <ellipse cx="25" cy="12" rx="10" ry="7" fill="#064e3b" stroke={c} strokeWidth="2" />
-        <circle cx="27" cy="10" r="2" fill="#fde047" />
-        <path d="M34 14 l5 1 l-4 2" fill="none" stroke="#f43f5e" strokeWidth="1.4" strokeLinecap="round" />
-      </>
-    ),
-  },
-  // a cracked cache cylinder dripping green
-  poison_node: {
-    color: '#a3e635',
-    body: (c) => (
-      <>
-        <ellipse cx="24" cy="12" rx="12" ry="4.5" fill="#3f3f46" stroke={c} strokeWidth="1.8" />
-        <path d="M12 12 V32 Q24 39 36 32 V12" fill="#27272a" stroke={c} strokeWidth="1.8" />
-        <path d="M12 22 Q24 28 36 22" fill="none" stroke={c} strokeOpacity="0.5" />
-        <path d="M27 14 L23 21 L27 24 L22 31" fill="none" stroke="#d4d4d8" strokeWidth="1.3" />
-        <path d="M18 34 Q17 40 18.5 42 Q20 40 19 34 Z" fill={c} />
-        <path d="M30 35 Q29 39 30.5 40.5 Q32 39 31 35 Z" fill={c} />
-      </>
-    ),
-  },
-  // a radio mast sending waves
-  c2_relay: {
-    color: '#f472b6',
-    body: (c) => (
-      <>
-        <path d="M24 16 L15 42 M24 16 L33 42 M18 33 H30 M20 26 H28" stroke="#a1a1aa" strokeWidth="1.8" strokeLinecap="round" />
-        <circle cx="24" cy="14" r="3.5" fill={c} />
-        <path d="M16 8 Q12 14 16 20 M32 8 Q36 14 32 20 M12 5 Q6 14 12 23 M36 5 Q42 14 36 23" fill="none" stroke={c} strokeWidth="1.6" strokeLinecap="round" opacity="0.8" />
-      </>
-    ),
-  },
-};
-
 export interface MinionAvatarProps {
   minionId: string;
   hpRatio: number;
@@ -1454,13 +1324,17 @@ export interface MinionAvatarProps {
 }
 
 export const MinionAvatar = forwardRef<HTMLDivElement, MinionAvatarProps>(function MinionAvatar({ minionId, hpRatio, index = 0, className }, ref) {
-  const look = MINION_LOOKS[minionId] ?? MINION_LOOKS.bot_con;
+  // its look and moves live in moves/minions.tsx; an unknown id borrows the ant's body
+  const look = minionOf(minionId) ?? MINIONS.bot_con;
   return (
     <div ref={ref} className={cn('relative size-12', className)}>
-      <svg viewBox="0 0 48 48" className="bot-avatar size-full overflow-visible" aria-hidden>
+      <svg viewBox="0 0 48 48" className="bot-avatar minion-avatar size-full overflow-visible" data-minion={minionId} aria-hidden>
         <circle cx="24" cy="24" r="23" fill={look.color} opacity="0.12" />
-        <g style={minionGaitStyle(minionId, index)}>{look.body(look.color)}</g>
+        <g data-gait style={minionGaitStyle(minionId, index)}>
+          <g data-fx="m">{look.body(look.color)}</g>
+        </g>
         {hpRatio < 0.5 && <path d="M33 10 L29 17 L32 19 L27 26" fill="none" stroke="#d4d4d8" strokeWidth="1.2" strokeLinecap="round" opacity="0.85" />}
+        {look.fx?.(look.color)}
       </svg>
     </div>
   );

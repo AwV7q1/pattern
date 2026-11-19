@@ -4,7 +4,7 @@
 // boss). DOM-only, like fx.ts: these illustrate, the rules decide.
 // An enemy with its own move set (moves/) overrides any of these pieces.
 import { reduced } from './fx';
-import { movesOf } from './moves';
+import { knock, minionOf, movesOf } from './moves';
 
 export type BotTier = 'mini' | 'normal' | 'elite' | 'boss';
 
@@ -253,56 +253,37 @@ export async function botSummon(el: Element | null, tier: BotTier): Promise<void
 
 // ---------------------------------------------------------------- minions
 
-export type MinionStrike = 'hop' | 'dash' | 'buzz' | 'spin' | 'pulse';
-
-const MINION_MOTIONS: Record<string, { gait: string; s: number; strike: MinionStrike }> = {
-  spam_msg: { gait: 'm-flutter', s: 1.6, strike: 'dash' },
-  bot_con: { gait: 'gait-hop', s: 0.9, strike: 'hop' },
-  cron_job: { gait: 'gait-tick', s: 1, strike: 'spin' },
-  phone: { gait: 'm-buzz', s: 1.8, strike: 'buzz' },
-  scalper: { gait: 'm-dash', s: 2.2, strike: 'dash' },
-  zombie: { gait: 'm-shamble', s: 2.6, strike: 'hop' },
-  proxy_shield: { gait: 'm-pulse', s: 2.4, strike: 'pulse' },
-  hydra_head: { gait: 'gait-slither', s: 1.6, strike: 'dash' },
-  poison_node: { gait: 'gait-hover', s: 2.8, strike: 'pulse' },
-  c2_relay: { gait: 'm-pulse', s: 1.8, strike: 'buzz' },
-};
-
-const minionMotion = (id: string) => MINION_MOTIONS[id] ?? { gait: 'gait-hover', s: 2.4, strike: 'hop' as const };
+/** A minion's own moves (moves/minions.tsx), found from its avatar's wrapper. */
+const minionOfEl = (el: Element | null) => minionOf(el?.querySelector('[data-minion]')?.getAttribute('data-minion'));
 
 /** The CSS for a minion's idle layer (in its 48×48 box), out of step with the others. */
 export function minionGaitStyle(minionId: string, index: number) {
-  const m = minionMotion(minionId);
-  return { transformOrigin: '24px 40px', animation: `${m.gait} ${m.s}s ease-in-out ${(index * 0.37).toFixed(2)}s infinite` };
+  const g = minionOf(minionId)?.gait ?? { kf: 'gait-hover', s: 2.4 };
+  return { transformOrigin: '24px 40px', animation: `${g.kf} ${g.s}s ease-in-out ${(index * 0.37).toFixed(2)}s infinite` };
 }
 
-/** A minion joining the attack. */
+/** A minion joining the attack: its own move, or a hop toward you. */
 export function minionStrike(el: Element | null, minionId: string) {
+  const own = minionOf(minionId)?.strike;
+  if (el && own) return own(el);
   const body = bodyOf(el);
   if (!body || reduced()) return;
-  const frames: Record<MinionStrike, Keyframe[]> = {
-    hop: [{ transform: 'none' }, { transform: 'translate(-8px, -10px)', offset: 0.4 }, { transform: 'translate(-12px, 0) scale(1.1, 0.9)', offset: 0.65 }, { transform: 'none' }],
-    dash: [{ transform: 'none' }, { transform: 'translateX(5px)', offset: 0.25 }, { transform: 'translateX(-16px) skewX(-12deg)', offset: 0.55 }, { transform: 'none' }],
-    buzz: [0, -3, 3, -3, 3, -2, 2, 0].map((px) => ({ transform: `translateX(${px}px) rotate(${px * 2}deg)` })),
-    spin: [{ transform: 'rotate(0deg)' }, { transform: 'rotate(-360deg) scale(1.15)' }],
-    pulse: [{ transform: 'scale(1)', filter: 'brightness(1)' }, { transform: 'scale(1.22)', filter: 'brightness(1.8)', offset: 0.4 }, { transform: 'scale(1)', filter: 'brightness(1)' }],
-  };
-  body.animate(frames[minionMotion(minionId).strike], { duration: 420, easing: 'ease-out' });
-}
-
-/** A minion taking a hit: squash and flash. */
-export function minionHit(el: Element | null) {
-  if (!el || reduced()) return;
-  el.animate(
-    [
-      { transform: 'none', filter: 'brightness(1)' },
-      { transform: 'translateX(5px) scale(1.18, 0.82)', filter: 'brightness(2)', offset: 0.3 },
-      { transform: 'translateX(-2px) scale(0.95, 1.05)', offset: 0.6 },
-      { transform: 'none', filter: 'brightness(1)' },
-    ],
-    { duration: 360, easing: 'ease-out' },
+  body.animate(
+    [{ transform: 'none' }, { transform: 'translate(-8px, -10px)', offset: 0.4 }, { transform: 'translate(-12px, 0) scale(1.1, 0.9)', offset: 0.65 }, { transform: 'none' }],
+    { duration: 420, easing: 'ease-out' },
   );
 }
+
+/** A minion taking a hit: its own reaction, or squash and flash. */
+export function minionHit(el: Element | null) {
+  if (!el || reduced()) return;
+  const own = minionOfEl(el)?.hit;
+  if (own) return own(el);
+  knock(el);
+}
+
+/** The exit class for a fallen minion: its own defeat (moves.css) under `minion-out`, or the shared one. */
+export const minionDieClass = (minionId: string) => (minionOf(minionId) ? 'minion-out' : 'minion-die');
 
 /** How long a fallen minion stays on screen for its exit (keyframes `minion-die` / `minion-flee`). */
 export const MINION_EXIT_MS = 1500;
