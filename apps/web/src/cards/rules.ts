@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, TurnPlan, TurnReport } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -271,13 +271,10 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   };
 }
 
-/** Apply the engine's verdict for the turn, run the attacker's side effects and start the next turn. */
-export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary): BattleState {
+/** Damage both sides take for a turn, from the engine's summary. Shared by the preview and `resolveTurn`. */
+export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, summary: Summary): TurnScore {
   const b = content.battle;
-  const state = clone(prev);
   const sec = b.turnMs / 1000;
-  const notes: string[] = [];
-
   const legitFailed = Math.round(summary.errorRate * plan.legitRps * sec);
   const failed = Math.round(legitFailed / b.failedPerDamage);
   const latency = summary.p99Ms > b.sloP99Ms ? b.latencyDamage : 0;
@@ -288,6 +285,19 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   const total = Math.min(b.maxDamagePerTurn, raw - absorbed);
   const capped = raw - absorbed - total;
   const enemyDamage = Math.floor((plan.botBlockedRps * sec) / b.blockedPerDamage);
+  return { legitFailed, damage: { failed, latency, budget, absorbed, capped, total }, enemyDamage };
+}
+
+/** Apply the engine's verdict for the turn, run the attacker's side effects and start the next turn. */
+export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary): BattleState {
+  const b = content.battle;
+  const state = clone(prev);
+  const sec = b.turnMs / 1000;
+  const notes: string[] = [];
+
+  const score = scoreTurn(content, state, plan, summary);
+  const { legitFailed, enemyDamage } = score;
+  const { latency, budget, absorbed, capped, total } = score.damage;
 
   if (legitFailed > 0) notes.push(`${legitFailed.toLocaleString('vi-VN')} request của người dùng thật bị lỗi`);
   if (latency) notes.push(`p99 ${Math.round(summary.p99Ms)}ms vượt SLO ${b.sloP99Ms}ms`);
@@ -322,7 +332,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     p99Ms: summary.p99Ms,
     costPerHour: summary.costPerHour,
     legitFailed,
-    damage: { failed, latency, budget, absorbed, capped, total },
+    damage: score.damage,
     enemyDamage,
     notes,
   };

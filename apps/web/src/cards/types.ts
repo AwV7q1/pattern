@@ -258,6 +258,9 @@ export interface TurnReport {
   notes: string[];
 }
 
+/** Damage of one turn, as `scoreTurn` computes it. */
+export type TurnScore = Pick<TurnReport, 'legitFailed' | 'damage' | 'enemyDamage'>;
+
 export type Phase = 'player' | 'resolving' | 'won' | 'lost';
 
 export interface BattleState {

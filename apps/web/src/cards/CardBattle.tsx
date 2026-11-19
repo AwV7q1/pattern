@@ -36,8 +36,8 @@ import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import type { Design, WindowMetrics } from '@/types';
-import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn } from './rules';
-import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport } from './types';
+import { apiOut, botCutNow, botRpsNow, canPlay, cardDef, currentIntent, newBattle, nodeOf, planTurn, playCard, resolveTurn, scoreTurn } from './rules';
+import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
 import { CardLibrary } from './CardLibrary';
@@ -145,6 +145,26 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const [live, setLive] = useState<Live | null>(null);
   /** Set by the skip button: the turn's playback jumps to the result. */
   const skip = useRef(false);
+  /** Engine dry-run of the turn as it stands: what ending the turn now would do. */
+  const [preview, setPreview] = useState<{ of: BattleState; score: TurnScore } | null>(null);
+  useEffect(() => {
+    if (state.phase !== 'player' || resolving) return;
+    let stale = false;
+    const t = setTimeout(() => {
+      const plan = planTurn(CONTENT, state);
+      compute
+        .run(plan.input)
+        .then((summary) => {
+          if (!stale) setPreview({ of: state, score: scoreTurn(CONTENT, state, plan, summary) });
+        })
+        .catch(() => undefined);
+    }, 120);
+    return () => {
+      stale = true;
+      clearTimeout(t);
+    };
+  }, [state, resolving]);
+  const forecast = preview && preview.of === state && !resolving ? preview.score : null;
 
   const arenaRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
@@ -612,7 +632,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         <div className="absolute bottom-4 right-6 z-30 flex items-end gap-4">
           <Pile pileRef={discardRef} count={state.discard.length + (discarding ? state.hand.length : 0)} label="Chồng bỏ" tone="discard" />
           {/* fixed width: the pile must not move when the button's label changes */}
-          <div className="flex w-[168px] justify-end pb-2">
+          <div className="relative flex w-[168px] justify-end pb-2">
+            {state.phase === 'player' && !resolving && <Forecast score={forecast} />}
             {resolving ? (
               // while the turn plays, the same spot skips to the result
               <Button size="lg" variant="secondary" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" onClick={() => (skip.current = true)}>
@@ -1402,6 +1423,26 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
       <button className="mt-1 text-xs text-muted-foreground underline" onClick={onClose}>
         Đóng
       </button>
+    </div>
+  );
+}
+
+/** Engine forecast for ending the turn now, above the end-turn button. */
+function Forecast({ score }: { score: TurnScore | null }) {
+  return (
+    <div
+      className={`absolute bottom-full right-0 mb-1 whitespace-nowrap rounded-md border border-border/60 bg-background/80 px-2 py-1 text-right text-[11px] leading-tight backdrop-blur transition-opacity ${score ? '' : 'opacity-50'}`}
+      title="Engine chạy thử lượt này với bài đã đánh. Kết quả thật giống hệt nếu bạn kết thúc lượt ngay."
+    >
+      <div className="text-muted-foreground">Dự kiến nếu kết thúc lượt</div>
+      {score ? (
+        <div className="font-mono">
+          <span className={score.damage.total > 0 ? 'text-rose-300' : 'text-emerald-300'}>−{score.damage.total} Error Budget</span>
+          {score.enemyDamage > 0 && <span className="text-amber-300"> · botnet −{score.enemyDamage}</span>}
+        </div>
+      ) : (
+        <div className="font-mono text-muted-foreground">đang tính…</div>
+      )}
     </div>
   );
 }

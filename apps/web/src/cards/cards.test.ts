@@ -387,3 +387,15 @@ test('run: same seed, same run; saved runs are validated', () => {
   assert.ok(!runs.isValidRun(content, { ...a, act: content.run.acts + 1 }));
   assert.ok(!runs.isValidRun(content, { ...a, phase: 'rest' }), 'not standing on a rest stop');
 });
+
+test('scoreTurn: the forecast is exactly what resolveTurn applies', () => {
+  const s = rules.newBattle(content, 7);
+  const sum = summary({ errorRate: 0.2, p99Ms: 900, costPerHour: 2 });
+  const plan = rules.planTurn(content, s);
+  const score = rules.scoreTurn(content, s, plan, sum);
+  const next = rules.resolveTurn(content, s, plan, sum);
+  const r = next.reports.at(-1)!;
+  assert.deepEqual(score.damage, r.damage);
+  assert.equal(score.enemyDamage, r.enemyDamage);
+  assert.equal(next.hp, s.hp - score.damage.total);
+});
