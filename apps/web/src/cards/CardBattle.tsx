@@ -127,8 +127,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<Flash | null>(null);
   const [showRules, setShowRules] = useState(false);
-  /** The first-turn guide popover, closed with "Đã hiểu". */
-  const [hintOpen, setHintOpen] = useState(true);
   const [showLog, setShowLog] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   /** How many turn reports the player has looked at (the rest light the badge). */
@@ -616,7 +614,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           )}
         </div>
 
-        {hintOpen && state.reports.length === 0 && !live && dragState === 'idle' && <FirstTurnHint onClose={() => setHintOpen(false)} />}
 
         <div ref={fxRef} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden" />
 
@@ -1250,27 +1247,6 @@ function Pipe({ policy, pipeRef }: { policy?: boolean; pipeRef?: (el: HTMLDivEle
 // ---------------------------------------------------------------- reports
 
 /** A guide over the arena before the first turn; "Đã hiểu" closes it. */
-function FirstTurnHint({ onClose }: { onClose: () => void }) {
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-[160px] top-0 z-30 flex items-center justify-center p-4">
-      <div role="dialog" aria-label="Hướng dẫn lượt đầu tiên" className="pointer-events-auto w-full max-w-sm rounded-xl border bg-card/95 p-4 text-sm text-muted-foreground shadow-2xl shadow-black/60 backdrop-blur animate-in fade-in zoom-in-95">
-        <p className="mb-2 flex items-center gap-2 font-semibold text-foreground">
-          <Info className="size-4 text-sky-400" /> Lượt đầu tiên
-        </p>
-        <p>
-          Đánh bài để chuẩn bị (mỗi lá tốn Ops), rồi bấm <b>Kết thúc lượt</b>. Engine sẽ chạy 10 giây traffic thật lên hệ thống: người dùng thật lỗi thì bạn
-          mất máu, bot bị lọc thì botnet mất máu. Nhìn <b>Ý định</b> bên phải để biết lượt này địch định làm gì.
-        </p>
-        <div className="mt-3 flex justify-end">
-          <Button size="sm" onClick={onClose} autoFocus>
-            Đã hiểu
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ReportCard({ report: r, onCollapse }: { report: TurnReport; onCollapse?: () => void }) {
   return (
     <div className="rounded-lg border bg-background/60 p-3 text-sm">
