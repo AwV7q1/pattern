@@ -184,7 +184,6 @@ export function InterviewRoute() {
         mode="game"
         level={level}
         levelKey={level.id}
-        onLevelChange={() => {}}
         onExit={() => setPhase('brief')}
         exitLabel="Đề bài"
         title={

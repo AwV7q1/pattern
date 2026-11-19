@@ -122,7 +122,6 @@ export type WorkspaceProps =
       /** Opened from a lesson of the learning path. */
       lessonId?: string | null;
       onBackToPath?: () => void;
-      onLevelChange: (key: string) => void;
       /** Leave the game (back to its home page): shown at the start of the toolbar. */
       onExit?: () => void;
       exitLabel?: string;
@@ -1094,24 +1093,8 @@ export function Workspace(props: WorkspaceProps) {
         {props.mode === 'game' && props.title ? (
           props.title
         ) : mode === 'game' ? (
-          <Select
-            value={levelKey}
-            onValueChange={(v) => {
-              setPractice(null);
-              if (props.mode === 'game') props.onLevelChange(v);
-            }}
-          >
-            <SelectTrigger className="w-64">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(practice || !(levelKey in LEVELS) ? { ...LEVELS, [levelKey]: level } : LEVELS).map(([key, l]) => (
-                <SelectItem key={key} value={key}>
-                  {l.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          // the level is picked on the Game home page: here it can only be left
+          <span className="min-w-0 truncate text-sm font-medium">{level.title}</span>
         ) : project && readOnly ? (
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <Eye className="size-4 text-muted-foreground" />

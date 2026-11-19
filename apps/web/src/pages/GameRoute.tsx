@@ -251,7 +251,6 @@ export function GameRoute() {
       levelKey={levelKey}
       lessonId={lesson}
       onBackToPath={() => navigate('/learn')}
-      onLevelChange={(k) => navigate(`/play/${k}`)}
       onExit={() => navigate(lesson ? '/learn' : '/play')}
       exitLabel={lesson ? 'Lộ trình' : 'Game'}
     />
