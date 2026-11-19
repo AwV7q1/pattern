@@ -75,7 +75,7 @@ import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
 
-const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
+export const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
   probe: Radar,
   spike: Zap,
   retry: Repeat,

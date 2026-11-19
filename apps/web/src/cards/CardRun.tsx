@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, BookOpen, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
@@ -130,6 +130,11 @@ function RunScreen({ run, best, onNew, children }: { run: RunState; best: Best; 
           </span>
           <Button size="sm" variant="ghost" onClick={() => setShowLibrary(true)}>
             <LibraryBig /> Bộ bài ({run.deck.length})
+          </Button>
+          <Button size="sm" variant="ghost" asChild>
+            <Link to="/cards/wiki">
+              <BookOpen /> Wiki
+            </Link>
           </Button>
           {!over && (
             <Button

@@ -255,6 +255,7 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | `apps/web/src/cards/moves/minions.tsx` | Thân và chuyển động riêng của từng loại lính |
 | `apps/web/src/cards/botMotion.ts` | Chuyển động chung của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp; chuyển sang bộ riêng nếu địch có |
 | `apps/web/src/cards/moves/` | Bộ chuyển động riêng từng địch (`kit.tsx` mô tả cấu trúc `MoveSet`; `warmup`, `floor1`–`floor3`, `bosses`, `ddosLord`), keyframes trong `moves.css` |
+| `apps/web/src/cards/CardWiki.tsx` | Trang wiki `/cards/wiki`: chỉ số bot và lính theo tầng, xem thử animation, thẻ bài (cả bản nâng cấp), bảo vật |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
 Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.
