@@ -61,6 +61,32 @@ Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế
 | Black Friday | 2 | Người dùng thật ×1.6 |
 | Lãnh Chúa DDoS | 3 | WAF mất 10% mỗi lượt |
 
+### Tạo hình địch
+
+Mỗi địch có thân và bảng màu riêng (`BotAvatar.tsx`, bảng `LOOKS`, khoá theo id địch):
+
+| Địch | Tạo hình |
+|---|---|
+| Botnet Bầy Kiến | Kiến máy đỏ, râu và hàm, bầy kiến nhỏ bay quanh |
+| Bão Retry | Đám mây xanh có sét, mũi tên retry bay quanh |
+| Đàn Thundering Herd | Đầu bò cam có sừng và khoen mũi, đàn bò nhỏ chạy vòng |
+| Kẻ Đầu Độc Cache | Áo choàng mặt nạ phòng độc, nhỏ giọt độc, cầm lọ thuốc |
+| Black Friday | Thẻ giá đen "-70%", túi mua sắm và đồng xu bay quanh |
+| Lãnh Chúa DDoS | Đội vương miện, mắt thứ ba, áo choàng, đạo quân bot nhỏ |
+
+Ý định của lượt quyết định tư thế, vẽ chồng lên thân:
+
+| Ý định | Tư thế |
+|---|---|
+| Dò quét (`probe`) | Mắt tâm ngắm, tia quét |
+| Dồn tải (`spike`) | Gai bung ra, mắt giận, rung |
+| Retry (`retry`) | Mắt xoáy, mũi tên quay, bóng mờ nhân bản |
+| Làm chậm (`slow`) | Mắt lim dim, đồng hồ cát, đung đưa chậm, bạc màu |
+| Gieo nợ (`debt`) | Mắt X, xích, lá bài bug bay quanh, giật hình |
+| Hồi phục (`heal`) | Mắt cười, khiên, dấu cộng bay lên |
+
+Trùm ở pha 2 có vòng lửa, địch tinh anh có viền vàng, dưới nửa máu thì nứt. Địch mới chưa có trong `LOOKS` dùng thân kiến.
+
 ## Cấu trúc code
 
 | File | Vai trò |
@@ -73,6 +99,7 @@ Mỗi tầng có một trùm riêng (`run.json` `bosses`). Trùm có 3 cơ chế
 | `apps/web/src/cards/data/battle.json` | Thiết lập trận: máu, Ops, traffic, SLO, ngân sách, hệ số sát thương, bộ bài đầu, design ban đầu |
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
+| `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
 Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.

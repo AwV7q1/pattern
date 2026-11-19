@@ -73,6 +73,7 @@ export function CardRun() {
         title={battleTitle(CONTENT, run)}
         progress={<Progress run={run} />}
         deck={run.deck}
+        rank={node.kind === 'elite' ? 'elite' : boss ? 'boss' : 'normal'}
         continueLabel={boss ? (run.act >= CONTENT.run.acts ? 'Hoàn thành tháp' : 'Lên tầng') : 'Nhận thưởng'}
         onFinish={(battle) => setRun((r) => finishBattle(CONTENT, r, battle))}
         onAbandon={startNew}

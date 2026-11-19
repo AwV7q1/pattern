@@ -42,7 +42,7 @@ import { CONTENT } from './content';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
-import { BotAvatar } from './BotAvatar';
+import { BotAvatar, type BotRank } from './BotAvatar';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
@@ -116,12 +116,14 @@ export interface CardBattleProps {
   deck: string[];
   /** Label of the end screen's main button. */
   continueLabel: string;
+  /** Elite and boss fights dress the enemy up. */
+  rank?: BotRank;
   /** The fight is over and the player moved on. Mount a new CardBattle (new `key`) for the next fight. */
   onFinish: (state: BattleState) => void;
   onAbandon: () => void;
 }
 
-export function CardBattle({ seed, setup, title, progress, deck, continueLabel, onFinish, onAbandon }: CardBattleProps) {
+export function CardBattle({ seed, setup, title, progress, deck, continueLabel, rank, onFinish, onAbandon }: CardBattleProps) {
   const [state, setState] = useState(() => newBattle(CONTENT, seed, setup));
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -593,7 +595,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
             <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
               {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
-              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={intentsNow(CONTENT, state)} intent={intent} botRef={botRef} usersRef={usersRef} attacking={resolving} />
+              <BotSide state={state} enemyHp={live?.enemyHp ?? state.enemy.hp} intents={intentsNow(CONTENT, state)} intent={intent} rank={rank} botRef={botRef} usersRef={usersRef} attacking={resolving} />
                 <HpBar
                   icon={<Skull />}
                   label={enemy.name}
@@ -1019,6 +1021,7 @@ function BotSide({
   enemyHp,
   intents,
   intent,
+  rank,
   botRef,
   usersRef,
   attacking,
@@ -1027,6 +1030,7 @@ function BotSide({
   enemyHp: number;
   intents: Intent[];
   intent: Intent;
+  rank?: BotRank;
   botRef: React.RefObject<HTMLDivElement | null>;
   usersRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
@@ -1100,7 +1104,14 @@ function BotSide({
       </div>
 
       <div className="relative">
-        <BotAvatar ref={botRef} hpRatio={enemyHp / state.enemy.maxHp} className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
+        <BotAvatar
+          ref={botRef}
+          enemyId={state.enemy.id}
+          stance={intent.icon}
+          enraged={state.enemy.phase === 2}
+          rank={rank}
+          hpRatio={enemyHp / state.enemy.maxHp}
+          className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
         <UserRing usersRef={usersRef} />
       </div>
     </div>
