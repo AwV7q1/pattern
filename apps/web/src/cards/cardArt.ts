@@ -2,6 +2,10 @@
 // new card in cards.json renders without touching this file.
 
 import {
+  ChartLine,
+  Route,
+  Siren,
+  Telescope,
   Cloud,
   ShieldHalf,
   Split,
@@ -93,6 +97,10 @@ const CARD_ICON: Record<string, LucideIcon> = {
   edge_shield: ShieldHalf,
   shard: Split,
   mesh: Waypoints,
+  metrics: ChartLine,
+  tracing: Route,
+  alerting: Siren,
+  o11y: Telescope,
   tech_debt: Bug,
 };
 

@@ -1028,6 +1028,98 @@
     }
   },
   {
+    "id": "metrics",
+    "name": "Metrics",
+    "type": "policy",
+    "cost": 1,
+    "fits": ["observe"],
+    "rarity": "common",
+    "text": "Dashboard theo dõi botnet: thấy trước ý định lượt sau (botnet ngẫu nhiên: tỉ lệ từng chiêu). Đánh lại: thấy 2 lượt.",
+    "lesson": "Metrics (Prometheus, Grafana) cho thấy xu hướng trước khi thành sự cố: biết trước là có thời gian chuẩn bị.",
+    "effects": [
+      {
+        "op": "foresee",
+        "n": 1,
+        "max": 2
+      }
+    ],
+    "upgrade": {
+      "cost": 0,
+      "text": "Dashboard theo dõi botnet: thấy trước ý định lượt sau (botnet ngẫu nhiên: tỉ lệ từng chiêu). Đánh lại: thấy 2 lượt."
+    }
+  },
+  {
+    "id": "tracing",
+    "name": "Distributed Tracing",
+    "type": "policy",
+    "cost": 1,
+    "fits": ["observe"],
+    "rarity": "uncommon",
+    "text": "Ô Dự kiến đánh dấu node sẽ thành nút cổ chai nếu kết thúc lượt ngay. Rút 1 lá.",
+    "lesson": "Tracing (OpenTelemetry, Jaeger) theo một request qua mọi service, chỉ ra chặng nào chiếm thời gian.",
+    "effects": [
+      {
+        "op": "trace"
+      },
+      {
+        "op": "draw",
+        "n": 1
+      }
+    ],
+    "upgrade": {
+      "cost": 0,
+      "text": "Ô Dự kiến đánh dấu node sẽ thành nút cổ chai nếu kết thúc lượt ngay. Rút 1 lá."
+    }
+  },
+  {
+    "id": "alerting",
+    "name": "Alerting",
+    "type": "policy",
+    "cost": 1,
+    "fits": ["observe"],
+    "rarity": "uncommon",
+    "text": "Lượt nào có node sập hoặc từ chối request, đầu lượt sau rút thêm 1 lá. Đánh lại: +1 lá.",
+    "lesson": "Cảnh báo tốt báo theo triệu chứng người dùng thấy (lỗi, chậm), không theo từng chỉ số máy: người trực phản ứng sớm hơn.",
+    "effects": [
+      {
+        "op": "alert",
+        "draw": 1
+      }
+    ],
+    "upgrade": {
+      "cost": 0,
+      "text": "Lượt nào có node sập hoặc từ chối request, đầu lượt sau rút thêm 1 lá. Đánh lại: +1 lá."
+    }
+  },
+  {
+    "id": "o11y",
+    "name": "Observability Stack",
+    "type": "policy",
+    "cost": 2,
+    "fits": ["observe"],
+    "rarity": "rare",
+    "text": "Metrics, tracing và alerting trong một: thấy trước 2 lượt, đánh dấu nút cổ chai, node lỗi thì lượt sau rút thêm 1 lá.",
+    "lesson": "Ba trụ cột của observability: metrics cho biết có chuyện, tracing cho biết ở đâu, log cho biết vì sao.",
+    "effects": [
+      {
+        "op": "foresee",
+        "n": 2,
+        "max": 2
+      },
+      {
+        "op": "trace"
+      },
+      {
+        "op": "alert",
+        "draw": 1
+      }
+    ],
+    "upgrade": {
+      "cost": 1,
+      "text": "Metrics, tracing và alerting trong một: thấy trước 2 lượt, đánh dấu nút cổ chai, node lỗi thì lượt sau rút thêm 1 lá."
+    }
+  },
+  {
     "id": "tech_debt",
     "name": "Tech Debt",
     "type": "curse",

@@ -18,7 +18,7 @@ export type NodeRef = 'api' | 'db';
  * `compute`: on a service. `front`: a node put in front of one (a cache). `storage`: on a database.
  * `async`: a call made asynchronous (a queue). `edge`: in front of the entry (CDN, edge limits).
  */
-export type SocketKind = 'edge' | 'compute' | 'link' | 'front' | 'storage' | 'async';
+export type SocketKind = 'edge' | 'compute' | 'link' | 'front' | 'storage' | 'async' | 'observe';
 
 /** A socket of the system: `cap` modules of a fitting kind plug in at `at`. */
 export interface SocketDef {
@@ -88,7 +88,13 @@ export type Effect =
   /** Socketed: filter this share of bot traffic per level (up to `max`) for as long as the module stays in. */
   | { op: 'edgeFilter'; cut: number; max: number }
   /** Socketed: split the socket's database in two shards behind a router; the second costs `costPerHour`. */
-  | { op: 'shard'; costPerHour: number };
+  | { op: 'shard'; costPerHour: number }
+  /** Socketed: see the attacker's next `n` turns per level (up to `max`): the exact intent of a fixed cycle, the odds of a random one. */
+  | { op: 'foresee'; n: number; max: number }
+  /** Socketed: the forecast marks the node that will be the bottleneck. */
+  | { op: 'trace' }
+  /** Socketed: a turn where a node went down or turned requests away, draw `draw` more cards (per level) at the start of the next. */
+  | { op: 'alert'; draw: number };
 
 /** What a status changes while it lasts. Multipliers apply once per stack (×v^stacks), additions add once per stack. */
 export interface StatusMods {

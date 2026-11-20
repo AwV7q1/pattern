@@ -76,6 +76,15 @@
         "at": {
           "before": "lb"
         }
+      },
+      {
+        "id": "obs",
+        "kind": "observe",
+        "label": "Quan sát",
+        "cap": 1,
+        "at": {
+          "node": "api"
+        }
       }
     ],
     "design": {
@@ -271,6 +280,15 @@
         "cap": 1,
         "at": {
           "before": "lb"
+        }
+      },
+      {
+        "id": "obs",
+        "kind": "observe",
+        "label": "Quan sát",
+        "cap": 1,
+        "at": {
+          "node": "api"
         }
       }
     ],
@@ -527,6 +545,15 @@
         "at": {
           "before": "lb"
         }
+      },
+      {
+        "id": "obs",
+        "kind": "observe",
+        "label": "Quan sát",
+        "cap": 2,
+        "at": {
+          "node": "svcA"
+        }
       }
     ],
     "design": {
@@ -748,6 +775,15 @@
         "cap": 1,
         "at": {
           "before": "cdn"
+        }
+      },
+      {
+        "id": "obs",
+        "kind": "observe",
+        "label": "Quan sát",
+        "cap": 1,
+        "at": {
+          "node": "api"
         }
       }
     ],

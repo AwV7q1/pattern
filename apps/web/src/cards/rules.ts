@@ -342,7 +342,7 @@ export const mainCall = (content: Content, state: Pick<BattleState, 'chassis'>, 
 /** Effects that change the topology: from a socketed card they live in its module, so removing it undoes them. */
 const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue', 'cdn', 'shard']);
 /** Effects that only work while their module is in (read by the rules, not built into the design). */
-const MODULE_OPS = new Set<Effect['op']>(['edgeFilter']);
+const MODULE_OPS = new Set<Effect['op']>(['edgeFilter', 'foresee', 'trace', 'alert']);
 /** Effects that add nodes: built after the others, so a call policy follows the call into the new node and a shard copies a tuned DB. */
 const TOPOLOGY = new Set<Effect['op']>(['cache', 'queue', 'cdn', 'shard']);
 
@@ -392,6 +392,57 @@ export function placementsOf(content: Content, state: BattleState, card: string)
 export function insertedNode(content: Content, m: ModuleInst): string | undefined {
   const ops = cardDef(content, m.card).effects.map((e) => e.op);
   return ops.includes('cache') ? 'cache' : ops.includes('queue') ? 'queue' : ops.includes('cdn') ? `cdn@${m.socket}` : undefined;
+}
+
+/** The installed modules' effects of one kind, with each module's level. */
+function moduleEffects<K extends Effect['op']>(content: Content, state: BattleState, op: K): { e: Extract<Effect, { op: K }>; level: number }[] {
+  const out: { e: Extract<Effect, { op: K }>; level: number }[] = [];
+  for (const m of modulesOf(state)) for (const e of cardDef(content, m.card).effects) if (e.op === op) out.push({ e: e as Extract<Effect, { op: K }>, level: m.level });
+  return out;
+}
+
+/** Turns ahead the player sees (observability modules). */
+export const foresightOf = (content: Content, state: BattleState) => Math.max(0, ...moduleEffects(content, state, 'foresee').map(({ e, level }) => Math.min(e.max, e.n * level)));
+/** The forecast marks the bottleneck (tracing). */
+export const tracing = (content: Content, state: BattleState) => moduleEffects(content, state, 'trace').length > 0;
+/** Extra cards drawn after a turn where a node failed (alerting). */
+export const alertDrawOf = (content: Content, state: BattleState) => moduleEffects(content, state, 'alert').reduce((sum, { e, level }) => sum + e.draw * level, 0);
+
+/** An intent of the list as it would play at `step`: the variant that answers the build as it is now, with its escalation. */
+function intentAt(content: Content, state: BattleState, index: number, step: number): Intent {
+  const def = enemyDef(content, state);
+  const list = intentsNow(content, state);
+  const base = list[index];
+  const t = designTraits(content, state);
+  const v = base.variants?.find((x) => matchesWhen(x.when, t));
+  const { variants: _variants, ...plain } = base;
+  const { when: _when, ...over } = v ?? { when: {} };
+  const merged: Intent = { ...plain, ...over };
+  const loop = Math.floor(step / list.length);
+  return { ...merged, botRps: Math.round(merged.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
+}
+
+/**
+ * The attacker's next turns, as far as `n` turns (observability). A fixed cycle is exact (with the
+ * variant the build as it is now would draw); a random enemy gives the odds of its next turn only.
+ * A boss switching phase is not foreseen.
+ */
+export function upcomingIntents(content: Content, state: BattleState, n: number): { intent: Intent; chance: number }[][] {
+  const list = intentsNow(content, state);
+  if (enemyDef(content, state).pattern === 'weighted') {
+    const recent = [...(state.enemy.recent ?? [])];
+    const banned = recent.length >= 2 && recent.at(-1) === recent.at(-2) ? recent.at(-1) : undefined;
+    const w = list.map((it, i) => (i === banned ? 0 : (it.weight ?? 1)));
+    const total = w.reduce((a, b) => a + b, 0);
+    const odds = list.map((_, i) => ({ intent: intentAt(content, state, i, state.enemy.step + 1), chance: w[i] / total })).filter((o) => o.chance > 0);
+    return n > 0 ? [odds.sort((a, b) => b.chance - a.chance)] : [];
+  }
+  const out: { intent: Intent; chance: number }[][] = [];
+  for (let k = 1; k <= n; k++) {
+    const step = state.enemy.step + k;
+    out.push([{ intent: intentAt(content, state, step % list.length, step), chance: 1 }]);
+  }
+  return out;
 }
 
 /** Bot traffic the modules filter while they are in (an edge filter). */
@@ -1060,6 +1111,12 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0) + statusMods(content, state).opsPerTurn);
   if (state.ops < b.opsPerTurn) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
   draw(state, b.handSize);
+  const alert = alertDrawOf(content, state);
+  const failed = hot?.find((h) => h.down || h.rejected > 0);
+  if (alert && failed) {
+    draw(state, alert);
+    report.notes.push(`Cảnh báo: ${failed.label} ${failed.down ? 'sập' : 'từ chối request'}, rút thêm ${alert} lá`);
+  }
   state.phase = 'player';
   fireRelics(content, state, 'turnStart');
   chooseVariant(content, state);

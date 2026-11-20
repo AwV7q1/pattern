@@ -1199,3 +1199,45 @@ test('postmortem: a clean fight has no causes', async () => {
   const s = endTurn(rules.newBattle(content, 1));
   assert.equal(postmortem(content, s).causes.length, 0);
 });
+
+// ---------------------------------------------------------------- observability
+
+test('observability: Metrics goes in the observe socket and shows the next turn, exactly for a fixed cycle', () => {
+  let s = rules.newBattle(content, 3, { enemy: 'swarm' });
+  assert.equal(rules.foresightOf(content, s), 0);
+  s = playIn(s, 'metrics');
+  assert.equal(rules.modulesOf(s)[0].socket, 'obs');
+  assert.equal(rules.foresightOf(content, s), 1);
+  const [[next]] = rules.upcomingIntents(content, s, 1);
+  assert.equal(next.chance, 1);
+  const after = endTurn(s);
+  assert.equal(rules.currentIntent(content, after).id, next.intent.id);
+  // played again: two turns
+  assert.equal(rules.foresightOf(content, playIn(s, 'metrics')), 2);
+  assert.equal(rules.upcomingIntents(content, playIn(s, 'metrics'), 2).length, 2);
+});
+
+test('observability: a random enemy shows the odds of its next turn', () => {
+  const s = rules.newBattle(content, 3, { enemy: 'click_farm' });
+  const [odds] = rules.upcomingIntents(content, s, 2);
+  assert.ok(odds.length > 1);
+  assert.ok(Math.abs(odds.reduce((sum, o) => sum + o.chance, 0) - 1) < 1e-9);
+  assert.equal(rules.upcomingIntents(content, s, 2).length, 1);
+});
+
+test('observability: Alerting draws more cards after a turn where a node failed', () => {
+  const s = playIn(rules.newBattle(content, 3), 'alerting');
+  const plan = rules.planTurn(content, s);
+  const calm = rules.resolveTurn(content, s, plan, summary());
+  const hot = [{ node: 'db', kind: 'database', label: 'Postgres', util: 1, down: false, rejected: 50 }];
+  const alarmed = rules.resolveTurn(content, s, plan, summary(), hot);
+  assert.equal(alarmed.hand.length, calm.hand.length + 1);
+  assert.ok(alarmed.reports.at(-1)!.notes.some((n) => n.startsWith('Cảnh báo')));
+});
+
+test('observability: a watched APT group changes tactics', () => {
+  let s = rules.newBattle(content, 3, { enemy: 'apt_group' });
+  s = playIn(s, 'metrics');
+  const lateral = rules.upcomingIntents(content, s, 1)[0].find((o) => o.intent.id === 'lateral');
+  assert.equal(lateral?.intent.label, 'Né giám sát');
+});

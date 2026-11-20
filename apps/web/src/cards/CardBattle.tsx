@@ -56,6 +56,9 @@ import {
   guardNow,
   hotfixable,
   hotNodes,
+  foresightOf,
+  tracing,
+  upcomingIntents,
   leakNow,
   intentsNow,
   legitRpsNow,
@@ -224,16 +227,22 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   /** Set by the skip button: the turn's playback jumps to the result. */
   const skip = useRef(false);
   /** Engine dry-run of the turn as it stands: what ending the turn now would do. */
-  const [preview, setPreview] = useState<{ of: BattleState; score: TurnScore } | null>(null);
+  const [preview, setPreview] = useState<{ of: BattleState; score: TurnScore; bottleneck?: string } | null>(null);
   useEffect(() => {
     if (state.phase !== 'player' || resolving) return;
     let stale = false;
     const t = setTimeout(() => {
       const plan = planTurn(CONTENT, state);
-      compute
-        .run(plan.input)
-        .then((summary) => {
-          if (!stale) setPreview({ of: state, score: scoreTurn(CONTENT, state, plan, summary) });
+      // with tracing, the dry run keeps its windows to find the bottleneck
+      const run = tracing(CONTENT, state)
+        ? compute.runDetailed(plan.input).then(({ summary, windows }) => {
+            const top = hotNodes(plan.input.design, windows, 1)[0];
+            return { summary, bottleneck: top && (top.down || top.rejected > 0 || top.util >= 0.8) ? top.node : undefined };
+          })
+        : compute.run(plan.input).then((summary) => ({ summary, bottleneck: undefined }));
+      run
+        .then(({ summary, bottleneck }) => {
+          if (!stale) setPreview({ of: state, score: scoreTurn(CONTENT, state, plan, summary), bottleneck });
         })
         .catch(() => undefined);
     }, 120);
@@ -243,6 +252,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     };
   }, [state, resolving]);
   const forecast = preview && preview.of === state && !resolving ? preview.score : null;
+  const bottleneck = preview && preview.of === state && !resolving ? preview.bottleneck : undefined;
 
   const arenaRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
@@ -816,7 +826,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
             <div ref={systemZoneRef} className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(canSystem))}>
               {canSystem && <SystemTarget over={dragOver?.kind === 'system'} text={dragDef?.fits ? (moduleOf(state, dragDef.id) ? `Thả để nâng cấp ${dragDef.name}` : 'Thả để lắp vào ổ trống') : undefined} />}
               <div className="w-full">
-                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} refs={infraRefs} plug={plug} shieldRef={shieldRef} hit={resolving} />
+                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} refs={infraRefs} plug={plug} shieldRef={shieldRef} hit={resolving} bottleneck={bottleneck} />
               </div>
                 <HpBar
                   hpRef={hpRef}
@@ -1105,6 +1115,7 @@ function SystemPanel({
   plug,
   shieldRef,
   hit,
+  bottleneck,
 }: {
   state: BattleState;
   /** Error Budget shown (live while a turn plays). */
@@ -1115,6 +1126,8 @@ function SystemPanel({
   plug: Plug | null;
   shieldRef: React.RefObject<HTMLDivElement | null>;
   hit: boolean;
+  /** Tracing: the node the forecast says will saturate. */
+  bottleneck?: string;
 }) {
   const cost = costOf(designOf(CONTENT, state), state.temp);
   const budget = budgetOf(CONTENT, state);
@@ -1161,7 +1174,7 @@ function SystemPanel({
               <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
             </span>
           </div>
-          <InfraLine state={state} loads={loads} refs={refs} plug={plug} />
+          <InfraLine state={state} loads={loads} refs={refs} plug={plug} bottleneck={bottleneck} />
         </div>
       </div>
 
@@ -1271,6 +1284,32 @@ function StatusRow({ state }: { state: BattleState }) {
 }
 
 /** The botnet's intent cycle: done (dim), now (lit), coming (outlined). Weighted enemies: the pool, this turn's lit. */
+/** What observability shows of the attacker's next turns (exact for a fixed cycle, odds for a random enemy). */
+function Foresight({ state }: { state: BattleState }) {
+  const turns = upcomingIntents(CONTENT, state, foresightOf(CONTENT, state));
+  if (!turns.length) return null;
+  return (
+    <div className="w-full rounded-lg border border-sky-400/40 bg-sky-500/10 px-2 py-1.5 text-[11px]" title="Từ module Quan sát. Dự đoán theo build hiện tại: đổi build thì botnet có thể đổi chiêu.">
+      {turns.map((opts, k) => (
+        <div key={k} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span className="shrink-0 font-semibold text-sky-200">{k === 0 ? 'Lượt sau' : `${k + 1} lượt nữa`}:</span>
+          {opts.slice(0, 3).map(({ intent, chance }) => {
+            const I = INTENT_ICON[intent.icon];
+            return (
+              <span key={intent.id} className="flex items-center gap-1 text-sky-100">
+                <I className="size-3.5 text-sky-300" />
+                {intent.label}
+                <span className="font-mono text-sky-300/80">~{n0(intent.botRps)} rps</span>
+                {chance < 1 && <span className="font-mono text-amber-200">{Math.round(chance * 100)}%</span>}
+              </span>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function IntentTrack({ intents, step, pick }: { intents: Intent[]; step: number; pick?: number }) {
   const n = intents.length;
   const weighted = pick !== undefined;
@@ -1391,6 +1430,7 @@ function BotSide({
   return (
     <div className="flex w-full max-w-[300px] flex-col items-center gap-3">
       <IntentTrack intents={intents} step={state.enemy.step} pick={state.enemy.pick} />
+      {foresightOf(CONTENT, state) > 0 && <Foresight state={state} />}
       <BossTraits state={state} />
       {/* what it is about to do: one compact badge, the details on hover / focus */}
       <div className="group relative">

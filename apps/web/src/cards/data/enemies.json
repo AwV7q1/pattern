@@ -1713,7 +1713,23 @@
         "text": "Bot ~1400 rps. Sau lượt này WAF mất 10%.",
         "botRps": 1400,
         "wafStrip": 0.1,
-        "weight": 2
+        "weight": 2,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "metrics"
+              ]
+            },
+            "tag": "Phản ứng: bạn đang giám sát",
+            "label": "Né giám sát",
+            "icon": "probe",
+            "botRps": 1200,
+            "wafStrip": 0.1,
+            "bypass": 0.25,
+            "text": "Thấy dashboard theo dõi, nhóm APT đi chậm và giả làm người dùng: bot ~1200 rps lách 25% bộ lọc. Sau lượt này WAF mất 10%."
+          }
+        ]
       },
       {
         "id": "exfil",

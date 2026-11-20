@@ -15,7 +15,7 @@ import type { DropTarget } from './Hand';
 export type NodeLoad = { util: number; bad: boolean };
 
 /** Short names of socket kinds, for cards and tooltips. */
-export const SOCKET_KIND_LABEL: Record<SocketKind, string> = { edge: 'biên', compute: 'xử lý', link: 'đường gọi', front: 'trước DB', storage: 'lưu trữ', async: 'bất đồng bộ' };
+export const SOCKET_KIND_LABEL: Record<SocketKind, string> = { edge: 'biên', compute: 'xử lý', link: 'đường gọi', front: 'trước DB', storage: 'lưu trữ', async: 'bất đồng bộ', observe: 'quan sát' };
 
 /** A socketed card being dragged: where it can go, and what is under the pointer. */
 export type Plug = { def: CardDef; moves: Placement[]; over: DropTarget | null };
@@ -212,7 +212,7 @@ function nodeLook(node: DesignNode, design: Design, state: BattleState) {
 }
 
 /** Your system, drawn from its design: nodes with their sockets, empty node sockets as dashed places, call sockets under the line. */
-export function InfraLine({ state, loads, refs, plug }: { state: BattleState; loads?: Record<string, NodeLoad>; refs: InfraRefs; plug: Plug | null }) {
+export function InfraLine({ state, loads, refs, plug, bottleneck }: { state: BattleState; loads?: Record<string, NodeLoad>; refs: InfraRefs; plug: Plug | null; bottleneck?: string }) {
   const d = designOf(CONTENT, state);
   const { main, branches } = layoutOf(d);
   const sockets = socketsOf(CONTENT, state);
@@ -240,7 +240,7 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
     const look = nodeLook(n, d, state);
     const own = added.get(id);
     const ownLook = own ? socketLook(plug, own.socket) : null;
-    const strips = sockets.filter((s) => (s.kind === 'compute' || s.kind === 'storage') && 'node' in s.at && s.at.node === id);
+    const strips = sockets.filter((s) => (s.kind === 'compute' || s.kind === 'storage' || s.kind === 'observe') && 'node' in s.at && s.at.node === id);
     return (
       <div key={id} className={cn('relative flex min-w-0 flex-col items-center gap-1', small ? 'shrink-0' : 'flex-1')}>
         <InfraNode
@@ -255,6 +255,7 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
           {...look}
           load={loads?.[id]}
           threat={loads ? undefined : threat.get(id)}
+          hot={!loads && bottleneck === id}
           small={small}
           compact={compact || small}
           className={ownLook ? ring(ownLook) : own && combo.has(own.uid) ? 'shadow-[0_0_14px_rgba(251,191,36,0.45)]' : undefined}
@@ -346,6 +347,7 @@ function InfraNode({
   small,
   compact,
   threat,
+  hot,
   className,
 }: {
   icon: ReactNode;
@@ -363,6 +365,8 @@ function InfraNode({
   compact?: boolean;
   /** What this turn's intent does to the node. */
   threat?: string;
+  /** Tracing: the node the forecast says will be the bottleneck. */
+  hot?: boolean;
   className?: string;
 }) {
   const color =
@@ -382,6 +386,7 @@ function InfraNode({
         compact ? 'px-0.5' : 'px-1.5',
         color,
         load?.bad && 'border-rose-500 bg-rose-950/60',
+        hot && 'animate-pulse border-orange-400 shadow-[0_0_16px_rgba(251,146,60,0.55)]',
         className,
       )}
     >
@@ -396,6 +401,11 @@ function InfraNode({
             className={cn('h-full rounded-full transition-[width,background-color] duration-200', load.util > 0.95 || load.bad ? 'bg-rose-500' : load.util > 0.7 ? 'bg-amber-400' : 'bg-emerald-400')}
             style={{ width: `${clamp(load.util, 0, 1) * 100}%` }}
           />
+        </div>
+      )}
+      {hot && (
+        <div className="absolute -bottom-2 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded-full border border-orange-300/70 bg-orange-600 px-1.5 text-[9px] font-semibold text-white" title="Tracing: node này sẽ là nút cổ chai nếu kết thúc lượt ngay">
+          nút cổ chai
         </div>
       )}
       {threat && (

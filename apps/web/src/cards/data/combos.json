@@ -51,5 +51,12 @@
     "needs": ["load_shed", "breaker"],
     "adjacent": true,
     "mods": { "apiLatency": 0.85 }
+  },
+  {
+    "id": "early_warning",
+    "name": "Biết trước, cắt sớm",
+    "text": "Metrics và breaker: thấy phía sau xấu đi là breaker cắt ngay, không đợi lỗi dồn lại (API nhanh hơn ×0.9).",
+    "needs": ["metrics", "breaker"],
+    "mods": { "apiLatency": 0.9 }
   }
 ]
