@@ -48,6 +48,9 @@ export interface HandCard {
   playable: boolean;
 }
 
+/** Where a dragged card would land: your system, the enemy, or one of its minions. */
+export type DropTarget = { kind: 'system' } | { kind: 'bot' } | { kind: 'minion'; uid: number };
+
 interface Drag {
   uid: number;
   pointerId: number;
@@ -59,18 +62,19 @@ interface Drag {
   x: number;
   y: number;
   active: boolean;
-  over: boolean;
+  /** The target under the pointer, if the card can be dropped there. */
+  over: DropTarget | null;
 }
 
 /**
  * The hand: cards fanned out along an arc at the bottom of the screen, a
- * card rises when hovered and can be dragged into `dropRef` to play it.
+ * card rises when hovered and can be dragged onto a target (`targetAt`) to play it.
  * Dragging is the only way to play a card: no clicks or keys, so nothing is
  * played by accident.
  */
 export function Hand({
   cards,
-  dropRef,
+  targetAt,
   onPlay,
   onDragChange,
   deckRef,
@@ -78,15 +82,16 @@ export function Hand({
   discarding = false,
 }: {
   cards: HandCard[];
-  dropRef: RefObject<HTMLElement | null>;
+  /** The target under a screen point for this card, or null where it cannot be dropped. */
+  targetAt: (x: number, y: number, card: CardDef) => DropTarget | null;
   /** New cards fly in from the draw pile... */
   deckRef?: RefObject<HTMLElement | null>;
   /** ...and the hand flies into the discard pile while `discarding`. */
   discardRef?: RefObject<HTMLElement | null>;
   discarding?: boolean;
-  onPlay: (uid: number, at: { x: number; y: number }) => void;
-  /** The drag state and, while dragging, the dragged card. */
-  onDragChange?: (state: 'idle' | 'dragging' | 'over', card: CardDef | null) => void;
+  onPlay: (uid: number, at: { x: number; y: number }, target: DropTarget) => void;
+  /** While dragging: the dragged card and the target under the pointer. */
+  onDragChange?: (card: CardDef | null, target: DropTarget | null) => void;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -167,22 +172,22 @@ export function Hand({
   }, [discarding]);
 
   const dragDef = drag?.active ? (cards.find((c) => c.uid === drag.uid)?.def ?? null) : null;
+  const overKey = drag?.active && drag.over ? JSON.stringify(drag.over) : '';
   useEffect(() => {
-    onDragChange?.(!drag?.active ? 'idle' : drag.over ? 'over' : 'dragging', dragDef);
-  }, [drag?.active, drag?.over, dragDef, onDragChange]);
+    onDragChange?.(dragDef, overKey ? (JSON.parse(overKey) as DropTarget) : null);
+  }, [overKey, dragDef, onDragChange]);
 
   // the hovered card can be played away or leave the hand
   useEffect(() => {
     if (hover !== null && !cards.some((c) => c.uid === hover)) setHover(null);
   }, [cards, hover]);
 
-  const isOver = (x: number, y: number) => {
-    const zone = dropRef.current?.getBoundingClientRect();
+  const overAt = (x: number, y: number, uid: number) => {
     const hand = handRef.current?.getBoundingClientRect();
-    if (!zone) return false;
-    const inZone = x >= zone.left && x <= zone.right && y >= zone.top && y <= zone.bottom;
+    const def = cards.find((c) => c.uid === uid)?.def;
     // the hand itself sits on top of the arena: dropping back on it cancels
-    return inZone && (!hand || y < hand.top + 40);
+    if (!def || (hand && y >= hand.top + 40)) return null;
+    return targetAt(x, y, def);
   };
 
   // spacing between neighbours shrinks as the hand grows
@@ -243,21 +248,21 @@ export function Hand({
                       x: e.clientX,
                       y: e.clientY,
                       active: false,
-                      over: false,
+                      over: null,
                     });
                   }}
                   onPointerMove={(e) => {
                     if (!drag || drag.pointerId !== e.pointerId) return;
                     const moved = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) > 6;
-                    setDrag({ ...drag, x: e.clientX, y: e.clientY, active: drag.active || moved, over: isOver(e.clientX, e.clientY) });
+                    setDrag({ ...drag, x: e.clientX, y: e.clientY, active: drag.active || moved, over: overAt(e.clientX, e.clientY, drag.uid) });
                   }}
                   onPointerUp={(e) => {
                     if (!drag || drag.pointerId !== e.pointerId) return;
-                    const played = drag.active && isOver(e.clientX, e.clientY);
+                    const target = drag.active ? overAt(e.clientX, e.clientY, drag.uid) : null;
                     setDrag(null);
-                    if (played) {
+                    if (target) {
                       setHover(null);
-                      onPlay(drag.uid, { x: e.clientX - drag.dx + CARD_W / 2, y: e.clientY - drag.dy + CARD_H / 2 });
+                      onPlay(drag.uid, { x: e.clientX - drag.dx + CARD_W / 2, y: e.clientY - drag.dy + CARD_H / 2 }, target);
                     }
                   }}
                   onPointerCancel={() => setDrag(null)}
@@ -301,9 +306,19 @@ export function Hand({
           return (
             <div
               className="pointer-events-none fixed z-50"
-              style={{ left: drag.x - drag.dx, top: drag.y - drag.dy, width: CARD_W, height: CARD_H, transform: `rotate(${tilt}deg) scale(${drag.over ? 1.08 : 1.02})` }}
+              style={{
+                left: drag.x - drag.dx,
+                top: drag.y - drag.dy,
+                width: CARD_W,
+                height: CARD_H,
+                transform: `rotate(${drag.over ? 0 : tilt}deg) scale(${drag.over ? 0.45 : 1.02})`,
+                // over a target the card shrinks toward the pointer so the target stays visible
+                transformOrigin: `${drag.dx}px ${drag.dy}px`,
+                opacity: drag.over ? 0.75 : 1,
+                transition: 'transform 120ms, opacity 120ms',
+              }}
             >
-              <CardFace def={c.def} playable glowing={drag.over} />
+              <CardFace def={c.def} playable glowing={!!drag.over} />
             </div>
           );
         })()}

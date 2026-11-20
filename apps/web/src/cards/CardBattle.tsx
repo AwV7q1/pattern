@@ -75,7 +75,7 @@ import {
   statusDef,
   targetOf,
 } from './rules';
-import type { BattleSetup, BattleState, CardDef, Intent, Layer, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, Intent, Layer, MinionState, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
 import { cardIcon, statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
@@ -83,7 +83,7 @@ import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
 import { botDieMs, MINION_EXIT_MS, minionDieClass, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
-import { CARD_SIZE, CardFace, Hand, Pile, discardDuration } from './Hand';
+import { CARD_SIZE, CardFace, Hand, Pile, discardDuration, type DropTarget } from './Hand';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
 
 
@@ -138,13 +138,31 @@ type Live = {
   phase: 'attack' | 'replay';
   hp: number;
   headroom: number;
-  enemyHp: number;
   tMs: number;
   rps: number;
   p99: number;
   errRate: number;
   nodes: Record<string, NodeLoad>;
 };
+
+/**
+ * The enemy side as shown: it lags the rules until the attacks reach it, so
+ * HP bars drop (and minions fall) when the bolts land, not when the card is played.
+ */
+type Foe = { enemyHp: number; minions: MinionState[]; target?: number };
+const foeOf = (s: BattleState): Foe => ({ enemyHp: s.enemy.hp, minions: minionsOf(s), target: s.target });
+
+/** `from` moved `f` (0..1) of the way to `to`: HP down (never up) in step with the bolts that landed. */
+function foeAt(from: Foe, to: Foe, f: number): Foe {
+  if (f >= 1) return to;
+  const after = new Map(to.minions.map((m) => [m.uid, m.hp]));
+  const lerp = (a: number, b: number) => (b >= a ? a : a - Math.floor((a - b) * f));
+  return {
+    enemyHp: lerp(from.enemyHp, to.enemyHp),
+    minions: from.minions.map((m) => ({ ...m, hp: lerp(m.hp, after.get(m.uid) ?? 0) })),
+    target: from.target,
+  };
+}
 
 /**
  * Card battle prototype: defend a small system against a botnet. Your
@@ -193,16 +211,21 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const [showLibrary, setShowLibrary] = useState(false);
   /** How many turn reports the player has looked at (the rest light the badge). */
   const [seenReports, setSeenReports] = useState(0);
-  const [dragState, setDragState] = useState<'idle' | 'dragging' | 'over'>('idle');
+  /** The card being dragged and the target under the pointer. */
   const [dragDef, setDragDef] = useState<CardDef | null>(null);
+  const [dragOver, setDragOver] = useState<DropTarget | null>(null);
   /** The hand is flying into the discard pile (end of turn). */
   const [discarding, setDiscarding] = useState(false);
-  const onDragChange = useCallback((s: 'idle' | 'dragging' | 'over', def: CardDef | null) => {
-    setDragState(s);
+  const onDragChange = useCallback((def: CardDef | null, over: DropTarget | null) => {
     setDragDef(def);
+    setDragOver(over);
   }, []);
   /** A slotted card dropped on a full slot group: which module it replaces. */
-  const [replacing, setReplacing] = useState<{ uid: number; at?: { x: number; y: number }; layer: Layer } | null>(null);
+  const [replacing, setReplacing] = useState<{ uid: number; at?: { x: number; y: number }; target: DropTarget; layer: Layer } | null>(null);
+  /** The enemy side while attacks fly at it (null: it shows the rules' state). */
+  const [foe, setFoe] = useState<Foe | null>(null);
+  /** Bumped by each new attack: a stale volley's landing must not move the shown enemy. */
+  const foeToken = useRef(0);
   const [splash, setSplash] = useState<{ key: number; def: CardDef; x: number; y: number } | null>(null);
   const busy = useRef(false);
   const [live, setLive] = useState<Live | null>(null);
@@ -232,6 +255,9 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const arenaRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
   const botRef = useRef<HTMLDivElement>(null);
+  /** Drop zones: the whole system column and the enemy's body. */
+  const systemZoneRef = useRef<HTMLDivElement>(null);
+  const botZoneRef = useRef<HTMLDivElement>(null);
   const infraRef = useRef<HTMLDivElement>(null);
   const gateRef = useRef<HTMLDivElement>(null);
   const shieldRef = useRef<HTMLDivElement>(null);
@@ -251,18 +277,41 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
 
   /** Green bolts from your gateway into the bot. */
-  const counterFx = useCallback(async (damage: number, at?: HTMLElement | null) => {
+  /** Green bolts from your gateway into the bot (or a minion); `onLand` runs as they hit. */
+  const counterFx = useCallback(async (damage: number, at?: HTMLElement | null, onLand?: () => void) => {
     const layer = fxRef.current;
     const bot = at ?? botRef.current;
     const source = shieldRef.current ?? gateRef.current;
-    if (!layer || !bot || !source) return;
+    if (!layer || !bot || !source) {
+      onLand?.();
+      return;
+    }
     const onMinion = bot !== botRef.current;
     await bolts(layer, anchor(source, layer), anchor(bot, layer, 0.5, 0.5), damage, () => {
+      onLand?.();
       if (onMinion) minionHit(bot);
       else botHit(bot, tierRef.current);
       glow(bot, 'rgba(110,231,183,0.6)', 320);
     });
   }, []);
+
+  /** The target under a screen point for a dragged card: minions and the enemy for attacks, your system for the rest. */
+  const targetAt = useCallback(
+    (x: number, y: number, def: CardDef): DropTarget | null => {
+      const side = sidesOf(def);
+      const inside = (el: Element | null | undefined, pad: number) => {
+        const r = el?.getBoundingClientRect();
+        return !!r && r.width > 0 && x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
+      };
+      if (side.bot) {
+        for (const m of minionsOf(state)) if (inside(minionEls.current[m.uid]?.parentElement, 6)) return { kind: 'minion', uid: m.uid };
+        if (inside(botZoneRef.current, 0)) return { kind: 'bot' };
+      }
+      if (side.system && !side.bot && inside(systemZoneRef.current, 12)) return { kind: 'system' };
+      return null;
+    },
+    [state],
+  );
 
   /** What a card touches in your system, and the label shown there. */
   const targetsOf = (def: CardDef, next: BattleState) => {
@@ -374,35 +423,48 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     floatText(layer, anchor(deck, layer, 0.5, 0), 'Xáo lại chồng bỏ', '#7dd3fc');
   };
 
-  const play = (uid: number, at?: { x: number; y: number }, replace?: number) => {
+  const play = (uid: number, at: { x: number; y: number } | undefined, target: DropTarget, replace?: number) => {
     if (resolving || state.phase !== 'player') return;
     const inst = state.hand.find((c) => c.uid === uid);
     const full = needsReplace(CONTENT, state, uid);
     if (full && replace === undefined) {
-      setReplacing({ uid, at, layer: full });
+      setReplacing({ uid, at, target, layer: full });
       return;
     }
-    const next = playCard(CONTENT, state, uid, { replace });
-    if (!inst || next === state) return;
+    // an attack dropped on a minion hits it; dropped on the enemy, it hits the enemy
+    const aimedState = target.kind === 'minion' ? setTarget(state, target.uid) : target.kind === 'bot' ? setTarget(state, null) : state;
+    const next = playCard(CONTENT, aimedState, uid, { replace });
+    if (!inst || next === aimedState) return;
     const def = cardDef(CONTENT, inst.id);
     const arena = arenaRef.current?.getBoundingClientRect();
     const pos = at ?? (arena ? { x: arena.left + arena.width / 2, y: arena.bottom - 320 } : { x: 0, y: 0 });
     setSplash({ key: Date.now(), def, x: pos.x, y: pos.y });
-    setState(next);
-    reshuffleFx(state, next);
     const dmg = state.enemy.hp - next.enemy.hp;
     const minionHit = minionLoss(state, next);
-    const aimed = aimEl(state);
+    const aimed = aimEl(aimedState);
+    // the enemy side keeps its HP until the bolts land
+    const token = dmg > 0 || minionHit > 0 ? ++foeToken.current : 0;
+    if (token) setFoe((f) => ({ ...(f ?? foeOf(state)), target: aimedState.target }));
+    const land = (to: Partial<Foe> | null) => {
+      if (token !== foeToken.current) return;
+      setFoe((f) => (to && f ? { ...f, ...to } : null));
+    };
+    setState(next);
+    reshuffleFx(state, next);
     // the system takes the card in first; an attack card then fires from it
     void cardFx(def, pos, next).then(async () => {
       if (minionHit > 0) {
-        await counterFx(minionHit, aimed);
-        const layer = fxRef.current;
-        if (layer && aimed) floatText(layer, anchor(aimed, layer, 0.5, 0), `−${minionHit}`, '#fb7185');
+        await counterFx(minionHit, aimed, () => {
+          land(dmg > 0 ? { minions: minionsOf(next), target: next.target } : null);
+          const layer = fxRef.current;
+          if (layer && aimed) floatText(layer, anchor(aimed, layer, 0.5, 0), `−${minionHit}`, '#fb7185');
+        });
       }
       if (dmg > 0) {
-        await counterFx(dmg);
-        setFlash({ key: Date.now(), player: 0, enemy: dmg });
+        await counterFx(dmg, botRef.current, () => {
+          land(null);
+          setFlash({ key: Date.now(), player: 0, enemy: dmg });
+        });
       }
       if (next.phase === 'won') setDown(true);
     });
@@ -510,11 +572,19 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     const hpLoss = Math.min(r.damage.total, start.hp);
     const rawTotal = r.damage.absorbed + hpLoss;
     let cum = 0;
-    let prev = { hp: start.hp, headroom: start.headroom, enemyHp: start.enemy.hp };
-    // the filtered traffic hits the target: a minion (shown by the bolts) or the enemy, past its guards
+    let prev = { hp: start.hp, headroom: start.headroom };
+    // the filtered traffic hits the target: a minion or the enemy, past its guards.
+    // Its share of the damage shows as each window's bolts land.
     const enemyLoss = Math.max(0, start.enemy.hp - end.enemy.hp);
     const aimed = aimEl(start);
     const minionHit = minionLoss(start, end);
+    const fromFoe = foeOf(start);
+    const toFoe = { ...foeOf(end), enemyHp: Math.min(start.enemy.hp, end.enemy.hp), minions: end.phase === 'won' ? fromFoe.minions : minionsOf(end) };
+    const token = ++foeToken.current;
+    setFoe(fromFoe);
+    let landed = 0;
+    let shownLoss = 0;
+    const volleys: Promise<void>[] = [];
     for (let i = 0; i < n; i++) {
       if (skip.current) break;
       const w = windows[i];
@@ -522,11 +592,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       const raw = Math.round((rawTotal * cum) / wsum);
       const absorbed = Math.min(r.damage.absorbed, raw);
       const lost = Math.min(hpLoss, raw - absorbed);
-      const cur = {
-        hp: start.hp - lost,
-        headroom: start.headroom - absorbed,
-        enemyHp: Math.max(0, start.enemy.hp - Math.floor((enemyLoss * (i + 1)) / n)),
-      };
+      const cur = { hp: start.hp - lost, headroom: start.headroom - absorbed };
       const nodes: Record<string, NodeLoad> = {};
       w.nodes.forEach((nw, k) => {
         if (ids[k] && ids[k] !== 'client') nodes[ids[k]] = { util: nw.utilization, bad: nw.down || nw.rejected > 0 || nw.utilization > 0.95 };
@@ -565,12 +631,27 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           shake(infraRef.current, Math.min(8, 2 + prev.hp - cur.hp), 300);
           if (hpAt) floatText(layer, hpAt, `−${prev.hp - cur.hp}`, '#fb7185');
         }
-        if (cur.enemyHp < prev.enemyHp) void counterFx(prev.enemyHp - cur.enemyHp);
-        else if (minionHit > 0 && i % 2 === 0) void counterFx(Math.max(1, Math.round(minionHit / n)), aimed);
+      }
+      // this window's share of the damage, in whole points
+      const total = enemyLoss + minionHit;
+      const due = Math.floor((total * (i + 1)) / n) - shownLoss;
+      if (due > 0) {
+        shownLoss += due;
+        const f = shownLoss / total;
+        const onLand = () => {
+          if (token !== foeToken.current) return;
+          landed = Math.max(landed, f);
+          setFoe(foeAt(fromFoe, toFoe, landed));
+        };
+        if (layer) volleys.push(counterFx(due, enemyLoss > 0 ? botRef.current : aimed, onLand));
+        else onLand();
       }
       prev = cur;
       await wait(stepMs);
     }
+    // the last bolts land before the result shows
+    if (!skip.current) await Promise.all(volleys);
+    foeToken.current++;
     await wait(skip.current ? 0 : 450);
   };
 
@@ -580,7 +661,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     skip.current = false;
     setResolving(true);
     setError(null);
-    setLive({ phase: 'attack', hp: state.hp, headroom: state.headroom, enemyHp: state.enemy.hp, tMs: 0, rps: 0, p99: 0, errRate: 0, nodes: {} });
+    setLive({ phase: 'attack', hp: state.hp, headroom: state.headroom, tMs: 0, rps: 0, p99: 0, errRate: 0, nodes: {} });
     // the hand goes to the discard pile first, so the arena is clear for the attack
     setDiscarding(true);
     let over = false;
@@ -599,6 +680,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       const r = next.reports.at(-1)!;
       await replayPhase(plan, windows, r, state, next);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: Math.max(0, state.enemy.hp - next.enemy.hp) });
+      setFoe(null);
       setState(next);
       reshuffleFx(state, next);
       if (next.phase === 'won') setDown(true);
@@ -608,6 +690,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       busy.current = false;
+      foeToken.current++;
+      setFoe(null);
       setLive(null);
       setResolving(false);
       if (!over) setDiscarding(false);
@@ -633,10 +717,14 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
   const intent = currentIntent(CONTENT, state);
 
-  // while a card is dragged, light up the side it acts on and dim the other
-  const sides = dragState === 'idle' || !dragDef ? { system: false, bot: false } : sidesOf(dragDef);
-  const anyTarget = sides.system || sides.bot;
+  // while a card is dragged, its possible targets light up and the other side dims
+  const sides = dragDef ? sidesOf(dragDef) : { system: false, bot: false };
+  const canSystem = sides.system && !sides.bot;
+  const anyTarget = canSystem || sides.bot;
   const targetRing = (on: boolean) => (anyTarget && !on ? 'opacity-40' : '');
+  /** The enemy side as drawn: lags the rules until attacks land. */
+  const shown: BattleState = foe ? { ...state, enemy: { ...state.enemy, hp: foe.enemyHp }, minions: foe.minions, target: foe.target } : state;
+  const aiming: Aiming | null = sides.bot ? { over: dragOver, card: dragDef?.name ?? '' } : null;
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
   const over = state.phase === 'won' || state.phase === 'lost';
   const hand = state.hand.map((inst) => ({
@@ -693,7 +781,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           onPick={(m) => {
             const r = replacing;
             setReplacing(null);
-            play(r.uid, r.at, m);
+            play(r.uid, r.at, r.target, m);
           }}
           onClose={() => setReplacing(null)}
         />
@@ -706,8 +794,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
             (200 minus the 48px top bar) puts the row on the screen's vertical center. */}
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-[152px] [align-content:safe_center]">
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
-            <div className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.system))}>
-              {sides.system && <TargetTag side="system" over={dragState === 'over'} />}
+            <div ref={systemZoneRef} className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(canSystem))}>
+              {canSystem && <SystemTarget over={dragOver?.kind === 'system'} />}
               <div className="w-full">
                 <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
               </div>
@@ -732,10 +820,9 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
           <div className="col-start-3 row-start-1 flex min-w-0 flex-col items-end">
             <div className={cn('relative flex w-full max-w-[300px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(sides.bot))}>
-              {sides.bot && <TargetTag side="bot" over={dragState === 'over'} />}
               <BotSide
-                state={state}
-                enemyHp={live?.enemyHp ?? state.enemy.hp}
+                state={shown}
+                enemyHp={shown.enemy.hp}
                 intents={intentsNow(CONTENT, state)}
                 intent={intent}
                 rank={rank}
@@ -744,19 +831,21 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                 botRef={botRef}
                 usersRef={usersRef}
                 attacking={resolving}
+                aiming={aiming}
+                botZoneRef={botZoneRef}
+                minions={<MinionRow state={shown} minionEls={minionEls} aiming={aiming} onAim={resolving || over ? undefined : (uid) => setState((s) => setTarget(s, uid))} />}
                 onAim={resolving ? undefined : () => setState((s) => setTarget(s, null))}
               />
                 <HpBar
                   icon={<Skull />}
                   label={enemy.name}
                   title={enemy.description}
-                  hp={live?.enemyHp ?? state.enemy.hp}
+                  hp={shown.enemy.hp}
                   max={state.enemy.maxHp}
                   flash={flash}
                   pop={flash?.enemy ?? 0}
                   barClass="from-rose-600 to-orange-500"
                 />
-              <MinionRow state={state} minionEls={minionEls} onAim={resolving || over ? undefined : (uid) => setState((s) => setTarget(s, uid))} />
             </div>
           </div>
 
@@ -779,7 +868,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
             <Pile pileRef={deckRef} count={state.drawPile.length} label="Chồng rút" tone="draw" />
             {state.exhausted.length > 0 && <span className="pb-0.5">Tiêu hao {state.exhausted.length}</span>}
           </div>
-          <span className="hidden lg:inline">Kéo bài lên đấu trường để đánh</span>
+          <span className="hidden lg:inline">Kéo bài vào hệ thống, bot hoặc lính để đánh</span>
         </div>
         <div className="absolute bottom-4 right-6 z-30 flex items-end gap-4">
           <Pile pileRef={discardRef} count={state.discard.length + (discarding ? state.hand.length : 0)} label="Chồng bỏ" tone="discard" />
@@ -803,7 +892,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
         <LogDrawer open={showLog} reports={state.reports} onClose={() => setShowLog(false)} />
 
-        <Hand cards={hand} dropRef={arenaRef} onPlay={play} onDragChange={onDragChange} deckRef={deckRef} discardRef={discardRef} discarding={discarding} />
+        <Hand cards={hand} targetAt={targetAt} onPlay={play} onDragChange={onDragChange} deckRef={deckRef} discardRef={discardRef} discarding={discarding} />
         {hand.length === 0 && !over && !resolving && (
           <p className="absolute bottom-10 left-1/2 z-20 -translate-x-1/2 text-sm text-muted-foreground">Hết bài trên tay. Kết thúc lượt.</p>
         )}
@@ -825,34 +914,49 @@ function sidesOf(def: CardDef) {
   return { bot: def.effects.some((e) => e.op === 'attack'), system: def.effects.some((e) => e.op !== 'attack') };
 }
 
-/**
- * The frame and label around a side while a card that acts on it is
- * dragged. The frame stands well clear of the side's content.
- */
-function TargetTag({ side, over }: { side: 'system' | 'bot'; over: boolean }) {
-  const bot = side === 'bot';
+/** What an attack card being dragged can hit, and what is under the pointer. */
+type Aiming = { over: DropTarget | null; card: string };
+
+/** A drop hint above a target: what letting go here does. */
+function DropTag({ text, tone, className }: { text: string; tone: 'bot' | 'system'; className?: string }) {
+  return (
+    <span
+      className={cn(
+        'pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
+        tone === 'bot' ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
+        className,
+      )}
+    >
+      {tone === 'bot' ? <Swords /> : <Server />}
+      {text}
+    </span>
+  );
+}
+
+/** The ring around a round target (the enemy, a minion) while an attack is dragged: faint when it can be hit, bright under the pointer. */
+function AimRing({ on, className }: { on: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'pointer-events-none absolute z-10 rounded-full border-2 transition-[border-color,box-shadow,transform] duration-150',
+        on ? 'scale-105 border-rose-400 shadow-[0_0_28px_rgba(251,113,133,0.55)]' : 'border-dashed border-rose-400/40',
+        className,
+      )}
+    />
+  );
+}
+
+/** Your system lit up as the target of a dragged card. */
+function SystemTarget({ over }: { over: boolean }) {
   return (
     <div
       className={cn(
-        'pointer-events-none absolute -inset-x-5 -bottom-5 -top-12 z-20 rounded-[28px] border-2 transition-[background-color,border-color,box-shadow] duration-200',
-        bot
-          ? over
-            ? 'border-rose-400/90 bg-rose-500/[0.07] shadow-[0_0_48px_rgba(251,113,133,0.35)]'
-            : 'border-rose-400/45 bg-rose-500/[0.03]'
-          : over
-            ? 'border-sky-400/90 bg-sky-500/[0.07] shadow-[0_0_48px_rgba(56,189,248,0.35)]'
-            : 'border-sky-400/45 bg-sky-500/[0.03]',
+        'pointer-events-none absolute -inset-3 z-20 rounded-[24px] border-2 transition-[background-color,border-color,box-shadow] duration-150',
+        over ? 'border-sky-400/90 bg-sky-500/[0.07] shadow-[0_0_48px_rgba(56,189,248,0.35)]' : 'border-dashed border-sky-400/40',
       )}
     >
-      <span
-        className={cn(
-          'absolute left-1/2 top-0 flex -translate-y-1/2 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
-          bot ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
-        )}
-      >
-        {bot ? <Swords /> : <Server />}
-        {over ? (bot ? 'Thả để tấn công bot' : 'Thả để áp dụng lên hệ thống') : bot ? 'Tác dụng lên bot' : 'Tác dụng lên hệ thống'}
-      </span>
+      {over && <DropTag tone="system" text="Thả để áp dụng lên hệ thống" className="top-0 -translate-y-1/2" />}
     </div>
   );
 }
@@ -1240,6 +1344,9 @@ function BotSide({
   botRef,
   usersRef,
   attacking,
+  aiming,
+  botZoneRef,
+  minions,
   onAim,
 }: {
   state: BattleState;
@@ -1252,7 +1359,12 @@ function BotSide({
   botRef: React.RefObject<HTMLDivElement | null>;
   usersRef: React.RefObject<HTMLDivElement | null>;
   attacking: boolean;
-  /** With minions on the field: aim attacks back at the enemy. */
+  /** An attack card is being dragged: the enemy and its minions can be hit. */
+  aiming: Aiming | null;
+  botZoneRef: React.RefObject<HTMLDivElement | null>;
+  /** The minions, drawn beside the enemy and lower. */
+  minions: ReactNode;
+  /** With minions on the field: aim the filtered traffic back at the enemy. */
   onAim?: () => void;
 }) {
   const Icon = INTENT_ICON[intent.icon];
@@ -1334,11 +1446,14 @@ function BotSide({
       </div>
 
       <div
+        ref={botZoneRef}
         className={cn('relative rounded-full', hasMinions && onAim && 'cursor-pointer')}
         onClick={hasMinions ? onAim : undefined}
-        title={hasMinions ? (aimed ? 'Đang nhắm vào chỉ huy' : 'Bấm để nhắm đòn đánh vào chỉ huy') : undefined}
+        title={hasMinions ? (aimed ? 'Traffic đang nhắm vào chỉ huy' : 'Bấm để nhắm traffic vào chỉ huy') : undefined}
       >
-        {aimed && <AimBadge className="right-6 top-6" />}
+        {aimed && !aiming && <AimBadge className="right-6 top-6" />}
+        {aiming && <AimRing on={aiming.over?.kind === 'bot'} className="inset-4" />}
+        {aiming?.over?.kind === 'bot' && <DropTag tone="bot" text={`Thả để đánh ${CONTENT.enemies.find((e) => e.id === state.enemy.id)?.name ?? 'bot'}`} className="-top-2" />}
         <BotAvatar
           ref={botRef}
           enemyId={state.enemy.id}
@@ -1350,6 +1465,10 @@ function BotSide({
           hpRatio={enemyHp / state.enemy.maxHp}
           className={cn('rounded-full', attacking && 'drop-shadow-[0_0_24px_rgba(244,63,94,0.55)]')} />
         <UserRing usersRef={usersRef} />
+        {/* the minions stand in a row beside the enemy, lower down, between it and your system */}
+        <div className="absolute bottom-0 right-full mr-14 translate-y-1/4" onClick={(e) => e.stopPropagation()}>
+          {minions}
+        </div>
       </div>
     </div>
   );
@@ -1364,14 +1483,19 @@ function AimBadge({ className }: { className?: string }) {
   );
 }
 
-/** The minions next to the enemy: each with its HP and what it does. Clicking one aims attacks (cards and filtered traffic) at it. */
+/**
+ * The minions beside the enemy, in a row: each with its HP and what it does.
+ * An attack card dropped on one hits it; clicking one aims the filtered traffic at it.
+ */
 function MinionRow({
   state,
   minionEls,
+  aiming,
   onAim,
 }: {
   state: BattleState;
   minionEls: React.RefObject<Record<number, HTMLDivElement | null>>;
+  aiming: Aiming | null;
   onAim?: (uid: number) => void;
 }) {
   const target = targetOf(state);
@@ -1382,44 +1506,48 @@ function MinionRow({
   const shown = [...alive.map((m) => ({ m, exit: undefined as string | undefined })), ...gone.map((m) => (state.phase === 'won' ? { m, exit: 'minion-flee' } : { m: { ...m, hp: 0 }, exit: minionDieClass(m.id) }))].sort((a, b) => a.m.uid - b.m.uid);
   if (!shown.length) return null;
   return (
-    <div className="flex w-full flex-col items-center gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{alive.length ? 'Lính đi kèm · bấm để nhắm' : 'Lính đi kèm'}</span>
-      <div className="flex flex-wrap justify-center gap-1.5">
-        {shown.map(({ m, exit }, i) => {
-          const def = minionDef(CONTENT, m.id);
-          const on = !exit && target?.uid === m.uid;
-          return (
-            <button
-              key={m.uid}
-              type="button"
-              disabled={!onAim || !!exit}
-              onClick={() => onAim?.(m.uid)}
-              title={`${def.name}: ${def.text}`}
-              aria-pressed={on}
-              className={cn(
-                'relative flex w-[88px] flex-col items-center rounded-lg border bg-card/60 px-1 pb-1 pt-0.5 transition-colors',
-                exit ?? 'minion-in',
-                on ? 'border-rose-400 bg-rose-500/10 shadow-[0_0_10px_rgba(244,63,94,0.45)]' : 'border-border hover:border-rose-400/60',
-              )}
-            >
-              {on && <AimBadge className="-right-1.5 -top-1.5 size-5 [&_svg]:size-3.5" />}
-              <MinionAvatar ref={(el) => void (minionEls.current[m.uid] = el)} minionId={m.id} hpRatio={m.hp / m.maxHp} index={i} className="size-10" />
-              <span className="w-full truncate text-center text-[10px] font-medium">{def.name}</span>
-              <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-muted">
-                <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-orange-500 transition-all duration-500" style={{ width: `${(m.hp / m.maxHp) * 100}%` }} />
-              </div>
-              <span className="mt-0.5 flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
-                <span>
-                  {m.hp}/{m.maxHp}
-                </span>
-                <span className="text-amber-300">+{n0(def.botRps * scale)}</span>
-                {def.guard && <Shield className="size-3 text-sky-300" />}
-                {def.heal && <HeartPulse className="size-3 text-emerald-300" />}
+    <div className="flex flex-row-reverse items-end gap-4">
+      {shown.map(({ m, exit }, i) => {
+        const def = minionDef(CONTENT, m.id);
+        const on = !exit && target?.uid === m.uid;
+        const hovered = !exit && aiming?.over?.kind === 'minion' && aiming.over.uid === m.uid;
+        return (
+          <button
+            key={m.uid}
+            type="button"
+            disabled={!onAim || !!exit}
+            onClick={() => onAim?.(m.uid)}
+            title={`${def.name}: ${def.text}`}
+            aria-pressed={on}
+            className={cn('group/minion relative flex w-[76px] flex-col items-center outline-none focus-visible:ring-2 focus-visible:ring-rose-400', exit ?? 'minion-in')}
+          >
+            <div className="relative">
+              {aiming && !exit && <AimRing on={hovered} className="-inset-1.5" />}
+              {hovered && <DropTag tone="bot" text={`Thả để đánh ${def.name}`} className="bottom-full mb-3" />}
+              {on && !aiming && <AimBadge className="-right-1.5 -top-1.5 size-5 [&_svg]:size-3.5" />}
+              <MinionAvatar
+                ref={(el) => void (minionEls.current[m.uid] = el)}
+                minionId={m.id}
+                hpRatio={m.hp / m.maxHp}
+                index={i}
+                className={cn('size-14 transition-[filter] duration-150', !exit && onAim && 'group-hover/minion:drop-shadow-[0_0_10px_rgba(251,113,133,0.6)]')}
+              />
+            </div>
+            <span className="mt-0.5 w-full truncate text-center text-[10px] font-medium text-foreground/90 [text-shadow:0_1px_3px_rgba(0,0,0,0.9)]">{def.name}</span>
+            <div className="mt-0.5 h-1 w-12 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-gradient-to-r from-rose-600 to-orange-500 transition-all duration-300" style={{ width: `${(m.hp / m.maxHp) * 100}%` }} />
+            </div>
+            <span className="mt-0.5 flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+              <span className="text-foreground/90">
+                {m.hp}/{m.maxHp}
               </span>
-            </button>
-          );
-        })}
-      </div>
+              <span className="text-amber-300">+{n0(def.botRps * scale)}</span>
+              {def.guard && <Shield className="size-3 text-sky-300" />}
+              {def.heal && <HeartPulse className="size-3 text-emerald-300" />}
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
