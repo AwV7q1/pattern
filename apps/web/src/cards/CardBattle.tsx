@@ -759,6 +759,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     uid: inst.uid,
     def: cardDef(CONTENT, inst.id),
     playable: canPlay(CONTENT, state, inst.uid) && !resolving,
+    // a socketed card the system has no socket for
+    blocked: cardDef(CONTENT, inst.id).fits && !placementsOf(CONTENT, state, inst.id).length ? 'Hệ thống không có ổ hợp lệ' : undefined,
   }));
 
   return (

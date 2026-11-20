@@ -35,7 +35,7 @@ const playIn = (st: BattleState, id: string, replace?: number) => {
 };
 
 /** A new run past the starting infrastructure pick (Redis), standing on the map. */
-const fresh = (seed: number) => runs.pickReward(content, runs.newRun(content, seed), 'cache');
+const fresh = (seed: number) => runs.pickReward(content, runs.newRun(content, seed, 'monolith'), 'cache');
 
 const endTurn = (s: BattleState, sum = summary()) => rules.resolveTurn(content, s, rules.planTurn(content, s), sum);
 
@@ -833,9 +833,14 @@ test('memory leak builds up across turns, Hotfix does not help, a restart (card 
   assert.equal(nextTurn(r).enemy.leak, undefined);
 });
 
-test('run: starts with the infrastructure pick, then the map', () => {
-  const run = runs.newRun(content, 3);
+test('run: starts with the chassis, then the infrastructure pick, then the map', () => {
+  const start = runs.newRun(content, 3);
+  assert.equal(start.phase, 'chassis');
+  assert.equal(runs.chooseChassis(content, start, 'nope'), start, 'unknown chassis: nothing happens');
+  const run = runs.chooseChassis(content, start, 'event_driven');
+  assert.equal(run.chassis, 'event_driven');
   assert.equal(run.phase, 'reward');
+  assert.equal(runs.newRun(content, 3, 'microservice').phase, 'reward', 'a chassis given up front skips the choice');
   assert.deepEqual(run.reward, content.run.startPick);
   for (const id of ['cache', 'index']) assert.ok(!run.deck.includes(id), `${id} is not given for free`);
   const picked = runs.pickReward(content, run, 'index');
@@ -962,11 +967,13 @@ test('sockets: each module plugs where it acts; other sockets are not touched', 
   const d = rules.designOf(content, s);
   assert.equal(rules.nodeOf(d, 'db')!.config!.instances, 2, 'replica scales the storage socket node');
   assert.ok(rules.nodeOf(d, 'cache'));
-  // the storage socket is full: Index has to replace the replica, the cache stays
-  const [h, uid] = withCard(s, 'index');
-  assert.deepEqual(rules.placements(content, h, uid), [{ socket: 'db', replace: rules.moduleOf(s, 'replica')!.uid }]);
-  const swapped = rules.playCard(content, h, uid, { replace: rules.moduleOf(s, 'replica')!.uid });
-  assert.ok(rules.moduleOf(swapped, 'cache') && rules.moduleOf(swapped, 'index') && !rules.moduleOf(swapped, 'replica'));
+  // Index still fits the storage socket; then it is full, and Vertical has to replace one of them while the cache stays
+  const both = playIn(s, 'index');
+  assert.equal(rules.modulesAt(both, 'db').length, 2);
+  const [h, uid] = withCard(both, 'vertical');
+  assert.deepEqual(rules.placements(content, h, uid).map((m) => m.replace), [rules.moduleOf(both, 'replica')!.uid, rules.moduleOf(both, 'index')!.uid]);
+  const swapped = rules.playCard(content, h, uid, { replace: rules.moduleOf(both, 'replica')!.uid });
+  assert.ok(rules.moduleOf(swapped, 'cache') && rules.moduleOf(swapped, 'vertical') && !rules.moduleOf(swapped, 'replica'));
   // a call policy put in after the cache still sits on the API's call, now into the cache
   const t = playIn(s, 'timeout');
   assert.equal(apiCall(rules.designOf(content, t))!.target, 'cache');
@@ -1045,4 +1052,38 @@ test('combos: on while every module is in, off when one goes; mods and flags app
   assert.equal((queue.autoscale as unknown as { metric: string }).metric, 'queueLength', 'KEDA: workers follow the backlog');
   q = playIn(q, 'cache');
   assert.equal(rules.modulesOf(q).length, 3, 'queue, autoscaler and cache each have their own socket');
+});
+
+test('chassis: every system plans a turn; roles and sockets point at its own nodes', () => {
+  for (const ch of content.chassis) {
+    const s = rules.newBattle(content, 4, { enemy: 'swarm', chassis: ch.id });
+    assert.equal(s.chassis, ch.id);
+    const d = rules.planTurn(content, s).input.design;
+    for (const ref of ['api', 'db', 'ext'] as const) assert.ok(rules.nodeOf(d, ch.aliases[ref]), `${ch.id}: ${ref} → ${ch.aliases[ref]}`);
+    for (const sk of ch.sockets) {
+      const at = sk.at;
+      if ('node' in at) assert.ok(rules.nodeOf(d, at.node), `${ch.id}/${sk.id}`);
+      if ('before' in at) assert.ok(rules.nodeOf(d, at.before), `${ch.id}/${sk.id}`);
+      if ('edge' in at) assert.ok(rules.edgeAt(d, at.edge), `${ch.id}/${sk.id}`);
+    }
+  }
+  // microservices: a compute module goes where it is dropped, on that service only
+  const m = rules.newBattle(content, 4, { enemy: 'swarm', chassis: 'microservice' });
+  const [h, uid] = withCard(m, 'bigger_queue');
+  assert.deepEqual(rules.placements(content, h, uid).map((x) => x.socket), ['svcA', 'svcB']);
+  const q = (st: BattleState, id: string) => rules.nodeOf(rules.designOf(content, st), id)!.config!.queueSize;
+  const onB = rules.playCard(content, h, uid, { socket: 'svcB' });
+  assert.ok(q(onB, 'svcB')! > q(m, 'svcB')! && q(onB, 'svcA') === q(m, 'svcA'));
+  // the event-driven system has no async socket: a Message Queue has nowhere to go
+  const e = rules.newBattle(content, 4, { enemy: 'swarm', chassis: 'event_driven' });
+  const [eh, eu] = withCard(e, 'queue');
+  assert.equal(rules.canPlay(content, eh, eu), false);
+});
+
+test('run saves: a run from before chassis existed is still valid and builds on the first one', () => {
+  const old = structuredClone(fresh(9)) as RunState;
+  delete old.chassis;
+  assert.ok(runs.isValidRun(content, old));
+  assert.equal(rules.chassisDef(content, old.chassis).id, content.chassis[0].id);
+  assert.ok(!runs.isValidRun(content, { ...old, chassis: 'nope' }));
 });

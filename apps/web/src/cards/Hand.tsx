@@ -47,6 +47,8 @@ export interface HandCard {
   uid: number;
   def: CardDef;
   playable: boolean;
+  /** Why it cannot be played, when it is not the Ops (shown on the lifted card). */
+  blocked?: string;
 }
 
 /** Where a dragged card would land: your system, the enemy, or one of its minions. */
@@ -286,7 +288,7 @@ export function Hand({
                       else flyEls.current.delete(c.uid);
                     }}
                   >
-                    <CardFace def={c.def} playable={c.playable} lifted={lifted} />
+                    <CardFace def={c.def} playable={c.playable} lifted={lifted} blocked={c.blocked} />
                     {lifted && (
                       <p className="pointer-events-none absolute bottom-full left-1/2 mb-2 w-[220px] -translate-x-1/2 rounded-lg border border-white/10 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[11px] italic leading-snug text-muted-foreground shadow-lg shadow-black/60">
                         {c.def.lesson}
@@ -342,9 +344,11 @@ export function CardFace({
   lifted,
   glowing,
   lesson,
+  blocked,
 }: {
   def: CardDef;
   playable: boolean;
+  blocked?: string;
   lifted?: boolean;
   glowing?: boolean;
   /** Show the real-world lesson at the bottom (library; the hand shows it in a bubble). */
@@ -399,7 +403,7 @@ export function CardFace({
       {lesson && <p className="mt-1 border-t border-white/10 px-1 pt-1.5 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>}
       {lifted && !playable && (
         <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-black/75 py-1 text-center text-xs font-medium text-amber-200">
-          {def.unplayable ? 'Không thể đánh' : 'Không đủ Ops'}
+          {def.unplayable ? 'Không thể đánh' : (blocked ?? 'Không đủ Ops')}
         </span>
       )}
     </div>

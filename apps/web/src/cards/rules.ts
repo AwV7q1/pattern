@@ -145,12 +145,12 @@ export function designTraits(content: Content, state: BattleState) {
   const inst = (ref: NodeRef) => nodeOf(design, alias(content, state, ref))?.config?.instances ?? 1;
   const out = mainCall(content, state, design);
   return {
-    hasCache: !!nodeOf(design, 'cache'),
+    hasCache: design.nodes.some((n) => n.kind === 'cache'),
     instances: { api: inst('api'), db: inst('db') },
     waf: state.waf,
     retries: out?.retries ?? 0,
     retryBudget: !!out?.retryBudget,
-    modules: modulesOf(state).map((m) => baseId(m.card)),
+    modules: [...modulesOf(state).map((m) => baseId(m.card)), ...(chassisOf(content, state).builtin ?? [])],
   };
 }
 
@@ -753,10 +753,12 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
     cfg.costPerHour = Math.round((cfg.costPerHour ?? 0) * intent.costSpike * 1000) / 1000;
   }
   if (intent.bandwidth) Object.assign(client, { responseKb: intent.bandwidth.responseKb, bandwidthMbps: intent.bandwidth.mbps });
-  const model = nodeOf(design, 'cache')?.config?.cache;
-  if (model) {
+  // every cache answers to the cache settings and the attacker's busting; only the Redis a card built starts cold
+  for (const node of design.nodes) {
+    const model = node.kind === 'cache' ? node.config?.cache : undefined;
+    if (!model) continue;
     const opts = state.cache ?? {};
-    model.warm = (opts.placed ?? 0) < state.turn;
+    model.warm = node.id !== 'cache' || (opts.placed ?? 0) < state.turn;
     if (opts.swr) model.staleWhileRevalidate = true;
     // a boss passive is not an incident: Hotfix does not cancel it
     const bust = 1 - (1 - (hotfix ? 0 : (intent.cacheBust ?? 0))) * (1 - (passive?.cacheBust ?? 0));

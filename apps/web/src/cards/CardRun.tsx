@@ -14,6 +14,7 @@ import {
   bossOf,
   buy,
   canRemove,
+  chooseChassis,
   chooseEvent,
   chooseNode,
   currentEvent,
@@ -29,7 +30,8 @@ import {
   stepsPerAct,
 } from './run';
 import { canUpgrade, cardDef } from './rules';
-import type { FloorResult, RestChoice, RunState } from './types';
+import { layoutOf, SOCKET_KIND_LABEL } from './Infra';
+import type { ChassisDef, FloorResult, RestChoice, RunState, SocketKind } from './types';
 import { CardBattle } from './CardBattle';
 import { CardFace } from './Hand';
 import { CardLibrary } from './CardLibrary';
@@ -83,6 +85,7 @@ export function CardRun() {
 
   return (
     <RunScreen run={run} best={best.best} onNew={startNew}>
+      {run.phase === 'chassis' && <ChassisScreen onPick={(id) => setRun((r) => chooseChassis(CONTENT, r, id))} />}
       {run.phase === 'map' && <TowerMap content={CONTENT} run={run} onChoose={(id) => setRun((r) => chooseNode(CONTENT, r, id))} />}
       {run.phase === 'reward' && <RewardScreen run={run} onPick={(id) => setRun((r) => pickReward(CONTENT, r, id))} />}
       {run.phase === 'rest' && <RestScreen run={run} onChoose={(c) => setRun((r) => rest(CONTENT, r, c))} />}
@@ -240,6 +243,93 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
         </Button>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- chassis
+
+/** The start of a run: which system to build on. Each one has its own shape, sockets and budget. */
+function ChassisScreen({ onPick }: { onPick: (id: string) => void }) {
+  const [chosen, setChosen] = useState<string>(CONTENT.chassis[0].id);
+  return (
+    <div className="mx-auto flex max-w-6xl flex-col items-center gap-6">
+      <div className="text-center">
+        <div className="mb-1 text-2xl font-bold">Chọn kiến trúc hệ thống</div>
+        <p className="text-sm text-muted-foreground">Kiến trúc quyết định sơ đồ, các ổ lắp module và ngân sách cho cả ca trực. Lá bài giống nhau, nhưng mỗi kiến trúc lắp chúng vào chỗ khác nhau.</p>
+      </div>
+      <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {CONTENT.chassis.map((c) => (
+          <ChassisCard key={c.id} chassis={c} on={chosen === c.id} onClick={() => setChosen(c.id)} />
+        ))}
+      </div>
+      <Button onClick={() => onPick(chosen)}>
+        Bắt đầu với {CONTENT.chassis.find((c) => c.id === chosen)?.name}
+      </Button>
+    </div>
+  );
+}
+
+function ChassisCard({ chassis: c, on, onClick }: { chassis: ChassisDef; on: boolean; onClick: () => void }) {
+  const { main, branches } = layoutOf(c.design);
+  const label = (id: string) => {
+    const n = c.design.nodes.find((x) => x.id === id);
+    return id === c.aliases.ext ? 'Đối tác' : (n?.label ?? id);
+  };
+  const kinds = new Map<SocketKind, number>();
+  for (const sk of c.sockets) if (sk.cap > 0) kinds.set(sk.kind, (kinds.get(sk.kind) ?? 0) + sk.cap);
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      onClick={onClick}
+      className={cn(
+        'flex flex-col gap-3 rounded-2xl border-2 bg-card/70 p-4 text-left outline-none transition-[transform,border-color] duration-200 focus-visible:ring-2 focus-visible:ring-sky-300',
+        on ? '-translate-y-1 border-sky-400 shadow-[0_0_30px_rgba(56,189,248,0.25)]' : 'border-border hover:-translate-y-0.5',
+      )}
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-lg font-semibold">{c.name}</span>
+        <span className="font-mono text-xs text-muted-foreground">${(c.budgetPerHour ?? CONTENT.battle.budgetPerHour).toFixed(2)}/h</span>
+      </div>
+      {/* the request path, entry first, and its side calls */}
+      <div className="rounded-lg border border-dashed border-muted-foreground/30 p-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1">
+          {main.map((id, i) => (
+            <span key={id} className="flex items-center gap-1">
+              {i > 0 && <span className="text-muted-foreground/60">→</span>}
+              <span className="rounded border bg-background/60 px-1.5 py-0.5">{label(id)}</span>
+            </span>
+          ))}
+        </div>
+        {branches.map((b) => (
+          <div key={b.from} className="mt-1 flex flex-wrap items-center gap-1 text-muted-foreground">
+            <span>{label(b.from)} gọi</span>
+            {b.chain.map((id) => (
+              <span key={id} className="flex items-center gap-1">
+                <span className="text-muted-foreground/60">→</span>
+                <span className="rounded border bg-background/60 px-1.5 py-0.5 text-foreground">{label(id)}</span>
+              </span>
+            ))}
+          </div>
+        ))}
+      </div>
+      <p className="text-sm text-muted-foreground">{c.text}</p>
+      <div className="flex flex-wrap gap-1 text-[11px]">
+        {[...kinds].map(([k, n]) => (
+          <span key={k} className="rounded-full border border-violet-400/40 bg-violet-500/10 px-2 py-0.5 text-violet-200">
+            {n} ổ {SOCKET_KIND_LABEL[k]}
+          </span>
+        ))}
+      </div>
+      <ul className="space-y-0.5 text-xs">
+        {c.pros.map((t) => (
+          <li key={t} className="text-emerald-300">+ {t}</li>
+        ))}
+        {c.cons.map((t) => (
+          <li key={t} className="text-rose-300">− {t}</li>
+        ))}
+      </ul>
+    </button>
   );
 }
 

@@ -17,14 +17,16 @@
 //   run = chooseEvent(content, run, option, removeIndex?);
 //   run = nextAct(content, run);                      // after 'cleared'
 
-import { canUpgrade, cardDef, nextRandom } from './rules.ts';
+import { canUpgrade, cardDef, chassisDef, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
 import type { BattleSetup, BattleState, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-export function newRun(content: Content, seed: number): RunState {
-  return {
+/** A new run. With several chassis and none given, it starts by choosing one (phase `chassis`). */
+export function newRun(content: Content, seed: number, chassis?: string): RunState {
+  const choose = !chassis && content.chassis.length > 1;
+  const run: RunState = {
     version: 3,
     seed,
     rng: (seed ^ 0x9e3779b9) >>> 0,
@@ -33,7 +35,7 @@ export function newRun(content: Content, seed: number): RunState {
     path: [],
     climbed: 0,
     // the starting infrastructure is a choice, not a given
-    phase: content.run.startPick?.length ? 'reward' : 'map',
+    phase: choose ? 'chassis' : content.run.startPick?.length ? 'reward' : 'map',
     hp: content.run.hp,
     maxHp: content.run.hp,
     deck: [...content.battle.startingDeck],
@@ -46,6 +48,14 @@ export function newRun(content: Content, seed: number): RunState {
     relicOffer: [],
     history: [],
   };
+  if (!choose) run.chassis = chassisDef(content, chassis).id;
+  return run;
+}
+
+/** Pick the system to build on, then the starting infrastructure (or straight to the map). */
+export function chooseChassis(content: Content, prev: RunState, id: string): RunState {
+  if (prev.phase !== 'chassis' || !content.chassis.some((c) => c.id === id)) return prev;
+  return { ...clone(prev), chassis: id, phase: content.run.startPick?.length ? 'reward' : 'map' };
 }
 
 // ---------------------------------------------------------------- relics
@@ -176,7 +186,7 @@ export function battleSetup(content: Content, run: RunState): BattleSetup {
   const node = currentNode(content, run);
   if (!node || (node.kind !== 'battle' && node.kind !== 'elite' && node.kind !== 'boss')) throw new Error(`node ${run.node} is not a fight`);
   const legitScale = isWarmup(content, run, node.kind) ? 1 : 1 + (content.run.actScale.legit ?? 0) * (run.act - 1);
-  return { enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
+  return { chassis: chassisDef(content, run.chassis).id, enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
 }
 
 /** Title of the current fight, e.g. "Tinh anh: Bão Retry". */
@@ -444,7 +454,8 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
       r.act >= 1 &&
       r.act <= content.run.acts &&
       Number.isInteger(r.climbed) &&
-      ['map', 'battle', 'reward', 'rest', 'event', 'shop', 'cleared', 'won', 'lost'].includes(r.phase) &&
+      (r.chassis === undefined || content.chassis.some((c) => c.id === r.chassis)) &&
+      ['chassis', 'map', 'battle', 'reward', 'rest', 'event', 'shop', 'cleared', 'won', 'lost'].includes(r.phase) &&
       Array.isArray(r.deck) &&
       r.deck.every(isCard) &&
       Array.isArray(r.reward) &&

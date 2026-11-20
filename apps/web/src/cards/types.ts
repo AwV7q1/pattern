@@ -42,6 +42,8 @@ export interface ChassisDef {
   design: Design;
   /** Replaces `battle.budgetPerHour`. */
   budgetPerHour?: number;
+  /** Modules the system has built in (a bus is a queue): the attacker reads them like installed ones. */
+  builtin?: string[];
 }
 
 export type Effect =
@@ -451,7 +453,7 @@ export interface RunEvent {
   options: { label: string; effects: EventEffect[] }[];
 }
 
-export type RunPhase = 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'shop' | 'cleared' | 'won' | 'lost';
+export type RunPhase = 'chassis' | 'map' | 'battle' | 'reward' | 'rest' | 'event' | 'shop' | 'cleared' | 'won' | 'lost';
 
 export interface ShopStock {
   cards: { id: string; price: number; sold?: boolean }[];
@@ -491,6 +493,8 @@ export interface FloorResult {
 
 export interface RunState {
   version: 3;
+  /** The system the run builds on (`ChassisDef.id`); absent in older saves: the first chassis. */
+  chassis?: string;
   seed: number;
   /** RNG for rewards and events, advanced only by the run rules. */
   rng: number;

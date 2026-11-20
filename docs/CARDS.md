@@ -55,7 +55,17 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
   - Buff: Chặn theo vùng (lá Geo-block, bot ×0.7), Tarpit (request bot bị chặn gây sát thương ×1.5).
 - **Khung và ổ cắm** (`data/chassis.json`, `CardDef.fits`, `state.modules`). Mỗi trận dựng trên một khung (`ChassisDef`): topology gốc, danh sách ổ cắm (`sockets`) và bí danh vai trò (`aliases`: node nào là `api`, `db`, `ext`). Nội dung (ý định địch, status, lá scale/tune) chỉ gọi tên vai trò, nên chạy được trên mọi khung.
   - Ổ có kiểu theo vị trí: `link` (đường gọi giữa hai node: timeout, retry, breaker, pool, retry budget), `compute` (trên service: bigger queue, load shed, Autoscaler), `front` (chèn node trước một node: Redis), `storage` (trên DB: Index, Vertical, Replica), `async` (biến lời gọi thành bất đồng bộ: Message Queue), `edge` (trước cổng vào, dùng từ giai đoạn linh kiện mới).
-  - Khung Monolith: `API → DB` 3 ổ `link`, `API` 1 ổ `compute`, `Trước DB` 1 ổ `front`, `DB` 1 ổ `storage`, `API → Đối tác` 1 ổ `async`.
+  - Bốn khung, chọn ở đầu mỗi ca (`RunState.chassis`, phase `chassis`, `chooseChassis`; save cũ không có khung thì dùng khung đầu):
+
+    | Khung | Topology | Ổ | Ngân sách |
+    |---|---|---|---|
+    | Monolith | Nginx → API → DB, API → Đối tác | 3 `link`, 1 `compute`, 1 `front`, 2 `storage`, 1 `async` | $1.50/h |
+    | Hướng sự kiện | Nginx → API → DB, API → Bus → Worker → Đối tác | 3 `link` (2 API → DB, 1 Worker → Đối tác), 2 `compute` (API, Worker), 1 `front`, 2 `storage`; không có `async` (bus có sẵn, địch đọc nó như một Queue qua `builtin`) | $1.60/h |
+    | Microservice | Nginx → Gateway (gọi song song) → Đơn hàng → DB và Thanh toán → Đối tác | 3 `link`, 2 `compute` (mỗi service), 1 `front`, 2 `storage`, 1 `async` | $1.90/h |
+    | Đọc nhiều | CDN → Nginx → API (1 instance) → DB managed, API → Đối tác | 2 `link`, 1 `compute`, 1 `front`, 1 `async`, 1 `edge`; không có `storage` | $1.30/h |
+
+  - Mọi node cache (Redis của lá bài, CDN có sẵn) đều chịu cài đặt cache (`swr`, `normalize`) và phá cache của địch; chỉ Redis vừa lắp mới nguội. `designTraits.hasCache` tính cả CDN.
+  - Lá có `fits` mà khung không có ổ hợp lệ thì không đánh được (trên tay ghi "Hệ thống không có ổ hợp lệ").
   - Lá có `fits` lắp vào một ổ hợp lệ thay vì sửa thẳng design. Hiệu ứng lấy đích từ ổ: `tune`, `scale`, `autoscale` lên node của ổ, `edge` lên đường gọi của ổ, `cache` chèn trước node của ổ, `queue` chèn vào lời gọi của ổ. `designOf(content, state)` dựng design từ khung cộng mọi module; module thêm node (`front`, `async`, `edge`) dựng sau cùng, nên policy trên đường gọi đi theo lời gọi vào node mới.
   - `placements(content, state, uid)` liệt kê các nước đi `{ socket, replace? }`: mọi ổ hợp lệ còn chỗ, và mỗi module của ổ hợp lệ đã đầy. `playCard(..., { socket, replace })` lắp theo nước đó; không chỉ định thì lắp vào ổ trống đầu tiên. Đánh lại lá đã lắp thì module lên cấp (Redis +1k key mỗi cấp; tune áp thêm một lần), không tốn ổ.
   - Giao diện: ổ vẽ ngay trên sơ đồ (chip dưới node, khung nét đứt "+ Cache" / "+ Queue" trong đường đi, dải ổ của đường gọi dưới sơ đồ). Kéo lá có `fits` thì ổ hợp lệ sáng lên; thả lên một module trong ổ đầy là thay module đó.

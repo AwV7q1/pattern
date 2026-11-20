@@ -152,7 +152,7 @@ function SocketGhost({ socket, state, plug, refs, small }: { socket: SocketDef; 
       title={`Ổ trống: ${socket.label}`}
       className={cn(
         'relative flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed px-1 text-center text-[10px] leading-tight text-muted-foreground transition-[box-shadow,background-color,opacity,border-color] duration-150',
-        small ? 'h-10 w-14 py-0.5' : 'w-14 self-stretch',
+        small ? 'h-10 w-14 py-0.5' : 'w-11 self-stretch',
         look.over ? 'border-sky-400 bg-sky-500/15 text-sky-200 shadow-[0_0_18px_rgba(56,189,248,0.5)]' : look.valid ? 'border-sky-400/70 bg-sky-500/[0.06] text-sky-200' : 'border-muted-foreground/25',
         look.dragging && !look.valid && 'opacity-50',
       )}
@@ -165,7 +165,7 @@ function SocketGhost({ socket, state, plug, refs, small }: { socket: SocketDef; 
 }
 
 /** What an empty node-adding socket takes, written in its dashed place. */
-const GHOST_HINT: Partial<Record<SocketKind, string>> = { front: 'Cache', async: 'Queue', edge: 'CDN' };
+const GHOST_HINT: Partial<Record<SocketKind, string>> = { front: 'Cache', async: 'Queue', edge: 'Biên' };
 
 /** A connection; requests flow right to left, from the gateway inwards. */
 function Pipe({ policy }: { policy?: boolean }) {
@@ -222,6 +222,9 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
   const emptyAt = (pred: (s: SocketDef) => boolean) => sockets.filter((s) => pred(s) && s.cap > 0 && modulesAt(state, s.id).length === 0);
   const linkOn = (src: string) => sockets.some((s) => s.kind === 'link' && 'edge' in s.at && s.at.edge[0] === src && modulesAt(state, s.id).length > 0);
 
+  // a crowded line (microservices, a CDN in front) draws its nodes smaller
+  const ghosts = sockets.filter((s) => 'before' in s.at && s.cap > 0 && modulesAt(state, s.id).length === 0 && main.includes(s.at.before)).length;
+  const compact = main.length + ghosts > 4;
   const node = (id: string, small?: boolean) => {
     const n = nodeOf(d, id);
     if (!n) return null;
@@ -243,6 +246,7 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
           {...look}
           load={loads?.[id]}
           small={small}
+          compact={compact || small}
           className={ownLook ? ring(ownLook) : undefined}
         />
         {own && ownLook?.over && plug && <DropTag tone="system" text={dropText(plug, own.socket, state)} className="bottom-full mb-2" />}
@@ -270,18 +274,22 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
       {branches.map((b) => (
         <div key={b.from + b.chain[0]} className="mt-2 flex items-center justify-center gap-0.5 text-[11px]">
           <span className="text-muted-foreground">{nodeOf(d, b.from)?.label ?? b.from} gọi</span>
-          {emptyAt((s) => s.kind === 'async' && 'edge' in s.at && s.at.edge[0] === b.from && s.at.edge[1] === b.chain.at(-1)).map((s) => (
-            <span key={s.id} className="flex items-center gap-0.5">
-              <ArrowRight className="size-3 text-muted-foreground/60" />
-              <SocketGhost socket={s} state={state} plug={plug} refs={refs} small />
-            </span>
-          ))}
-          {b.chain.map((id) => (
-            <span key={id} className="flex items-center gap-0.5">
-              <ArrowRight className="size-3 text-muted-foreground/60" />
-              {node(id, true)}
-            </span>
-          ))}
+          {b.chain.map((id, i) => {
+            const prev = i ? b.chain[i - 1] : b.from;
+            const asyncHere = emptyAt((s) => s.kind === 'async' && 'edge' in s.at && s.at.edge[0] === prev && s.at.edge[1] === id);
+            return (
+              <span key={id} className="flex items-center gap-0.5">
+                {asyncHere.map((s) => (
+                  <span key={s.id} className="flex items-center gap-0.5">
+                    <ArrowRight className="size-3 text-muted-foreground/60" />
+                    <SocketGhost socket={s} state={state} plug={plug} refs={refs} small />
+                  </span>
+                ))}
+                <ArrowRight className="size-3 text-muted-foreground/60" />
+                {node(id, true)}
+              </span>
+            );
+          })}
         </div>
       ))}
       {links.length > 0 && (
@@ -305,6 +313,7 @@ function InfraNode({
   load,
   nodeRef,
   small,
+  compact,
   className,
 }: {
   icon: ReactNode;
@@ -318,6 +327,8 @@ function InfraNode({
   nodeRef?: (el: HTMLDivElement | null) => void;
   /** A side node (partner, queue): fixed width, not stretched along the line. */
   small?: boolean;
+  /** A crowded line: smaller text so names fit. */
+  compact?: boolean;
   className?: string;
 }) {
   const color =
@@ -332,16 +343,17 @@ function InfraNode({
     <div
       ref={nodeRef}
       className={cn(
-        'relative flex min-w-0 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 px-1.5 pb-2.5 pt-2 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
+        'relative flex min-w-0 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 pb-2.5 pt-2 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
         small ? 'w-24 shrink-0' : 'w-full',
+        compact ? 'px-0.5' : 'px-1.5',
         color,
         load?.bad && 'border-rose-500 bg-rose-950/60',
         className,
       )}
     >
-      <span className="[&_svg]:size-5">{icon}</span>
-      <div className="mt-0.5 max-w-full truncate text-sm font-medium">{title}</div>
-      <div className={cn('max-w-full truncate text-[11px] text-muted-foreground', load && 'font-mono', load?.bad && 'text-rose-300')}>
+      <span className={compact ? '[&_svg]:size-4' : '[&_svg]:size-5'}>{icon}</span>
+      <div className={cn('mt-0.5 max-w-full truncate font-medium', compact ? 'text-[11px]' : 'text-sm')}>{title}</div>
+      <div className={cn('max-w-full truncate text-muted-foreground', compact ? 'text-[9px]' : 'text-[11px]', load && 'font-mono', load?.bad && 'text-rose-300')}>
         {load ? `tải ${Math.round(load.util * 100)}%` : sub}
       </div>
       {load && (

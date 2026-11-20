@@ -5,6 +5,7 @@
 // --by-enemy (with --run): also list win rate and HP lost per enemy.
 // --only=greedy: run just these policies (comma list).
 // --jobs=4 (with --run): split the seeds over 4 processes.
+// --chassis=monolith: the system to build on (data/chassis.json; default the first).
 // --each: every normal and elite enemy, one by one, unscaled, at 80 HP (the "rut" policy uses its fixed deck).
 // Policies: idle, random, greedy (a reasonable human playing from a fixed priority list), forecast (plays the card
 // whose engine forecast is best, like a player reading the Dự kiến panel), rut (one fixed cache → scale → rate limit line, never
@@ -37,6 +38,8 @@ const runMode = process.argv.includes('--run');
 const byEnemy = process.argv.includes('--by-enemy');
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',');
 const eachMode = process.argv.includes('--each');
+const chassis = process.argv.find((a) => a.startsWith('--chassis='))?.slice(10) ?? content.chassis[0].id;
+if (!content.chassis.some((c) => c.id === chassis)) throw new Error(`unknown chassis ${chassis}`);
 const run = (input) => JSON.parse(wasm.run_headless(JSON.stringify(input)));
 // The forecast bot asks the engine about the same plan many times: memoise by input.
 const memo = new Map();
@@ -257,7 +260,7 @@ function pickNode(policy, run, rnd) {
 }
 
 function playRun(policy, seed) {
-  let run = runs.newRun(content, seed);
+  let run = runs.newRun(content, seed, chassis);
   const WANT = profile(policy)?.want ?? [];
   if (SMART[policy]?.deck) run = { ...run, deck: SMART[policy].deck };
   let r = seed;
@@ -309,7 +312,7 @@ if (eachMode) {
       let won = 0;
       let lost = 0;
       for (let seed = 1; seed <= fights; seed++) {
-        const s = fight(policy, seed, { enemy, maxHp: 80, deck: SMART[policy]?.deck });
+        const s = fight(policy, seed, { chassis, enemy, maxHp: 80, deck: SMART[policy]?.deck });
         if (s.phase === 'won') won++;
         lost += 80 - s.hp;
       }
@@ -349,7 +352,7 @@ async function climbAll(policy) {
     const to = Math.min(fights, from + size - 1);
     parts.push(
       new Promise((resolve, reject) => {
-        const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), `--worker=${policy}:${from}:${to}`], { stdio: ['ignore', 'pipe', 'inherit'] });
+        const child = spawn(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), `--worker=${policy}:${from}:${to}`, `--chassis=${chassis}`], { stdio: ['ignore', 'pipe', 'inherit'] });
         let buf = '';
         child.stdout.on('data', (d) => (buf += d));
         child.on('close', (code) => (code === 0 ? resolve(JSON.parse(buf)) : reject(new Error(`worker ${from}-${to} exited ${code}`))));
@@ -405,7 +408,7 @@ for (const policy of Object.keys(policies).filter((p) => !only || only.includes(
   let turns = 0;
   let hpLeft = 0;
   for (let seed = 1; seed <= fights; seed++) {
-    const s = fight(policy, seed);
+    const s = fight(policy, seed, { chassis });
     if (s.phase === 'won') {
       wins++;
       hpLeft += s.hp;

@@ -2,14 +2,14 @@
   {
     "id": "monolith",
     "name": "Monolith",
-    "text": "Một API làm hết mọi việc, gọi thẳng DB và đối tác. Rẻ, dễ hiểu, ít chỗ lắp thêm.",
+    "text": "Một API làm hết: đọc DB rồi gọi đối tác. Đơn giản, đủ ổ cho các module cơ bản.",
     "pros": [
-      "Rẻ, ít chặng nên nhanh",
+      "Ít chặng nên nhanh",
       "Dễ đọc tải"
     ],
     "cons": [
-      "Ít ổ lắp",
-      "API là điểm nghẽn chung"
+      "API là điểm nghẽn chung",
+      "Đối tác chậm giữ slot API"
     ],
     "aliases": {
       "api": "api",
@@ -51,7 +51,7 @@
         "id": "db",
         "kind": "storage",
         "label": "DB",
-        "cap": 1,
+        "cap": 2,
         "at": {
           "node": "db"
         }
@@ -155,6 +155,692 @@
           "source": "client",
           "target": "lb",
           "latencyMs": 5
+        },
+        {
+          "source": "lb",
+          "target": "api",
+          "latencyMs": 1
+        },
+        {
+          "source": "api",
+          "target": "db",
+          "latencyMs": 1,
+          "order": 0
+        },
+        {
+          "source": "api",
+          "target": "ext",
+          "latencyMs": 1,
+          "order": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "event_driven",
+    "name": "Hướng sự kiện",
+    "text": "API chỉ đọc DB rồi trả lời; việc gọi đối tác được đẩy vào bus và worker riêng xử lý sau.",
+    "pros": [
+      "Đối tác chậm không giữ API",
+      "Có ổ xử lý riêng cho worker"
+    ],
+    "cons": [
+      "Việc tồn hoặc lỗi trong bus vẫn tính là lỗi",
+      "Worker là chỗ nghẽn mới, tốn thêm tiền"
+    ],
+    "aliases": {
+      "api": "api",
+      "db": "db",
+      "ext": "ext"
+    },
+    "budgetPerHour": 1.6,
+    "sockets": [
+      {
+        "id": "api-db",
+        "kind": "link",
+        "label": "API → DB",
+        "cap": 2,
+        "at": {
+          "edge": [
+            "api",
+            "db"
+          ]
+        }
+      },
+      {
+        "id": "api",
+        "kind": "compute",
+        "label": "API",
+        "cap": 1,
+        "at": {
+          "node": "api"
+        }
+      },
+      {
+        "id": "worker",
+        "kind": "compute",
+        "label": "Worker",
+        "cap": 1,
+        "at": {
+          "node": "worker"
+        }
+      },
+      {
+        "id": "worker-ext",
+        "kind": "link",
+        "label": "Worker → Đối tác",
+        "cap": 1,
+        "at": {
+          "edge": [
+            "worker",
+            "ext"
+          ]
+        }
+      },
+      {
+        "id": "db-front",
+        "kind": "front",
+        "label": "Trước DB",
+        "cap": 1,
+        "at": {
+          "before": "db"
+        }
+      },
+      {
+        "id": "db",
+        "kind": "storage",
+        "label": "DB",
+        "cap": 2,
+        "at": {
+          "node": "db"
+        }
+      }
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng + bot",
+          "position": {
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "id": "lb",
+          "kind": "loadBalancer",
+          "label": "Nginx",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20000,
+            "queueSize": 0,
+            "latencyP50Ms": 0.2,
+            "latencyP99Ms": 1,
+            "costPerHour": 0.03
+          }
+        },
+        {
+          "id": "api",
+          "kind": "service",
+          "label": "API",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 20,
+            "queueSize": 30,
+            "latencyP50Ms": 20,
+            "latencyP99Ms": 80,
+            "costPerHour": 0.1,
+            "routing": "sequence"
+          }
+        },
+        {
+          "id": "db",
+          "kind": "database",
+          "label": "PostgreSQL",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 12,
+            "queueSize": 50,
+            "latencyP50Ms": 10,
+            "latencyP99Ms": 50,
+            "costPerHour": 0.5
+          }
+        },
+        {
+          "id": "bus",
+          "kind": "queue",
+          "label": "Bus sự kiện",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 40,
+            "queueSize": 2000,
+            "latencyP50Ms": 0.2,
+            "latencyP99Ms": 1,
+            "costPerHour": 0.05
+          }
+        },
+        {
+          "id": "worker",
+          "kind": "service",
+          "label": "Worker",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 40,
+            "queueSize": 40,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 15,
+            "costPerHour": 0.06
+          }
+        },
+        {
+          "id": "ext",
+          "kind": "service",
+          "label": "Đối tác (thanh toán, email)",
+          "position": {
+            "x": 0,
+            "y": 140
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 60,
+            "queueSize": 40,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 20,
+            "costPerHour": 0.05
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "client",
+          "target": "lb",
+          "latencyMs": 5
+        },
+        {
+          "source": "lb",
+          "target": "api",
+          "latencyMs": 1
+        },
+        {
+          "source": "api",
+          "target": "db",
+          "latencyMs": 1,
+          "order": 0
+        },
+        {
+          "source": "api",
+          "target": "bus",
+          "latencyMs": 1,
+          "order": 1
+        },
+        {
+          "source": "bus",
+          "target": "worker",
+          "latencyMs": 1
+        },
+        {
+          "source": "worker",
+          "target": "ext",
+          "latencyMs": 1
+        }
+      ]
+    },
+    "builtin": [
+      "queue"
+    ]
+  },
+  {
+    "id": "microservice",
+    "name": "Microservice",
+    "text": "Gateway gọi song song service Đơn hàng (đọc DB) và Thanh toán (gọi đối tác). Mỗi service tự scale, tự lắp module.",
+    "pros": [
+      "Nhiều ổ: mỗi service, mỗi đường gọi",
+      "Đối tác chậm chỉ giữ service Thanh toán"
+    ],
+    "cons": [
+      "Thêm một chặng mạng và tiền cho mỗi service",
+      "Chậm bằng nhánh chậm nhất"
+    ],
+    "aliases": {
+      "api": "svcA",
+      "db": "db",
+      "ext": "ext"
+    },
+    "budgetPerHour": 1.9,
+    "sockets": [
+      {
+        "id": "a-db",
+        "kind": "link",
+        "label": "Đơn hàng → DB",
+        "cap": 2,
+        "at": {
+          "edge": [
+            "svcA",
+            "db"
+          ]
+        }
+      },
+      {
+        "id": "b-ext",
+        "kind": "link",
+        "label": "Thanh toán → Đối tác",
+        "cap": 1,
+        "at": {
+          "edge": [
+            "svcB",
+            "ext"
+          ]
+        }
+      },
+      {
+        "id": "svcA",
+        "kind": "compute",
+        "label": "Đơn hàng",
+        "cap": 1,
+        "at": {
+          "node": "svcA"
+        }
+      },
+      {
+        "id": "svcB",
+        "kind": "compute",
+        "label": "Thanh toán",
+        "cap": 1,
+        "at": {
+          "node": "svcB"
+        }
+      },
+      {
+        "id": "db-front",
+        "kind": "front",
+        "label": "Trước DB",
+        "cap": 1,
+        "at": {
+          "before": "db"
+        }
+      },
+      {
+        "id": "db",
+        "kind": "storage",
+        "label": "DB",
+        "cap": 2,
+        "at": {
+          "node": "db"
+        }
+      },
+      {
+        "id": "b-async",
+        "kind": "async",
+        "label": "Thanh toán → Đối tác",
+        "cap": 1,
+        "at": {
+          "edge": [
+            "svcB",
+            "ext"
+          ]
+        }
+      }
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng + bot",
+          "position": {
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "id": "lb",
+          "kind": "loadBalancer",
+          "label": "Nginx",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20000,
+            "queueSize": 0,
+            "latencyP50Ms": 0.2,
+            "latencyP99Ms": 1,
+            "costPerHour": 0.03
+          }
+        },
+        {
+          "id": "gateway",
+          "kind": "service",
+          "label": "Gateway",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 400,
+            "queueSize": 200,
+            "latencyP50Ms": 1,
+            "latencyP99Ms": 4,
+            "costPerHour": 0.05,
+            "routing": "parallel"
+          }
+        },
+        {
+          "id": "svcA",
+          "kind": "service",
+          "label": "Đơn hàng",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 2,
+            "concurrency": 20,
+            "queueSize": 30,
+            "latencyP50Ms": 14,
+            "latencyP99Ms": 56,
+            "costPerHour": 0.1
+          }
+        },
+        {
+          "id": "svcB",
+          "kind": "service",
+          "label": "Thanh toán",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 24,
+            "queueSize": 30,
+            "latencyP50Ms": 6,
+            "latencyP99Ms": 24,
+            "costPerHour": 0.08
+          }
+        },
+        {
+          "id": "db",
+          "kind": "database",
+          "label": "PostgreSQL",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 12,
+            "queueSize": 50,
+            "latencyP50Ms": 10,
+            "latencyP99Ms": 50,
+            "costPerHour": 0.5
+          }
+        },
+        {
+          "id": "ext",
+          "kind": "service",
+          "label": "Đối tác (thanh toán, email)",
+          "position": {
+            "x": 0,
+            "y": 140
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 60,
+            "queueSize": 40,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 20,
+            "costPerHour": 0.05
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "client",
+          "target": "lb",
+          "latencyMs": 5
+        },
+        {
+          "source": "lb",
+          "target": "gateway",
+          "latencyMs": 1
+        },
+        {
+          "source": "gateway",
+          "target": "svcA",
+          "latencyMs": 1,
+          "order": 0
+        },
+        {
+          "source": "gateway",
+          "target": "svcB",
+          "latencyMs": 1,
+          "order": 1
+        },
+        {
+          "source": "svcA",
+          "target": "db",
+          "latencyMs": 1
+        },
+        {
+          "source": "svcB",
+          "target": "ext",
+          "latencyMs": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "read_heavy",
+    "name": "Đọc nhiều",
+    "text": "CDN đứng trước cổng vào trả lời các trang phổ biến. DB là dịch vụ managed: không lắp Index hay Replica được.",
+    "pros": [
+      "CDN đỡ phần lớn traffic đọc ngay từ đầu",
+      "Rẻ nhất"
+    ],
+    "cons": [
+      "Phá cache đánh thẳng vào CDN",
+      "Không có ổ lưu trữ, ngân sách thấp"
+    ],
+    "aliases": {
+      "api": "api",
+      "db": "db",
+      "ext": "ext"
+    },
+    "budgetPerHour": 1.3,
+    "sockets": [
+      {
+        "id": "api-db",
+        "kind": "link",
+        "label": "API → DB",
+        "cap": 2,
+        "at": {
+          "edge": [
+            "api",
+            "db"
+          ]
+        }
+      },
+      {
+        "id": "api",
+        "kind": "compute",
+        "label": "API",
+        "cap": 1,
+        "at": {
+          "node": "api"
+        }
+      },
+      {
+        "id": "db-front",
+        "kind": "front",
+        "label": "Trước DB",
+        "cap": 1,
+        "at": {
+          "before": "db"
+        }
+      },
+      {
+        "id": "api-ext",
+        "kind": "async",
+        "label": "API → Đối tác",
+        "cap": 1,
+        "at": {
+          "edge": [
+            "api",
+            "ext"
+          ]
+        }
+      },
+      {
+        "id": "edge",
+        "kind": "edge",
+        "label": "Biên",
+        "cap": 1,
+        "at": {
+          "before": "cdn"
+        }
+      }
+    ],
+    "design": {
+      "nodes": [
+        {
+          "id": "client",
+          "kind": "client",
+          "label": "Người dùng + bot",
+          "position": {
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "id": "cdn",
+          "kind": "cache",
+          "label": "CDN",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20000,
+            "queueSize": 0,
+            "latencyP50Ms": 0.5,
+            "latencyP99Ms": 2,
+            "costPerHour": 0.1,
+            "cache": {
+              "keys": 10000,
+              "zipf": 1,
+              "capacity": 120,
+              "ttlMs": 30000,
+              "coalesce": false,
+              "staleWhileRevalidate": false,
+              "warm": true
+            }
+          }
+        },
+        {
+          "id": "lb",
+          "kind": "loadBalancer",
+          "label": "Nginx",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20000,
+            "queueSize": 0,
+            "latencyP50Ms": 0.2,
+            "latencyP99Ms": 1,
+            "costPerHour": 0.03
+          }
+        },
+        {
+          "id": "api",
+          "kind": "service",
+          "label": "API",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 20,
+            "queueSize": 30,
+            "latencyP50Ms": 20,
+            "latencyP99Ms": 80,
+            "costPerHour": 0.1,
+            "routing": "sequence"
+          }
+        },
+        {
+          "id": "db",
+          "kind": "database",
+          "label": "PostgreSQL",
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 8,
+            "queueSize": 50,
+            "latencyP50Ms": 10,
+            "latencyP99Ms": 50,
+            "costPerHour": 0.5
+          }
+        },
+        {
+          "id": "ext",
+          "kind": "service",
+          "label": "Đối tác (thanh toán, email)",
+          "position": {
+            "x": 0,
+            "y": 140
+          },
+          "config": {
+            "instances": 1,
+            "concurrency": 60,
+            "queueSize": 40,
+            "latencyP50Ms": 4,
+            "latencyP99Ms": 20,
+            "costPerHour": 0.05
+          }
+        }
+      ],
+      "edges": [
+        {
+          "source": "client",
+          "target": "cdn",
+          "latencyMs": 5
+        },
+        {
+          "source": "cdn",
+          "target": "lb",
+          "latencyMs": 1
         },
         {
           "source": "lb",
