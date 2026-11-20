@@ -8,6 +8,8 @@ import { PrismaModule } from './prisma/prisma.service';
 import { AuthModule } from './auth/auth.module';
 import { AuthGuard, CsrfGuard } from './auth/guards';
 import { UserThrottlerGuard } from './common/throttler.guard';
+import { CardsController } from './cards/cards.controller';
+import { CardsService } from './cards/cards.service';
 import { EngineService } from './engine/engine.service';
 import { HealthController } from './health/health.controller';
 import { LeaderboardService } from './levels/leaderboard.service';
@@ -27,13 +29,14 @@ import { ProjectsService } from './projects/projects.service';
     PrismaModule,
     AuthModule,
   ],
-  controllers: [HealthController, LevelsController, ProjectsController, InterviewsController],
+  controllers: [HealthController, LevelsController, ProjectsController, InterviewsController, CardsController],
   providers: [
     EngineService,
     LevelsService,
     LeaderboardService,
     ProjectsService,
     InterviewsService,
+    CardsService,
     // order matters: CSRF, then who is calling, then rate limits per user
     { provide: APP_GUARD, useClass: CsrfGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

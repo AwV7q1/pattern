@@ -347,3 +347,31 @@ test('interviews: graded on the server, reference unlocked after an attempt', as
   assert.deepEqual(mine.map((m) => m.promptId), ['url-shortener', 'url-shortener']);
   assert.equal((await alice.get(`/interviews/attempts/${s.id}`)).status, 404, 'attempts are private');
 });
+
+test('cards daily: signed-in runs only, score recomputed, best per player, closed days refused', async () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const run = { climbed: 12, won: false, hp: 0, chassis: 'monolith', summary: { deck: ['patch'] } };
+  assert.equal((await browser().post(`/cards/daily/${today}`, run)).status, 401);
+
+  const first = await alice.json<{ score: number; improved: boolean; rank: number }>(await alice.post(`/cards/daily/${today}`, { ...run, score: 999999 }));
+  assert.equal(first.score, 12 * 100);
+  assert.deepEqual([first.improved, first.rank], [true, 1]);
+  // a worse run does not replace the best
+  const worse = await alice.json<{ best: number; improved: boolean }>(await alice.post(`/cards/daily/${today}`, { ...run, climbed: 3 }));
+  assert.deepEqual([worse.best, worse.improved], [1200, false]);
+  const won = await bob.json<{ score: number; rank: number }>(await bob.post(`/cards/daily/${today}`, { ...run, climbed: 27, won: true, hp: 40 }));
+  assert.deepEqual([won.score, won.rank], [27 * 100 + 1000 + 40 * 5, 1]);
+
+  const board = await browser().json<{ player: string; score: number }[]>(await browser().get(`/cards/daily/${today}/leaderboard`));
+  assert.deepEqual(
+    board.map((e) => [e.player, e.score]),
+    [
+      ['bob', 3900],
+      ['alice', 1200],
+    ],
+  );
+  assert.equal((await alice.post('/cards/daily/2020-01-01', run)).status, 400);
+  assert.equal((await alice.post(`/cards/daily/${today}`, { ...run, climbed: 1000 })).status, 400);
+  assert.equal((await alice.post(`/cards/daily/${today}`, { ...run, chassis: 'DROP TABLE' })).status, 400);
+  assert.equal((await browser().get('/cards/daily/nope/leaderboard')).status, 400);
+});

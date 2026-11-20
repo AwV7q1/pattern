@@ -28,6 +28,7 @@ model User {
   levels      Level[]
   scores      LeaderboardEntry[]
   attempts    InterviewAttempt[]
+  dailyRuns   CardsDailyEntry[]
 }
 
 /// How a user signs in. `local` = email + password; SSO adds `oidc:<name>`
@@ -162,4 +163,26 @@ model InterviewAttempt {
   createdAt  DateTime @default(now())
 
   @@index([userId, promptId])
+}
+
+/// Best run of each user on each day's card-game challenge (same seed and
+/// chassis for everyone that day). The score is recomputed on the server.
+model CardsDailyEntry {
+  /// UTC day, YYYY-MM-DD.
+  date        String
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score       Int
+  /// Map nodes cleared.
+  climbed     Int
+  won         Boolean
+  /// Error Budget left at the end.
+  hp          Int
+  chassis     String
+  /// What the run looked like (deck, relics, floor history), for display.
+  summary     Json
+  submittedAt DateTime @default(now())
+
+  @@id([date, userId])
+  @@index([date, score])
 }
