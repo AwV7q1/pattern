@@ -101,7 +101,7 @@ import { statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
-import { PostmortemPanel } from './Postmortem';
+import { PostmortemPanel } from './PostmortemPanel';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
 import { botDieMs, MINION_EXIT_MS, minionDieClass, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration, type DropTarget } from './Hand';

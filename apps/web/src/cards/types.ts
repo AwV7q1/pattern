@@ -183,7 +183,10 @@ export interface CardDef {
   cost: number;
   /** Curses have none. */
   rarity?: Rarity;
+  /** Effect text in the card text format (`textFormat.ts`): short, for the card face. */
   text: string;
+  /** More explanation in the same format, shown only in the hover popover. */
+  detail?: string;
   /** One line on the real-world idea behind the card. */
   lesson: string;
   effects: Effect[];
@@ -194,7 +197,7 @@ export interface CardDef {
   /** Curses: cannot be played, just clog the hand. */
   unplayable?: boolean;
   /** What the upgraded copy (id `<id>+`, from a rest stop) changes. */
-  upgrade?: { cost?: number; risk?: number; text: string; effects?: Effect[] };
+  upgrade?: { cost?: number; risk?: number; text: string; detail?: string; effects?: Effect[] };
   /** A risky deploy: playing it spends this much Error Budget (not allowed during a deploy freeze). */
   risk?: number;
   /** Set on the upgraded copy that `cardDef` builds. */

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import * as rules from './rules.ts';
 import * as runs from './run.ts';
 import { generateMap, ELITE_ROW } from './map.ts';
+import { parseCardText, plainCardText } from './textFormat.ts';
 import type { BattleState, Content, RunState } from './types';
 import type { Design, Summary } from '@/types';
 
@@ -1488,4 +1489,19 @@ test('postmortem: an over-budget fight names the most expensive node and advises
   assert.equal(avg.costs[0].util, 0.3);
   assert.equal(avg.costs[1].costPerHour, 0.2);
   assert.equal(avg.egress, 0.2);
+});
+
+test('card text follows the shared format (textFormat.ts)', () => {
+  for (const c of content.cards) {
+    for (const [field, text] of [['text', c.text], ['detail', c.detail], ['upgrade.text', c.upgrade?.text], ['upgrade.detail', c.upgrade?.detail]] as const) {
+      if (text === undefined) continue;
+      const errors: string[] = [];
+      const lines = parseCardText(text, errors);
+      assert.deepEqual(errors, [], `${c.id} ${field}`);
+      assert.ok(lines.length > 0, `${c.id} ${field} is empty`);
+      // the face holds at most 4 lines; the rest goes to `detail`
+      if (field.endsWith('text')) assert.ok(lines.length <= 4, `${c.id} ${field}: ${lines.length} lines`);
+      assert.doesNotMatch(plainCardText(text), /[{}*]/, `${c.id} ${field}`);
+    }
+  }
 });

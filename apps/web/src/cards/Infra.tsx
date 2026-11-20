@@ -10,6 +10,7 @@ import { activeCombos, alias, cardDef, chassisOf, currentIntent, designOf, hotfi
 import type { BattleState, CardDef, SocketDef, SocketKind } from './types';
 import { CONTENT } from './content';
 import { cardIcon } from './cardArt';
+import { plainCardText } from './textFormat';
 import type { DropTarget } from './Hand';
 
 export type NodeLoad = { util: number; bad: boolean };
@@ -120,7 +121,7 @@ function SocketStrip({ socket, state, plug, refs, label, combo }: { socket: Sock
             key={m.uid}
             ref={(el) => void (refs.mods.current[m.uid] = el)}
             data-module={m.uid}
-            title={`${def.name}${m.level > 1 ? ` (cấp ${m.level})` : ''}: ${def.text}${combo.has(m.uid) ? `\nCombo: ${combo.get(m.uid)}` : ''}`}
+            title={`${def.name}${m.level > 1 ? ` (cấp ${m.level})` : ''}: ${plainCardText(def.text)}${combo.has(m.uid) ? `\nCombo: ${combo.get(m.uid)}` : ''}`}
             className={cn(
               'flex max-w-[92px] items-center gap-0.5 rounded border px-1 py-0.5 transition-colors',
               hit

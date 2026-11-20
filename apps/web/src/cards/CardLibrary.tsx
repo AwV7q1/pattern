@@ -3,7 +3,8 @@ import { LibraryBig, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { CardDef, CardType } from './types';
-import { CardFace, TYPE_STYLE } from './Hand';
+import { CARD_BOX, CardFace, TYPE_STYLE } from './Hand';
+import { CardHover } from './CardText';
 import { TYPE_ICON } from './cardArt';
 import { baseId } from './rules';
 
@@ -71,14 +72,16 @@ export function CardLibrary({ cards, deck, onClose }: { cards: CardDef[]; deck: 
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto grid max-w-[1400px] grid-cols-[repeat(auto-fill,minmax(176px,1fr))] justify-items-center gap-x-4 gap-y-6">
+        <div className="mx-auto grid max-w-[1400px] grid-cols-[repeat(auto-fill,minmax(196px,1fr))] justify-items-center gap-x-4 gap-y-6">
           {shown.map((c) => {
             const n = copies.get(c.id) ?? 0;
             return (
               <div key={c.id} className="flex flex-col items-center gap-2">
-                <div className="h-[300px] w-[176px] transition-transform duration-200 hover:-translate-y-1">
-                  <CardFace def={c} playable lesson />
-                </div>
+                <CardHover def={c} className="transition-transform duration-200 hover:-translate-y-1">
+                  <div style={CARD_BOX}>
+                    <CardFace def={c} playable />
+                  </div>
+                </CardHover>
                 <span
                   className={cn(
                     'rounded-full px-2 py-0.5 text-[11px]',

@@ -113,16 +113,25 @@ export function TowerMap({ content, run, onChoose }: { content: Content; run: Ru
               title={info.label}
               style={{ left: `${x}%`, top: y }}
               className={cn(
-                'absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 transition-[transform,opacity] duration-200',
+                // Solid disc underneath: the tinted/dimmed face sits on it, so the
+                // path lines never show through a node.
+                'absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-background transition-transform duration-200',
                 big ? 'size-16' : 'size-11',
-                info.tone,
                 visited.has(n.id) && 'ring-2 ring-amber-300/80 ring-offset-2 ring-offset-background',
                 here && 'scale-110',
-                can && 'cursor-pointer border-amber-300 shadow-[0_0_22px_rgba(252,211,77,0.55)] hover:scale-115 motion-safe:animate-pulse focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200',
-                !can && !visited.has(n.id) && (past ? 'opacity-20' : 'opacity-45'),
+                can && 'cursor-pointer shadow-[0_0_22px_rgba(252,211,77,0.55)] hover:scale-115 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200',
               )}
             >
-              <Icon className={big ? 'size-8' : 'size-5'} />
+              <span
+                className={cn(
+                  'flex size-full items-center justify-center rounded-full border-2 transition-opacity duration-200',
+                  info.tone,
+                  can && 'border-amber-300 motion-safe:animate-pulse',
+                  !can && !visited.has(n.id) && (past ? 'opacity-20' : 'opacity-45'),
+                )}
+              >
+                <Icon className={big ? 'size-8' : 'size-5'} />
+              </span>
             </button>
           );
         })}

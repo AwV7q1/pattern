@@ -5,6 +5,8 @@ import { SOCKET_KIND_LABEL } from './Infra';
 import type { CardDef, CardType, Rarity } from './types';
 import { reduced } from './fx';
 import { TYPE_ICON, cardIcon } from './cardArt';
+import { CardPopover, CardText } from './CardText';
+import { plainCardText } from './textFormat';
 
 export const TYPE_STYLE: Record<CardType, { label: string; ring: string; frame: string; art: string; icon: string; chip: string }> = {
   infra: { label: 'Hạ tầng', ring: 'border-sky-400/70', frame: 'from-sky-950 to-zinc-950', art: 'from-sky-400/45 via-sky-800/40 to-slate-950', icon: 'text-sky-100', chip: 'bg-sky-500/20 text-sky-300' },
@@ -14,12 +16,13 @@ export const TYPE_STYLE: Record<CardType, { label: string; ring: string; frame: 
   curse: { label: 'Lời nguyền', ring: 'border-zinc-600', frame: 'from-zinc-900 to-zinc-950', art: 'from-zinc-500/30 via-zinc-800/40 to-zinc-950', icon: 'text-zinc-400', chip: 'bg-zinc-500/20 text-zinc-400' },
 };
 
-const CARD_W = 160;
-const CARD_H = 224;
+/** One card size everywhere (hand, rewards, shop, library): 5:7, like a playing card. */
+const CARD_W = 196;
+const CARD_H = 274;
 /** Radius of the circle the hand is laid out on. */
 const FAN_R = 1100;
 /** How much of a resting card hides below the screen edge. */
-const SINK = 64;
+const SINK = 84;
 const LIFT = 92;
 /** Deal / discard timing: one card's flight and the gap between cards. */
 const DEAL_MS = 340;
@@ -100,6 +103,8 @@ export function Hand({
   const [hover, setHover] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const handRef = useRef<HTMLDivElement>(null);
+  /** The lifted card, which the popover sits beside. */
+  const liftedRef = useRef<HTMLDivElement | null>(null);
   const n = cards.length;
   /** The element of each card that the deal / discard animations move. */
   const flyEls = useRef(new Map<number, HTMLDivElement>());
@@ -234,7 +239,7 @@ export function Hand({
               >
                 <button
                   type="button"
-                  aria-label={`${c.def.name}${c.playable ? '' : ' (không đánh được)'}`}
+                  aria-label={`${c.def.name}${c.playable ? '' : ' (không đánh được)'}: ${plainCardText(c.def.text)}`}
                   aria-disabled={!c.playable}
                   onFocus={() => setHover(c.uid)}
                   onBlur={() => setHover((h) => (h === c.uid ? null : h))}
@@ -286,14 +291,11 @@ export function Hand({
                     ref={(el) => {
                       if (el) flyEls.current.set(c.uid, el);
                       else flyEls.current.delete(c.uid);
+                      if (lifted) liftedRef.current = el;
                     }}
                   >
                     <CardFace def={c.def} playable={c.playable} lifted={lifted} blocked={c.blocked} />
-                    {lifted && (
-                      <p className="pointer-events-none absolute bottom-full left-1/2 mb-2 w-[220px] -translate-x-1/2 rounded-lg border border-white/10 bg-zinc-950/95 px-2.5 py-1.5 text-center text-[11px] italic leading-snug text-muted-foreground shadow-lg shadow-black/60">
-                        {c.def.lesson}
-                      </p>
-                    )}
+                    {lifted && <CardPopover def={c.def} anchor={liftedRef} />}
                   </div>
                 </button>
               </div>
@@ -330,12 +332,23 @@ export function Hand({
   );
 }
 
-/** Rarity badge on the artwork (common cards have none). */
-export const RARITY_STYLE: Record<Rarity, { label: string; text: string }> = {
-  basic: { label: 'Cơ bản', text: 'text-zinc-300' },
-  common: { label: 'Thường', text: 'text-zinc-200' },
-  uncommon: { label: 'Ít gặp', text: 'text-sky-300' },
-  rare: { label: 'Hiếm', text: 'text-amber-300' },
+/** Rarity: the card's outer border (bronze, silver, blue, gold); the label is for lists and the popover. */
+export const RARITY_STYLE: Record<Rarity, { label: string; text: string; border: string }> = {
+  basic: { label: 'Cơ bản', text: 'text-orange-300', border: 'border-orange-800/90' },
+  common: { label: 'Thường', text: 'text-zinc-200', border: 'border-zinc-300/80' },
+  uncommon: { label: 'Ít gặp', text: 'text-sky-300', border: 'border-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]' },
+  rare: { label: 'Hiếm', text: 'text-amber-300', border: 'border-amber-300 shadow-[0_0_16px_rgba(252,211,77,0.5)]' },
+};
+/** Curses have no rarity. */
+const CURSE_BORDER = 'border-zinc-700';
+
+/** The type's color, as the frame around the artwork. */
+const ART_RING: Record<CardType, string> = {
+  infra: 'ring-sky-400/70',
+  policy: 'ring-violet-400/70',
+  action: 'ring-emerald-400/70',
+  attack: 'ring-rose-400/70',
+  curse: 'ring-zinc-600',
 };
 
 export function CardFace({
@@ -343,7 +356,6 @@ export function CardFace({
   playable,
   lifted,
   glowing,
-  lesson,
   blocked,
 }: {
   def: CardDef;
@@ -351,8 +363,6 @@ export function CardFace({
   blocked?: string;
   lifted?: boolean;
   glowing?: boolean;
-  /** Show the real-world lesson at the bottom (library; the hand shows it in a bubble). */
-  lesson?: boolean;
 }) {
   const style = TYPE_STYLE[def.type];
   const Icon = cardIcon(def);
@@ -362,24 +372,20 @@ export function CardFace({
       className={cn(
         'relative flex size-full select-none flex-col overflow-hidden rounded-2xl border-2 bg-gradient-to-b p-1.5 text-left shadow-xl shadow-black/50 transition-[box-shadow,filter] duration-200',
         style.frame,
-        style.ring,
+        def.rarity ? RARITY_STYLE[def.rarity].border : CURSE_BORDER,
         !playable && 'brightness-75 saturate-50',
         lifted && 'shadow-2xl shadow-black/70',
         glowing && 'shadow-[0_0_28px_6px_rgba(251,191,36,0.45)]',
       )}
+      title={def.rarity ? `Độ hiếm: ${RARITY_STYLE[def.rarity].label}` : undefined}
     >
-      {/* artwork */}
-      <div className={cn('relative h-[72px] shrink-0 overflow-hidden rounded-xl bg-gradient-to-br ring-1 ring-inset ring-white/10', style.art)}>
+      {/* artwork: about 40% of the card, framed in the type's color */}
+      <div className={cn('relative h-[92px] shrink-0 overflow-hidden rounded-xl bg-gradient-to-br ring-2 ring-inset', ART_RING[def.type], style.art)}>
         <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(rgba(255,255,255,.35)_1px,transparent_1px)] [background-size:10px_10px]" />
-        <Icon aria-hidden className={cn('absolute -bottom-4 -right-3 size-[78px] opacity-15', style.icon)} strokeWidth={1.25} />
-        <Icon aria-hidden className={cn('absolute left-1/2 top-1/2 size-9 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_2px_6px_rgba(0,0,0,.6)]', style.icon)} strokeWidth={1.75} />
-        {def.rarity && def.rarity !== 'common' && (
-          <span className={cn('absolute bottom-1 left-1 rounded-full bg-black/55 px-1.5 py-px text-[9px] font-medium', RARITY_STYLE[def.rarity].text)}>
-            {RARITY_STYLE[def.rarity].label}
-          </span>
-        )}
+        <Icon aria-hidden className={cn('absolute -bottom-5 -right-4 size-[110px] opacity-15', style.icon)} strokeWidth={1.25} />
+        <Icon aria-hidden className={cn('absolute left-1/2 top-1/2 size-14 -translate-x-1/2 -translate-y-1/2 drop-shadow-[0_2px_8px_rgba(0,0,0,.6)]', style.icon)} strokeWidth={1.5} />
         {def.exhaust && (
-          <span className="absolute right-1 top-1 rounded-full bg-black/55 px-1.5 py-px text-[9px] font-medium text-amber-200">Tiêu hao</span>
+          <span className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 py-px text-[10px] font-medium text-amber-200">Tiêu hao</span>
         )}
       </div>
       {/* cost: a gem that overlaps the artwork's corner */}
@@ -403,14 +409,16 @@ export function CardFace({
         </span>
       )}
 
-      <p className={cn('mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight', def.upgraded && 'text-emerald-300')}>{def.name}</p>
-      <span className={cn('mx-auto mt-1 flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
-        <TypeIcon aria-hidden className="size-2.5" />
+      <p className={cn('mt-1.5 truncate px-1 text-center text-[15px] font-bold leading-tight', def.upgraded && 'text-emerald-300')}>{def.name}</p>
+      <span className={cn('mx-auto mt-1 flex max-w-full items-center gap-1 truncate whitespace-nowrap rounded-full px-2 py-px text-[9.5px] font-semibold uppercase tracking-wide', style.chip)}>
+        <TypeIcon aria-hidden className="size-2.5 shrink-0" />
         {style.label}
-        {def.fits && <span className="whitespace-nowrap opacity-80">· ổ {def.fits.map((k) => SOCKET_KIND_LABEL[k]).join('/')}</span>}
+        {def.fits && <span className="truncate opacity-80">· ổ {def.fits.map((k) => SOCKET_KIND_LABEL[k]).join('/')}</span>}
       </span>
-      <p className="flex flex-1 items-center justify-center px-1 pt-1 text-center text-[11px] leading-snug text-foreground/90">{def.text}</p>
-      {lesson && <p className="mt-1 border-t border-white/10 px-1 pt-1.5 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>}
+      {/* effect text: the shared format (textFormat.ts), the rest is in the hover popover */}
+      <div className="mt-1.5 flex min-h-0 flex-1 flex-col justify-center overflow-hidden rounded-lg bg-black/25 px-1.5 py-1.5 text-foreground/95">
+        <CardText text={def.text} />
+      </div>
       {lifted && !playable && (
         <span className="absolute inset-x-0 top-1/2 -translate-y-1/2 bg-black/75 py-1 text-center text-xs font-medium text-amber-200">
           {def.unplayable ? 'Không thể đánh' : (blocked ?? 'Không đủ Ops')}
@@ -421,6 +429,8 @@ export function CardFace({
 }
 
 export const CARD_SIZE = { w: CARD_W, h: CARD_H };
+/** Inline style for a box that holds one `CardFace`. */
+export const CARD_BOX = { width: CARD_W, height: CARD_H } as const;
 
 /** A small face-down stack (draw or discard pile) with its count. */
 export function Pile({

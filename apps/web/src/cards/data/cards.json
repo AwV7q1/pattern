@@ -5,7 +5,7 @@
     "type": "attack",
     "cost": 1,
     "rarity": "basic",
-    "text": "Gây 5 sát thương lên botnet.",
+    "text": "Gây {dmg:5} sát thương.",
     "lesson": "Bản vá nhỏ, nhanh: đủ chặn một đợt, không giải quyết gốc rễ.",
     "effects": [
       {
@@ -20,7 +20,7 @@
           "dmg": 8
         }
       ],
-      "text": "Gây 8 sát thương lên botnet."
+      "text": "Gây {dmg:8} sát thương."
     }
   },
   {
@@ -29,7 +29,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "basic",
-    "text": "+5 Headroom: hấp thụ sát thương lượt này.",
+    "text": "{turn} {hr:+5} Headroom.",
     "lesson": "Dư công suất một chút để chịu được đợt tăng đột ngột.",
     "effects": [
       {
@@ -44,7 +44,7 @@
           "n": 8
         }
       ],
-      "text": "+8 Headroom: hấp thụ sát thương lượt này."
+      "text": "{turn} {hr:+8} Headroom."
     }
   },
   {
@@ -53,7 +53,7 @@
     "type": "infra",
     "cost": 1,
     "rarity": "common",
-    "text": "+1 instance API cho cả trận. Tốn thêm $0.10/h.",
+    "text": "{battle} {inst:+1} instance API.\nChi phí {money:+$0.10/h}.",
     "lesson": "Scale ngang: thêm máy thì thêm slot, nhưng tốn tiền mỗi giờ.",
     "effects": [
       {
@@ -70,7 +70,7 @@
           "n": 2
         }
       ],
-      "text": "+2 instance API cho cả trận. Tốn thêm $0.20/h."
+      "text": "{battle} {inst:+2} instance API.\nChi phí {money:+$0.20/h}."
     }
   },
   {
@@ -78,9 +78,11 @@
     "name": "Read Replica",
     "type": "infra",
     "cost": 2,
-    "fits": ["storage"],
+    "fits": [
+      "storage"
+    ],
     "rarity": "uncommon",
-    "text": "+1 instance DB cho cả trận. Đắt: $0.50/h.",
+    "text": "{battle} {inst:+1} instance DB.\nĐắt: {money:$0.50/h}.",
     "lesson": "Database là phần đắt nhất và khó scale nhất.",
     "effects": [
       {
@@ -91,7 +93,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "+1 instance DB cho cả trận. Đắt: $0.50/h."
+      "text": "{battle} {inst:+1} instance DB.\nĐắt: {money:$0.50/h}."
     }
   },
   {
@@ -99,9 +101,12 @@
     "name": "Redis Cache",
     "type": "infra",
     "cost": 2,
-    "fits": ["front"],
+    "fits": [
+      "front"
+    ],
     "rarity": "uncommon",
-    "text": "Đặt Redis giữ 1k key trước DB (hit ~67% khi nóng; lượt đặt cache còn nguội). Đánh lại: +1k key, tối đa 4k.",
+    "text": "Redis trước DB giữ **1k key**.\nHit ~67% khi đã nóng.\n{again} +1k key (tối đa 4k).",
+    "detail": "Lượt vừa đặt, cache còn nguội nên hit thấp.\nKey phổ biến nằm sẵn trong cache, DB đỡ tải đọc.",
     "lesson": "Cache-aside: phần lớn request đọc không chạm tới DB, nhưng hit rate phụ thuộc phân bố key và dung lượng, không phải con số cố định.",
     "effects": [
       {
@@ -113,7 +118,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Đặt Redis giữ 1k key trước DB (hit ~67% khi nóng; lượt đặt cache còn nguội). Đánh lại: +1k key, tối đa 4k."
+      "text": "Redis trước DB giữ **1k key**.\nHit ~67% khi đã nóng.\n{again} +1k key (tối đa 4k)."
     }
   },
   {
@@ -121,9 +126,11 @@
     "name": "Timeout 250ms",
     "type": "policy",
     "cost": 0,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "common",
-    "text": "Lời gọi từ API xuống bỏ cuộc sau 250ms, nhả slot ngay.",
+    "text": "Lời gọi từ API bỏ cuộc sau {time:250ms}.\nNhả slot ngay.",
     "lesson": "Không timeout thì slot bị giữ khi DB chậm, lỗi lan ngược lên trên.",
     "effects": [
       {
@@ -146,7 +153,7 @@
           "n": 3
         }
       ],
-      "text": "Lời gọi từ API xuống bỏ cuộc sau 250ms, nhả slot ngay. +3 Headroom lượt này."
+      "text": "Lời gọi từ API bỏ cuộc sau {time:250ms}.\nNhả slot ngay.\n{turn} {hr:+3} Headroom."
     }
   },
   {
@@ -154,9 +161,12 @@
     "name": "Retry + Backoff",
     "type": "policy",
     "cost": 1,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "common",
-    "text": "API thử lại 2 lần khi lỗi, có backoff và jitter.",
+    "text": "API thử lại **2 lần** khi lỗi.\nCó backoff và jitter.",
+    "detail": "Backoff giãn dần khoảng chờ giữa các lần thử.\nJitter lệch ngẫu nhiên để các client không thử lại cùng lúc.",
     "lesson": "Retry cứu lỗi thoáng qua, nhưng khi quá tải thì nhân tải lên.",
     "effects": [
       {
@@ -170,7 +180,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "API thử lại 2 lần khi lỗi, có backoff và jitter."
+      "text": "API thử lại **2 lần** khi lỗi.\nCó backoff và jitter."
     }
   },
   {
@@ -178,9 +188,12 @@
     "name": "Circuit Breaker",
     "type": "policy",
     "cost": 1,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "uncommon",
-    "text": "Ngắt mạch khi ≥ 50% lời gọi từ API lỗi: trả lỗi nhanh 3 giây. Cẩn thận: khi mạch mở, mọi request đều lỗi.",
+    "text": "Ngắt mạch khi **≥50%** lời gọi lỗi.\nRồi trả lỗi nhanh trong {time:3s}.\n{warn} Lúc đó mọi request đều lỗi.",
+    "detail": "Lỗi nhanh tốt hơn treo chờ: slot được nhả, tầng dưới có thời gian hồi.",
     "lesson": "Fail fast để downstream có thời gian hồi phục.",
     "effects": [
       {
@@ -197,7 +210,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Ngắt mạch khi ≥ 50% lời gọi từ API lỗi: trả lỗi nhanh 3 giây. Cẩn thận: khi mạch mở, mọi request đều lỗi."
+      "text": "Ngắt mạch khi **≥50%** lời gọi lỗi.\nRồi trả lỗi nhanh trong {time:3s}.\n{warn} Lúc đó mọi request đều lỗi."
     }
   },
   {
@@ -206,7 +219,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "Lượt này lọc 50% traffic bot. Bot bị chặn gây sát thương lên botnet.",
+    "text": "{turn} Lọc {bot:50%} bot.\nBot bị chặn gây sát thương lên botnet.",
     "lesson": "Token bucket mỗi IP: kẻ spam bị 429, người dùng thật gần như không bị ảnh hưởng.",
     "effects": [
       {
@@ -221,7 +234,7 @@
           "cut": 0.7
         }
       ],
-      "text": "Lượt này lọc 70% traffic bot. Bot bị chặn gây sát thương lên botnet."
+      "text": "{turn} Lọc {bot:70%} bot.\nBot bị chặn gây sát thương lên botnet."
     }
   },
   {
@@ -230,7 +243,8 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "Lượt này +3 instance API (vẫn tính tiền lượt này).",
+    "text": "{turn} {inst:+3} instance API.",
+    "detail": "Vẫn tính tiền các instance này trong lượt.",
     "lesson": "Autoscale tạm thời: đỡ được spike, nhưng DB phía sau vẫn vậy.",
     "effects": [
       {
@@ -249,7 +263,7 @@
           "temp": true
         }
       ],
-      "text": "Lượt này +4 instance API (vẫn tính tiền lượt này)."
+      "text": "{turn} {inst:+4} instance API."
     }
   },
   {
@@ -258,7 +272,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "+7 Headroom: hấp thụ sát thương lượt này.",
+    "text": "{turn} {hr:+7} Headroom.",
     "lesson": "Trả dữ liệu cũ còn hơn trả lỗi (stale-while-revalidate).",
     "effects": [
       {
@@ -273,7 +287,7 @@
           "n": 11
         }
       ],
-      "text": "+11 Headroom: hấp thụ sát thương lượt này."
+      "text": "{turn} {hr:+11} Headroom."
     }
   },
   {
@@ -282,7 +296,8 @@
     "type": "action",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Rút 1 lá.",
+    "text": "{turn} Huỷ sự cố của địch.\nRút {draw:1} lá.",
+    "detail": "Sự cố: DB chậm, retry flood...",
     "lesson": "Đôi khi cách nhanh nhất là sửa đúng chỗ đang cháy.",
     "effects": [
       {
@@ -307,7 +322,7 @@
           "n": 1
         }
       ],
-      "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Gỡ 1 debuff. Rút 1 lá."
+      "text": "{turn} Huỷ sự cố của địch.\nGỡ 1 debuff.\nRút {draw:1} lá."
     }
   },
   {
@@ -316,7 +331,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Rút 2 lá.",
+    "text": "Rút {draw:2} lá.",
     "lesson": "Có sẵn quy trình thì xử lý sự cố nhanh hơn.",
     "effects": [
       {
@@ -331,7 +346,7 @@
           "n": 3
         }
       ],
-      "text": "Rút 3 lá."
+      "text": "Rút {draw:3} lá."
     }
   },
   {
@@ -340,7 +355,7 @@
     "type": "action",
     "cost": 0,
     "rarity": "common",
-    "text": "+1 Ops. Tiêu hao.",
+    "text": "{ops:+1} Ops.",
     "lesson": "On-call cũng là con người.",
     "effects": [
       {
@@ -356,7 +371,7 @@
           "n": 2
         }
       ],
-      "text": "+2 Ops. Tiêu hao."
+      "text": "{ops:+2} Ops."
     }
   },
   {
@@ -365,7 +380,7 @@
     "type": "attack",
     "cost": 1,
     "rarity": "common",
-    "text": "Gây 6 sát thương lên botnet.",
+    "text": "Gây {dmg:6} sát thương.",
     "lesson": "Chặn ở tầng mạng: rẻ, nhưng botnet đổi IP rất nhanh.",
     "effects": [
       {
@@ -380,7 +395,7 @@
           "dmg": 9
         }
       ],
-      "text": "Gây 9 sát thương lên botnet."
+      "text": "Gây {dmg:9} sát thương."
     }
   },
   {
@@ -389,7 +404,8 @@
     "type": "attack",
     "cost": 2,
     "rarity": "rare",
-    "text": "Gây 4 sát thương. Từ giờ lọc thêm 25% bot mỗi lượt (tối đa 75%).",
+    "text": "Gây {dmg:4} sát thương.\nTừ giờ lọc thêm {bot:25%} bot mỗi lượt.",
+    "detail": "Cộng dồn qua các lượt, tối đa 75%.",
     "lesson": "Luật WAF lọc theo dấu hiệu, có tác dụng lâu dài.",
     "effects": [
       {
@@ -414,7 +430,7 @@
           "max": 0.75
         }
       ],
-      "text": "Gây 7 sát thương. Từ giờ lọc thêm 25% bot mỗi lượt (tối đa 75%)."
+      "text": "Gây {dmg:7} sát thương.\nTừ giờ lọc thêm {bot:25%} bot mỗi lượt."
     }
   },
   {
@@ -423,7 +439,7 @@
     "type": "attack",
     "cost": 2,
     "rarity": "rare",
-    "text": "Gây 12 sát thương. Tiêu hao.",
+    "text": "Gây {dmg:12} sát thương.",
     "lesson": "Dụ bot vào endpoint giả để nhận diện và chặn cả cụm.",
     "effects": [
       {
@@ -439,7 +455,7 @@
           "dmg": 17
         }
       ],
-      "text": "Gây 17 sát thương. Tiêu hao."
+      "text": "Gây {dmg:17} sát thương."
     }
   },
   {
@@ -447,9 +463,12 @@
     "name": "Đánh Index",
     "type": "infra",
     "cost": 1,
-    "fits": ["storage"],
+    "fits": [
+      "storage"
+    ],
     "rarity": "uncommon",
-    "text": "Query DB nhanh gấp đôi cho cả trận (latency ×0.5).",
+    "text": "{battle} Query DB nhanh gấp đôi.",
+    "detail": "Latency của DB ×0.5.",
     "lesson": "Query chậm thường do thiếu index: sửa rẻ hơn nhiều so với mua thêm máy.",
     "effects": [
       {
@@ -462,7 +481,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Query DB nhanh gấp đôi cho cả trận (latency ×0.5)."
+      "text": "{battle} Query DB nhanh gấp đôi."
     }
   },
   {
@@ -470,9 +489,11 @@
     "name": "Scale dọc DB",
     "type": "infra",
     "cost": 2,
-    "fits": ["storage"],
+    "fits": [
+      "storage"
+    ],
     "rarity": "rare",
-    "text": "Máy DB to hơn: +50% kết nối đồng thời, giá ×1.6 cho cả trận.",
+    "text": "{battle} DB nhận **+50%** kết nối đồng thời.\n{warn} Giá DB ×1.6.",
     "lesson": "Scale dọc đơn giản nhưng có trần, và giá tăng nhanh hơn sức mạnh.",
     "effects": [
       {
@@ -486,7 +507,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Máy DB to hơn: +50% kết nối đồng thời, giá ×1.6 cho cả trận."
+      "text": "{battle} DB nhận **+50%** kết nối đồng thời.\n{warn} Giá DB ×1.6."
     }
   },
   {
@@ -494,9 +515,12 @@
     "name": "Tăng hàng đợi",
     "type": "infra",
     "cost": 0,
-    "fits": ["compute"],
+    "fits": [
+      "compute"
+    ],
     "rarity": "common",
-    "text": "Hàng đợi API ×2 cho cả trận: ít request bị từ chối hơn, nhưng chờ lâu hơn.",
+    "text": "{battle} Hàng đợi API ×2.\n{warn} Request chờ lâu hơn.",
+    "detail": "Hàng đợi dài hơn nên ít request bị từ chối hơn.",
     "lesson": "Queue lớn che được spike ngắn, nhưng khi quá tải kéo dài nó chỉ làm p99 tăng vọt.",
     "effects": [
       {
@@ -521,7 +545,7 @@
           "n": 3
         }
       ],
-      "text": "Hàng đợi API ×2 cho cả trận: ít request bị từ chối hơn, nhưng chờ lâu hơn. +3 Headroom lượt này."
+      "text": "{battle} Hàng đợi API ×2.\n{warn} Request chờ lâu hơn.\n{turn} {hr:+3} Headroom."
     }
   },
   {
@@ -529,9 +553,11 @@
     "name": "Load Shedding",
     "type": "policy",
     "cost": 1,
-    "fits": ["compute"],
+    "fits": [
+      "compute"
+    ],
     "rarity": "uncommon",
-    "text": "Hàng đợi API còn 30% cho cả trận: từ chối sớm thay vì để request chờ quá hạn.",
+    "text": "{battle} Hàng đợi API chỉ còn **30%**.\nTừ chối sớm thay vì để request chờ quá hạn.",
     "lesson": "Từ chối nhanh một phần để giữ p99 thấp cho phần còn lại tốt hơn là làm chậm tất cả.",
     "effects": [
       {
@@ -544,7 +570,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Hàng đợi API còn 30% cho cả trận: từ chối sớm thay vì để request chờ quá hạn."
+      "text": "{battle} Hàng đợi API chỉ còn **30%**.\nTừ chối sớm thay vì để request chờ quá hạn."
     }
   },
   {
@@ -552,9 +578,11 @@
     "name": "Connection Pool",
     "type": "policy",
     "cost": 1,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "uncommon",
-    "text": "Mỗi instance API giữ tối đa 8 kết nối tới tầng dưới, chờ pool tối đa 100ms.",
+    "text": "Mỗi instance API giữ tối đa **8** kết nối xuống dưới.\nChờ pool tối đa {time:100ms}.",
     "lesson": "Giới hạn số kết nối để DB không bị bóp nghẹt khi API scale ra nhiều máy.",
     "effects": [
       {
@@ -567,7 +595,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Mỗi instance API giữ tối đa 8 kết nối tới tầng dưới, chờ pool tối đa 100ms."
+      "text": "Mỗi instance API giữ tối đa **8** kết nối xuống dưới.\nChờ pool tối đa {time:100ms}."
     }
   },
   {
@@ -575,9 +603,12 @@
     "name": "Retry Budget",
     "type": "policy",
     "cost": 0,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "rare",
-    "text": "API chỉ retry khi số retry dưới 10% traffic. Đi kèm Retry + Backoff.",
+    "text": "API chỉ retry khi retry dưới **10%** traffic.\nDùng cùng Retry + Backoff.",
+    "detail": "Giữ cho retry không tự biến thành một đợt tấn công vào chính hệ thống.",
     "lesson": "Không giới hạn retry thì lúc sự cố, chính hệ thống của bạn tự DDoS tầng dưới.",
     "effects": [
       {
@@ -606,7 +637,7 @@
           "n": 4
         }
       ],
-      "text": "API chỉ retry khi số retry dưới 10% traffic. Đi kèm Retry + Backoff. +4 Headroom lượt này."
+      "text": "API chỉ retry khi retry dưới **10%** traffic.\nDùng cùng Retry + Backoff.\n{turn} {hr:+4} Headroom."
     }
   },
   {
@@ -615,7 +646,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "Lượt này lọc 30% traffic bot và +3 Headroom.",
+    "text": "{turn}\nLọc {bot:30%} bot.\n{hr:+3} Headroom.",
     "lesson": "Thử thách client đáng ngờ: bot bị loại, người thật vẫn qua được.",
     "effects": [
       {
@@ -638,7 +669,7 @@
           "n": 7
         }
       ],
-      "text": "Lượt này lọc 30% traffic bot và +7 Headroom."
+      "text": "{turn}\nLọc {bot:30%} bot.\n{hr:+7} Headroom."
     }
   },
   {
@@ -647,7 +678,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Loại mọi Tech Debt trên tay khỏi trận, rút 1 lá cho mỗi lá bị loại.",
+    "text": "Loại mọi Tech Debt trên tay khỏi trận.\nRút {draw:1} lá cho mỗi lá bị loại.",
     "lesson": "Trả nợ kỹ thuật sớm, trước khi nó chiếm hết thời gian của đội.",
     "effects": [
       {
@@ -657,7 +688,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Loại mọi Tech Debt trên tay khỏi trận, rút 1 lá cho mỗi lá bị loại."
+      "text": "Loại mọi Tech Debt trên tay khỏi trận.\nRút {draw:1} lá cho mỗi lá bị loại."
     }
   },
   {
@@ -666,7 +697,7 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "+3 Headroom. Rút 1 lá.",
+    "text": "{hr:+3} Headroom.\nRút {draw:1} lá.",
     "lesson": "Postmortem không đổ lỗi: hiểu vì sao sự cố xảy ra để lần sau xử lý nhanh hơn.",
     "effects": [
       {
@@ -689,7 +720,7 @@
           "n": 1
         }
       ],
-      "text": "+6 Headroom. Rút 1 lá."
+      "text": "{hr:+6} Headroom.\nRút {draw:1} lá."
     }
   },
   {
@@ -698,7 +729,7 @@
     "type": "attack",
     "cost": 1,
     "rarity": "common",
-    "text": "Gây 3 sát thương. Lượt này lọc thêm 25% bot.",
+    "text": "Gây {dmg:3} sát thương.\n{turn} Lọc thêm {bot:25%} bot.",
     "lesson": "Đẩy dải IP xấu vào \"hố đen\" ngay ở biên mạng, trước khi chạm tới hệ thống.",
     "effects": [
       {
@@ -721,7 +752,7 @@
           "cut": 0.25
         }
       ],
-      "text": "Gây 6 sát thương. Lượt này lọc thêm 25% bot."
+      "text": "Gây {dmg:6} sát thương.\n{turn} Lọc thêm {bot:25%} bot."
     }
   },
   {
@@ -730,7 +761,7 @@
     "type": "policy",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Cả trận: cache trả bản cũ ngay khi hết hạn và làm mới ở nền. Chống được TTL ngắn.",
+    "text": "{battle} Cache trả bản cũ khi hết hạn, làm mới ở nền.\nChống được TTL ngắn.",
     "lesson": "Hết hạn không có nghĩa là phải chờ DB: trả dữ liệu hơi cũ thường tốt hơn bắt người dùng đợi (HTTP stale-while-revalidate).",
     "effects": [
       {
@@ -740,7 +771,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Cả trận: cache trả bản cũ ngay khi hết hạn và làm mới ở nền. Chống được TTL ngắn."
+      "text": "{battle} Cache trả bản cũ khi hết hạn, làm mới ở nền.\nChống được TTL ngắn."
     }
   },
   {
@@ -749,7 +780,7 @@
     "type": "policy",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Cả trận: bỏ query string rác khỏi cache key, sức phá cache của địch chỉ còn 1/3.",
+    "text": "{battle} Cache key bỏ query string rác.\nĐịch phá cache chỉ còn **1/3**.",
     "lesson": "Cache key phải chuẩn hoá (sắp xếp, bỏ tham số thừa), nếu không ?x=random biến mọi request thành cache miss.",
     "effects": [
       {
@@ -768,7 +799,7 @@
           "n": 3
         }
       ],
-      "text": "Cả trận: bỏ query string rác khỏi cache key, sức phá cache của địch chỉ còn 1/3. +3 Headroom lượt này."
+      "text": "{battle} Cache key bỏ query string rác.\nĐịch phá cache chỉ còn **1/3**.\n{turn} {hr:+3} Headroom."
     }
   },
   {
@@ -777,7 +808,8 @@
     "type": "action",
     "cost": 1,
     "rarity": "common",
-    "text": "Xoá rò rỉ bộ nhớ đã tích tụ. Lượt này API thiếu 1 instance (đang khởi động lại).",
+    "text": "Xoá rò rỉ bộ nhớ đã tích tụ.\n{warn} Lượt này API thiếu 1 instance.",
+    "detail": "Instance đó đang khởi động lại.",
     "lesson": "Restart cuốn chiếu trả lại bộ nhớ bị rò, nhưng trong lúc đó bạn mất bớt năng lực; nó chữa triệu chứng chứ không sửa lỗi.",
     "effects": [
       {
@@ -794,7 +826,7 @@
           "n": 4
         }
       ],
-      "text": "Xoá rò rỉ bộ nhớ đã tích tụ. Lượt này API thiếu 1 instance. +4 Headroom lượt này."
+      "text": "Xoá rò rỉ bộ nhớ đã tích tụ.\n{warn} Lượt này API thiếu 1 instance.\n{turn} {hr:+4} Headroom."
     }
   },
   {
@@ -803,7 +835,8 @@
     "type": "action",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Gỡ mọi debuff đang có (Bot thích nghi, Hết CPU credit, Hoá đơn tăng vọt...). Rút 1 lá.",
+    "text": "Gỡ mọi debuff đang có.\nRút {draw:1} lá.",
+    "detail": "Debuff: Bot thích nghi, Hết CPU credit, Hoá đơn tăng vọt...",
     "lesson": "Khi không rõ cái gì hỏng, quay về phiên bản tốt gần nhất rồi điều tra sau: khôi phục trước, tìm nguyên nhân sau.",
     "effects": [
       {
@@ -816,7 +849,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Gỡ mọi debuff đang có. Rút 1 lá."
+      "text": "Gỡ mọi debuff đang có.\nRút {draw:1} lá."
     }
   },
   {
@@ -825,7 +858,7 @@
     "type": "attack",
     "cost": 1,
     "rarity": "common",
-    "text": "Gây 3 sát thương. Chặn theo vùng 2 lượt: lưu lượng bot ×0.7.",
+    "text": "Gây {dmg:3} sát thương.\nChặn theo vùng {turns:2}: lưu lượng bot ×0.7.",
     "lesson": "Chặn cả dải IP hay quốc gia bot đang dùng: rẻ và nhanh, nhưng chỉ tạm thời vì bot sẽ chuyển sang proxy ở nơi khác.",
     "effects": [
       {
@@ -839,7 +872,7 @@
       }
     ],
     "upgrade": {
-      "text": "Gây 3 sát thương. Chặn theo vùng 3 lượt: lưu lượng bot ×0.7.",
+      "text": "Gây {dmg:3} sát thương.\nChặn theo vùng {turns:3}: lưu lượng bot ×0.7.",
       "effects": [
         {
           "op": "attack",
@@ -859,7 +892,7 @@
     "type": "policy",
     "cost": 1,
     "rarity": "uncommon",
-    "text": "Tarpit 2 lượt: request bot bị chặn gây sát thương ×1.5.",
+    "text": "Tarpit {turns:2}.\nBot bị chặn gây sát thương ×1.5.",
     "lesson": "Thay vì từ chối ngay, giữ kết nối của bot thật lâu: mỗi kết nối bị giữ là một con bot không đi tấn công chỗ khác được.",
     "effects": [
       {
@@ -869,7 +902,7 @@
       }
     ],
     "upgrade": {
-      "text": "Tarpit 3 lượt: request bot bị chặn gây sát thương ×1.5.",
+      "text": "Tarpit {turns:3}.\nBot bị chặn gây sát thương ×1.5.",
       "effects": [
         {
           "op": "status",
@@ -884,9 +917,12 @@
     "name": "Autoscaler (HPA)",
     "type": "infra",
     "cost": 1,
-    "fits": ["compute"],
+    "fits": [
+      "compute"
+    ],
     "rarity": "uncommon",
-    "text": "Khi API bận, tự bật thêm tối đa 4 pod; mỗi pod mất 3s mới nhận tải. Pod chỉ tính tiền lúc chạy.",
+    "text": "API bận: tự bật thêm tối đa **4 pod**.\nMỗi pod mất {time:3s} mới nhận tải.",
+    "detail": "Pod chỉ tính tiền lúc đang chạy.",
     "lesson": "Autoscaling rẻ hơn giữ máy chờ sẵn, nhưng luôn chậm một nhịp: spike ngắn đã qua trước khi pod mới kịp khởi động.",
     "effects": [
       {
@@ -897,7 +933,7 @@
       }
     ],
     "upgrade": {
-      "text": "Khi API bận, tự bật thêm tối đa 5 pod; mỗi pod chỉ mất 1.5s để nhận tải. Pod chỉ tính tiền lúc chạy.",
+      "text": "API bận: tự bật thêm tối đa **5 pod**.\nMỗi pod mất {time:1.5s} mới nhận tải.",
       "effects": [
         {
           "op": "autoscale",
@@ -913,9 +949,12 @@
     "name": "Message Queue",
     "type": "infra",
     "cost": 2,
-    "fits": ["async"],
+    "fits": [
+      "async"
+    ],
     "rarity": "uncommon",
-    "text": "API trả lời ngay rồi đẩy việc gọi đối tác (thanh toán, email) vào hàng đợi; 30 worker xử lý sau. Việc còn tồn hoặc lỗi cuối lượt tính là request lỗi.",
+    "text": "Gọi đối tác qua hàng đợi, API trả lời ngay.\n**30 worker** xử lý sau.\n{warn} Việc tồn hoặc lỗi cuối lượt là request lỗi.",
+    "detail": "Đối tác: thanh toán, email, webhook.\nĐối tác chậm không còn giữ slot của API.",
     "lesson": "Hàng đợi tách người dùng khỏi phần chậm phía sau, nhưng không làm phần đó nhanh hơn: nếu worker không theo kịp, việc dồn lại và cuối cùng vẫn mất.",
     "effects": [
       {
@@ -926,7 +965,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "API trả lời ngay rồi đẩy việc gọi đối tác vào hàng đợi; 30 worker xử lý sau. Việc còn tồn hoặc lỗi cuối lượt tính là request lỗi."
+      "text": "Gọi đối tác qua hàng đợi, API trả lời ngay.\n**30 worker** xử lý sau.\n{warn} Việc tồn hoặc lỗi cuối lượt là request lỗi."
     }
   },
   {
@@ -934,9 +973,12 @@
     "name": "CDN",
     "type": "infra",
     "cost": 2,
-    "fits": ["edge"],
+    "fits": [
+      "edge"
+    ],
     "rarity": "uncommon",
-    "text": "Đặt CDN trước cổng vào, giữ sẵn 300 trang phổ biến (luôn nóng): request trúng không vào tới hệ thống. Đánh lại: +200 trang, tối đa 900. $0.10/h.",
+    "text": "CDN trước cổng giữ **300 trang** nóng.\n{again} +200 trang (tối đa 900).\nChi phí {money:$0.10/h}.",
+    "detail": "Trang luôn nóng, không có lượt nguội như cache.\nRequest trúng CDN không vào tới hệ thống.",
     "lesson": "CDN trả nội dung từ biên mạng, gần người dùng: rẻ hơn và đỡ cho cả hệ thống phía sau, nhưng chỉ với nội dung cache được.",
     "effects": [
       {
@@ -948,7 +990,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Đặt CDN trước cổng vào, giữ sẵn 300 trang phổ biến (luôn nóng): request trúng không vào tới hệ thống. Đánh lại: +200 trang, tối đa 900. $0.10/h."
+      "text": "CDN trước cổng giữ **300 trang** nóng.\n{again} +200 trang (tối đa 900).\nChi phí {money:$0.10/h}."
     }
   },
   {
@@ -956,9 +998,12 @@
     "name": "Lọc tại biên",
     "type": "policy",
     "cost": 1,
-    "fits": ["edge"],
+    "fits": [
+      "edge"
+    ],
     "rarity": "common",
-    "text": "Lọc 20% bot ngay tại biên chừng nào module còn lắp (cộng với WAF). Đánh lại: thêm 20%, tối đa 40%.",
+    "text": "Lọc {bot:20%} bot ngay tại biên.\n{again} Thêm {bot:20%} (tối đa 40%).",
+    "detail": "Có tác dụng chừng nào module còn lắp.\nCộng dồn với WAF.",
     "lesson": "Chặn ở biên (Anycast, scrubbing center) rẻ hơn chặn trong hệ thống, nhưng chỉ chặn được thứ nhận ra được.",
     "effects": [
       {
@@ -969,7 +1014,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Lọc 20% bot ngay tại biên chừng nào module còn lắp (cộng với WAF). Đánh lại: thêm 20%, tối đa 40%."
+      "text": "Lọc {bot:20%} bot ngay tại biên.\n{again} Thêm {bot:20%} (tối đa 40%)."
     }
   },
   {
@@ -977,9 +1022,12 @@
     "name": "Shard DB",
     "type": "infra",
     "cost": 2,
-    "fits": ["storage"],
+    "fits": [
+      "storage"
+    ],
     "rarity": "rare",
-    "text": "Chia DB làm 2 shard sau một router: mỗi shard nhận nửa tải, sự cố DB chỉ đánh 1 shard. Shard 2: $0.30/h.",
+    "text": "Chia DB thành 2 shard sau một router.\nMỗi shard nhận nửa tải.\nShard 2: {money:$0.30/h}.",
+    "detail": "Sự cố DB chỉ đánh vào 1 shard.",
     "lesson": "Sharding chia dữ liệu theo key cho nhiều máy: chịu tải ghi tốt hơn replica, đổi lại vận hành phức tạp hơn.",
     "effects": [
       {
@@ -989,7 +1037,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Chia DB làm 2 shard sau một router: mỗi shard nhận nửa tải, sự cố DB chỉ đánh 1 shard. Shard 2: $0.30/h."
+      "text": "Chia DB thành 2 shard sau một router.\nMỗi shard nhận nửa tải.\nShard 2: {money:$0.30/h}."
     }
   },
   {
@@ -997,9 +1045,12 @@
     "name": "Service Mesh",
     "type": "policy",
     "cost": 2,
-    "fits": ["link"],
+    "fits": [
+      "link"
+    ],
     "rarity": "rare",
-    "text": "Một module cho cả đường gọi: timeout 300ms, retry 1 lần có backoff và budget, circuit breaker.",
+    "text": "Timeout {time:300ms}.\nRetry 1 lần, có backoff và budget.\nCó circuit breaker.",
+    "detail": "Một module lo cả đường gọi: gộp Timeout, Retry + Backoff, Retry Budget và Circuit Breaker.",
     "lesson": "Sidecar của service mesh (Istio, Linkerd) áp chính sách gọi đồng nhất cho mọi service, không phải sửa code từng nơi.",
     "effects": [
       {
@@ -1024,7 +1075,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Một module cho cả đường gọi: timeout 300ms, retry 1 lần có backoff và budget, circuit breaker."
+      "text": "Timeout {time:300ms}.\nRetry 1 lần, có backoff và budget.\nCó circuit breaker."
     }
   },
   {
@@ -1032,9 +1083,12 @@
     "name": "Metrics",
     "type": "policy",
     "cost": 1,
-    "fits": ["observe"],
+    "fits": [
+      "observe"
+    ],
     "rarity": "common",
-    "text": "Dashboard theo dõi botnet: thấy trước ý định lượt sau (botnet ngẫu nhiên: tỉ lệ từng chiêu). Đánh lại: thấy 2 lượt.",
+    "text": "Thấy trước ý định lượt sau của botnet.\n{again} Thấy trước 2 lượt.",
+    "detail": "Botnet ngẫu nhiên: hiện tỉ lệ từng chiêu.",
     "lesson": "Metrics (Prometheus, Grafana) cho thấy xu hướng trước khi thành sự cố: biết trước là có thời gian chuẩn bị.",
     "effects": [
       {
@@ -1045,7 +1099,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Dashboard theo dõi botnet: thấy trước ý định lượt sau (botnet ngẫu nhiên: tỉ lệ từng chiêu). Đánh lại: thấy 2 lượt."
+      "text": "Thấy trước ý định lượt sau của botnet.\n{again} Thấy trước 2 lượt."
     }
   },
   {
@@ -1053,9 +1107,12 @@
     "name": "Distributed Tracing",
     "type": "policy",
     "cost": 1,
-    "fits": ["observe"],
+    "fits": [
+      "observe"
+    ],
     "rarity": "uncommon",
-    "text": "Ô Dự kiến đánh dấu node sẽ thành nút cổ chai nếu kết thúc lượt ngay. Rút 1 lá.",
+    "text": "Ô Dự kiến đánh dấu nút cổ chai.\nRút {draw:1} lá.",
+    "detail": "Đánh dấu node sẽ thành nút cổ chai nếu kết thúc lượt ngay.",
     "lesson": "Tracing (OpenTelemetry, Jaeger) theo một request qua mọi service, chỉ ra chặng nào chiếm thời gian.",
     "effects": [
       {
@@ -1068,7 +1125,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Ô Dự kiến đánh dấu node sẽ thành nút cổ chai nếu kết thúc lượt ngay. Rút 1 lá."
+      "text": "Ô Dự kiến đánh dấu nút cổ chai.\nRút {draw:1} lá."
     }
   },
   {
@@ -1076,9 +1133,11 @@
     "name": "Alerting",
     "type": "policy",
     "cost": 1,
-    "fits": ["observe"],
+    "fits": [
+      "observe"
+    ],
     "rarity": "uncommon",
-    "text": "Lượt nào có node sập hoặc từ chối request, đầu lượt sau rút thêm 1 lá. Đánh lại: +1 lá.",
+    "text": "Lượt có node sập hoặc từ chối request:\n{next} Rút thêm {draw:1} lá.\n{again} Thêm 1 lá.",
     "lesson": "Cảnh báo tốt báo theo triệu chứng người dùng thấy (lỗi, chậm), không theo từng chỉ số máy: người trực phản ứng sớm hơn.",
     "effects": [
       {
@@ -1088,7 +1147,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Lượt nào có node sập hoặc từ chối request, đầu lượt sau rút thêm 1 lá. Đánh lại: +1 lá."
+      "text": "Lượt có node sập hoặc từ chối request:\n{next} Rút thêm {draw:1} lá.\n{again} Thêm 1 lá."
     }
   },
   {
@@ -1096,9 +1155,12 @@
     "name": "Observability Stack",
     "type": "policy",
     "cost": 2,
-    "fits": ["observe"],
+    "fits": [
+      "observe"
+    ],
     "rarity": "rare",
-    "text": "Metrics, tracing và alerting trong một: thấy trước 2 lượt, đánh dấu nút cổ chai, node lỗi thì lượt sau rút thêm 1 lá.",
+    "text": "Thấy trước 2 lượt.\nĐánh dấu nút cổ chai.\nNode lỗi: lượt sau rút thêm {draw:1} lá.",
+    "detail": "Metrics, Tracing và Alerting gộp trong một module.",
     "lesson": "Ba trụ cột của observability: metrics cho biết có chuyện, tracing cho biết ở đâu, log cho biết vì sao.",
     "effects": [
       {
@@ -1116,7 +1178,7 @@
     ],
     "upgrade": {
       "cost": 1,
-      "text": "Metrics, tracing và alerting trong một: thấy trước 2 lượt, đánh dấu nút cổ chai, node lỗi thì lượt sau rút thêm 1 lá."
+      "text": "Thấy trước 2 lượt.\nĐánh dấu nút cổ chai.\nNode lỗi: lượt sau rút thêm {draw:1} lá."
     }
   },
   {
@@ -1126,7 +1188,7 @@
     "cost": 0,
     "risk": 4,
     "rarity": "uncommon",
-    "text": "Deploy liều: trừ 4 Error Budget. Lượt này +3 instance API và +4 Headroom. Không tốn Ops.",
+    "text": "{turn}\n{inst:+3} instance API.\n{hr:+4} Headroom.",
     "lesson": "Bỏ qua review và staging thì nhanh, nhưng mỗi lần như vậy là cược bằng error budget: còn budget thì được liều, hết thì phải đóng băng.",
     "effects": [
       {
@@ -1142,7 +1204,7 @@
     ],
     "upgrade": {
       "risk": 3,
-      "text": "Deploy liều: trừ 3 Error Budget. Lượt này +3 instance API và +4 Headroom. Không tốn Ops."
+      "text": "{turn}\n{inst:+3} instance API.\n{hr:+4} Headroom."
     }
   },
   {
@@ -1152,7 +1214,7 @@
     "cost": 0,
     "risk": 2,
     "rarity": "common",
-    "text": "Deploy liều: trừ 2 Error Budget. Rút 2 lá. Không tốn Ops.",
+    "text": "Rút {draw:2} lá.",
     "lesson": "Feature flag cho bật tính năng mới cho một phần người dùng và tắt ngay khi có lỗi: rủi ro nhỏ, đổi lại đi nhanh hơn.",
     "effects": [
       {
@@ -1167,7 +1229,7 @@
           "n": 3
         }
       ],
-      "text": "Deploy liều: trừ 2 Error Budget. Rút 3 lá. Không tốn Ops."
+      "text": "Rút {draw:3} lá."
     }
   },
   {
@@ -1178,7 +1240,7 @@
     "risk": 3,
     "rarity": "uncommon",
     "exhaust": true,
-    "text": "Deploy liều: trừ 3 Error Budget. Đến hết trận thấy trước 2 lượt của botnet. Tiêu hao.",
+    "text": "{battle} Thấy trước 2 lượt của botnet.",
     "lesson": "Chaos engineering (Chaos Monkey) cố tình gây lỗi lúc còn kiểm soát được, để biết hệ thống gãy ở đâu trước khi sự cố thật xảy ra.",
     "effects": [
       {
@@ -1188,7 +1250,7 @@
     ],
     "upgrade": {
       "risk": 2,
-      "text": "Deploy liều: trừ 2 Error Budget. Đến hết trận thấy trước 2 lượt của botnet. Tiêu hao."
+      "text": "{battle} Thấy trước 2 lượt của botnet."
     }
   },
   {
@@ -1198,7 +1260,8 @@
     "cost": 1,
     "rarity": "uncommon",
     "exhaust": true,
-    "text": "Trả trước 4 vàng vào hóa đơn trận này. Cả trận: instance API rẻ hơn 40%, DB rẻ hơn 30%. Tiêu hao.",
+    "text": "Trả trước {gold:4} vàng.\n{battle} Instance API rẻ hơn **40%**, DB rẻ hơn **30%**.",
+    "detail": "Số vàng trả trước trừ vào hóa đơn của trận này.",
     "lesson": "Cam kết dùng 1–3 năm thì nhà cung cấp giảm 30–70% giá. Hợp với phần tải nền chạy suốt ngày đêm, phí tiền nếu cam kết quá tay.",
     "effects": [
       {
@@ -1221,7 +1284,7 @@
       }
     ],
     "upgrade": {
-      "text": "Trả trước 2 vàng vào hóa đơn trận này. Cả trận: instance API rẻ hơn 40%, DB rẻ hơn 30%. Tiêu hao.",
+      "text": "Trả trước {gold:2} vàng.\n{battle} Instance API rẻ hơn **40%**, DB rẻ hơn **30%**.",
       "effects": [
         {
           "op": "tune",
@@ -1250,8 +1313,11 @@
     "type": "infra",
     "cost": 1,
     "rarity": "common",
-    "fits": ["compute"],
-    "text": "Ổ service: +2 instance API giá 30%. Mỗi lượt có 25% bị nhà cung cấp thu hồi (lượt đó mất số instance này). Đánh lại: +2 nữa.",
+    "fits": [
+      "compute"
+    ],
+    "text": "{inst:+2} instance API, giá 30%.\n{warn} Mỗi lượt 25% bị thu hồi.\n{again} +2 nữa.",
+    "detail": "Bị thu hồi: lượt đó mất số instance này.",
     "lesson": "Spot/preemptible là máy thừa của nhà cung cấp, rẻ tới 70–90% nhưng có thể bị lấy lại bất cứ lúc nào: chỉ dùng cho phần tải chịu được việc mất máy.",
     "effects": [
       {
@@ -1262,7 +1328,7 @@
       }
     ],
     "upgrade": {
-      "text": "Ổ service: +3 instance API giá 30%. Mỗi lượt có 25% bị nhà cung cấp thu hồi (lượt đó mất số instance này). Đánh lại: +3 nữa.",
+      "text": "{inst:+3} instance API, giá 30%.\n{warn} Mỗi lượt 25% bị thu hồi.\n{again} +3 nữa.",
       "effects": [
         {
           "op": "spot",
@@ -1279,8 +1345,10 @@
     "type": "policy",
     "cost": 1,
     "rarity": "common",
-    "fits": ["compute"],
-    "text": "Ổ service: đổi sang instance nhỏ hơn. Mỗi instance rẻ hơn 35% nhưng nhận ít hơn 15% request cùng lúc.",
+    "fits": [
+      "compute"
+    ],
+    "text": "Đổi sang instance nhỏ hơn: rẻ hơn **35%**.\n{warn} Nhận ít hơn 15% request cùng lúc.",
     "lesson": "Phần lớn máy chủ cloud chạy dưới 30% CPU. Xem số đo thật rồi hạ cỡ máy là cách tiết kiệm nhanh nhất, miễn còn đủ khoảng dư cho giờ cao điểm.",
     "effects": [
       {
@@ -1294,7 +1362,7 @@
     ],
     "upgrade": {
       "cost": 0,
-      "text": "Ổ service: đổi sang instance nhỏ hơn. Mỗi instance rẻ hơn 35% nhưng nhận ít hơn 15% request cùng lúc."
+      "text": "Đổi sang instance nhỏ hơn: rẻ hơn **35%**.\n{warn} Nhận ít hơn 15% request cùng lúc."
     }
   },
   {
@@ -1303,8 +1371,10 @@
     "type": "policy",
     "cost": 1,
     "rarity": "uncommon",
-    "fits": ["observe"],
-    "text": "Ổ quan sát: lượt vượt ngân sách mất ít hơn 4 Error Budget (đánh lại: thêm 4, tối đa 12). Rút 1 lá.",
+    "fits": [
+      "observe"
+    ],
+    "text": "Lượt vượt ngân sách mất ít hơn {eb:4} Error Budget.\n{again} Thêm 4 (tối đa 12).\nRút {draw:1} lá.",
     "lesson": "Đặt budget alert và phát hiện bất thường chi phí theo giờ: biết chi phí chạy quá đà trong vài giờ thay vì đợi hóa đơn cuối tháng.",
     "effects": [
       {
@@ -1318,7 +1388,7 @@
       }
     ],
     "upgrade": {
-      "text": "Ổ quan sát: lượt vượt ngân sách mất ít hơn 6 Error Budget (đánh lại: thêm 6, tối đa 12). Rút 1 lá.",
+      "text": "Lượt vượt ngân sách mất ít hơn {eb:6} Error Budget.\n{again} Thêm 6 (tối đa 12).\nRút {draw:1} lá.",
       "effects": [
         {
           "op": "costGuard",
@@ -1338,7 +1408,8 @@
     "type": "action",
     "cost": 0,
     "rarity": "common",
-    "text": "Lượt này API bớt 1 instance (tối thiểu 1). Rút 1 lá.",
+    "text": "{turn} {inst:−1} instance API (tối thiểu 1).\nRút {draw:1} lá.",
+    "detail": "Bớt máy thì bớt tiền, nhưng còn ít chỗ đỡ tải hơn.",
     "lesson": "Tắt bớt máy khi tải thấp (ban đêm, cuối tuần, môi trường dev) là tiền tiết kiệm được ngay: trả theo giờ thì giờ nào không chạy, giờ đó không mất tiền.",
     "effects": [
       {
@@ -1353,7 +1424,7 @@
       }
     ],
     "upgrade": {
-      "text": "Lượt này API bớt 1 instance (tối thiểu 1). Rút 2 lá.",
+      "text": "{turn} {inst:−1} instance API (tối thiểu 1).\nRút {draw:2} lá.",
       "effects": [
         {
           "op": "scale",
@@ -1373,7 +1444,7 @@
     "name": "Tech Debt",
     "type": "curse",
     "cost": 0,
-    "text": "Không đánh được. Chiếm chỗ trên tay.",
+    "text": "Không đánh được.\nChiếm chỗ trên tay.",
     "lesson": "Nợ kỹ thuật làm mọi việc sau đó chậm hơn.",
     "effects": [],
     "unplayable": true

@@ -8,10 +8,11 @@ import { CONTENT } from './content';
 import { cardIcon } from './cardArt';
 import { INTENT_ICON } from './CardBattle';
 import { InfraLine, SOCKET_KIND_LABEL, type InfraRefs, type NodeLoad } from './Infra';
-import { PostmortemPanel } from './Postmortem';
+import { PostmortemPanel } from './PostmortemPanel';
 import { CostBreakdown } from './Cost';
 import { baseId, budgetOf, cardDef, chassisDef, currentIntent, forceIntent, hotNodes, intentsNow, nodeCosts, modulesOf, newBattle, placementsOf, planTurn, playCard, resolveTurn, socketOf } from './rules';
 import type { BattleState, CardDef, TurnReport } from './types';
+import { plainCardText } from './textFormat';
 
 /** Cards that change the system without a socket and stay for the fight. */
 const UNSOCKETED = new Set(['scale_api', 'waf', 'swr', 'cache_key', 'tarpit']);
@@ -236,7 +237,7 @@ export function CardSandbox() {
                     type="button"
                     disabled={blocked}
                     onClick={() => add(def)}
-                    title={def.text}
+                    title={plainCardText(def.text)}
                     className="flex items-start gap-2 rounded-lg border bg-card/60 p-2 text-left text-sm transition-colors hover:border-sky-400/60 disabled:opacity-40"
                   >
                     <Icon className="mt-0.5 size-4 shrink-0 text-sky-300" />

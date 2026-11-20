@@ -39,10 +39,11 @@ import {
 } from './run';
 import { canUpgrade, cardDef, chassisDef } from './rules';
 import { layoutOf, SOCKET_KIND_LABEL } from './Infra';
-import { PostmortemPanel } from './Postmortem';
+import { PostmortemPanel } from './PostmortemPanel';
 import type { ChassisDef, FloorResult, RestChoice, RunState, SocketKind } from './types';
 import { CardBattle } from './CardBattle';
-import { CardFace } from './Hand';
+import { CARD_BOX, CardFace } from './Hand';
+import { CardHover } from './CardText';
 import { CardLibrary } from './CardLibrary';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar, RelicTile } from './Relics';
@@ -275,9 +276,11 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
               onClick={() => setChosen(on ? null : id)}
               className={cn('flex flex-col items-center gap-2 rounded-2xl outline-none transition-transform duration-200 focus-visible:ring-2 focus-visible:ring-amber-300', on ? '-translate-y-2' : 'hover:-translate-y-1')}
             >
-              <div className={cn('h-[300px] w-[176px] rounded-2xl', on && 'ring-2 ring-amber-300 ring-offset-2 ring-offset-background')}>
-                <CardFace def={def} playable glowing={on} lesson />
-              </div>
+              <CardHover def={def} className={cn('rounded-2xl', on && 'ring-2 ring-amber-300 ring-offset-2 ring-offset-background')}>
+                <div style={CARD_BOX}>
+                  <CardFace def={def} playable glowing={on} />
+                </div>
+              </CardHover>
               <span className={cn('rounded-full px-2 py-0.5 text-[11px]', owned ? 'bg-amber-400/15 text-amber-200' : 'bg-muted text-muted-foreground')}>
                 {owned ? `Đang có ×${owned}` : 'Lá mới'}
               </span>
@@ -498,9 +501,11 @@ function DeckPicker({
               onClick={() => setChosen(on ? null : def.id)}
               className={cn('flex flex-col items-center gap-1.5 rounded-2xl outline-none transition-transform focus-visible:ring-2 focus-visible:ring-rose-300', on ? '-translate-y-1' : 'hover:-translate-y-0.5')}
             >
-              <div className={cn('h-[224px] w-[160px] rounded-2xl', on && (upgrade ? 'ring-2 ring-emerald-400' : 'ring-2 ring-rose-400'), on && 'ring-offset-2 ring-offset-background')}>
-                {upgrade ? <CardFace def={on ? cardDef(CONTENT, `${def.id}+`) : def} playable glowing={on} /> : <CardFace def={def} playable={!on} />}
-              </div>
+              <CardHover def={upgrade && on ? cardDef(CONTENT, `${def.id}+`) : def} className={cn('rounded-2xl', on && (upgrade ? 'ring-2 ring-emerald-400' : 'ring-2 ring-rose-400'), on && 'ring-offset-2 ring-offset-background')}>
+                <div style={CARD_BOX}>
+                  {upgrade ? <CardFace def={on ? cardDef(CONTENT, `${def.id}+`) : def} playable glowing={on} /> : <CardFace def={def} playable={!on} />}
+                </div>
+              </CardHover>
               <span className="font-mono text-[11px] text-muted-foreground">×{n}</span>
             </button>
           );
@@ -647,9 +652,11 @@ function ShopScreen({ run, setRun }: { run: RunState; setRun: React.Dispatch<Rea
             onClick={() => setRun((r) => buy(CONTENT, r, { card: i }))}
             className="flex flex-col items-center gap-2 rounded-2xl outline-none transition-transform enabled:hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-yellow-300 disabled:cursor-not-allowed"
           >
-            <div className={cn('h-[260px] w-[160px]', c.sold && 'opacity-30')}>
-              <CardFace def={cardDef(CONTENT, c.id)} playable={!c.sold && c.price <= run.gold} />
-            </div>
+            <CardHover def={cardDef(CONTENT, c.id)} className={cn(c.sold && 'opacity-30')}>
+              <div style={CARD_BOX}>
+                <CardFace def={cardDef(CONTENT, c.id)} playable={!c.sold && c.price <= run.gold} />
+              </div>
+            </CardHover>
             <Price price={c.price} gold={run.gold} sold={c.sold} />
           </button>
         ))}

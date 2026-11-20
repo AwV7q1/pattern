@@ -51,7 +51,7 @@ export function cardDef(content: Content, id: string): CardDef {
   let up = upgradedDefs.get(def);
   if (!up) {
     const u = def.upgrade!;
-    up = { ...def, id, name: `${def.name}+`, cost: u.cost ?? def.cost, ...((u.risk ?? def.risk) !== undefined && { risk: u.risk ?? def.risk }), text: u.text, effects: u.effects ?? def.effects, upgraded: true };
+    up = { ...def, id, name: `${def.name}+`, cost: u.cost ?? def.cost, ...((u.risk ?? def.risk) !== undefined && { risk: u.risk ?? def.risk }), text: u.text, ...((u.detail ?? def.detail) !== undefined && { detail: u.detail ?? def.detail }), effects: u.effects ?? def.effects, upgraded: true };
     upgradedDefs.set(def, up);
   }
   return up;

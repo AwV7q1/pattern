@@ -8,7 +8,8 @@ import type { CardDef, CardType, EnemyDef, Intent, MinionDef, Scale } from './ty
 import { BotAvatar, MinionAvatar, type BotRank, type BotStance } from './BotAvatar';
 import { botHit, botJab, botStrike, botSummon, minionDieClass, minionHit, minionStrike, type BotTier } from './botMotion';
 import { INTENT_ICON } from './CardBattle';
-import { CardFace, RARITY_STYLE, TYPE_STYLE } from './Hand';
+import { CARD_BOX, CardFace, RARITY_STYLE, TYPE_STYLE } from './Hand';
+import { CardHover, CardText } from './CardText';
 import { TYPE_ICON, statusIcon } from './cardArt';
 import { RelicTile } from './Relics';
 import { cardDef } from './rules';
@@ -616,12 +617,14 @@ function CardsTab({ selected, onCard }: { selected: string | null; onCard: (id: 
 
         {pick && <CardDetail def={pick} />}
 
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(176px,1fr))] justify-items-center gap-x-4 gap-y-6">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(196px,1fr))] justify-items-center gap-x-4 gap-y-6">
           {shown.map((c) => (
             <button key={c.id} type="button" onClick={() => onCard(c.id)} className={cn('flex flex-col items-center gap-2 rounded-2xl p-1', pick?.id === c.id && 'ring-2 ring-amber-300/70')}>
-              <div className="h-[300px] w-[176px] transition-transform duration-200 hover:-translate-y-1">
-                <CardFace def={face(c)} playable lesson />
-              </div>
+              <CardHover def={face(c)} className="transition-transform duration-200 hover:-translate-y-1">
+                <div style={CARD_BOX}>
+                  <CardFace def={face(c)} playable />
+                </div>
+              </CardHover>
               <span className={cn('text-[11px]', c.rarity ? RARITY_STYLE[c.rarity].text : 'text-zinc-400')}>
                 {c.rarity ? RARITY_STYLE[c.rarity].label : 'Lá nguyền'}
                 {c.upgrade ? ' · nâng cấp được' : ''}
@@ -640,12 +643,12 @@ function CardDetail({ def }: { def: CardDef }) {
   const usedBy = CONTENT.enemies.filter((e) => [...e.intents, ...(e.phase2?.intents ?? [])].some((i) => i.addCards?.card === def.id));
   return (
     <div className="grid gap-4 rounded-2xl border bg-card/60 p-4 md:grid-cols-[auto_auto_1fr]">
-      <div className="h-[300px] w-[176px]">
-        <CardFace def={def} playable lesson />
+      <div style={CARD_BOX}>
+        <CardFace def={def} playable />
       </div>
       {up && (
-        <div className="h-[300px] w-[176px]">
-          <CardFace def={up} playable lesson />
+        <div style={CARD_BOX}>
+          <CardFace def={up} playable />
         </div>
       )}
       <div className="grid content-start gap-2 text-sm">
@@ -657,12 +660,14 @@ function CardDetail({ def }: { def: CardDef }) {
           {def.exhaust && <span className="rounded-full bg-muted px-2 py-0.5 text-amber-200">Tiêu hao</span>}
           {inDeck > 0 && <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-200">Bộ bài đầu ×{inDeck}</span>}
         </div>
-        <p>{def.text}</p>
+        <CardText text={def.text} size="full" />
+        {def.detail && <CardText text={def.detail} size="full" className="text-muted-foreground" />}
         <p className="italic text-muted-foreground">{def.lesson}</p>
         {def.upgrade && (
-          <p>
-            <span className="font-semibold text-emerald-300">Nâng cấp{def.upgrade.cost !== undefined ? ` (${def.upgrade.cost} Ops)` : ''}:</span> {def.upgrade.text}
-          </p>
+          <div>
+            <p className="mb-1 font-semibold text-emerald-300">Nâng cấp{def.upgrade.cost !== undefined ? ` (${def.upgrade.cost} Ops)` : ''}:</p>
+            <CardText text={def.upgrade.text} size="full" />
+          </div>
         )}
         {usedBy.length > 0 && <p className="text-muted-foreground">Bị nhét vào bởi: {usedBy.map((e) => e.name).join(', ')}</p>}
       </div>
