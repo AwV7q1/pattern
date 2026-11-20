@@ -392,6 +392,16 @@ export function CardFace({
       >
         {def.unplayable ? '–' : def.cost}
       </span>
+      {/* a risky deploy: the Error Budget it spends, under the Ops gem */}
+      {def.risk && (
+        <span
+          className="absolute left-1 top-9 flex h-6 min-w-6 items-center justify-center rounded-full border-2 border-rose-200 bg-gradient-to-br from-rose-400 to-rose-700 px-1 font-mono text-xs font-black text-white shadow-md shadow-black/60"
+          aria-label={`Deploy liều: trừ ${def.risk} Error Budget`}
+          title={`Deploy liều: trừ ${def.risk} Error Budget`}
+        >
+          −{def.risk}
+        </span>
+      )}
 
       <p className={cn('mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight', def.upgraded && 'text-emerald-300')}>{def.name}</p>
       <span className={cn('mx-auto mt-1 flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>

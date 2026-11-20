@@ -52,6 +52,29 @@ export function newRun(content: Content, seed: number, chassis?: string): RunSta
   return run;
 }
 
+// ---------------------------------------------------------------- daily challenge
+
+/** Today in UTC (YYYY-MM-DD): the daily challenge changes at midnight UTC for everyone. */
+export const utcDay = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+
+/** The day's seed (FNV-1a of the date): the same map, rewards and hands for everyone. */
+export function dailySeed(date: string): number {
+  let h = 0x811c9dc5;
+  for (const ch of `pattern-daily:${date}`) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193);
+  return h >>> 0;
+}
+
+/** The day's chassis, fixed so every player builds on the same system. */
+export const dailyChassis = (content: Content, date: string) => content.chassis[dailySeed(date) % content.chassis.length];
+
+/** The day's run: its seed and chassis, marked so the end screen sends it to the leaderboard. */
+export function newDailyRun(content: Content, date: string): RunState {
+  return { ...newRun(content, dailySeed(date), dailyChassis(content, date).id), daily: date };
+}
+
+/** A run's score: map nodes cleared, a bonus for clearing the tower, the Error Budget left. The server computes the same. */
+export const runScore = (run: Pick<RunState, 'climbed' | 'phase' | 'hp'>) => run.climbed * 100 + (run.phase === 'won' ? 1000 : 0) + run.hp * 5;
+
 /** Pick the system to build on, then the starting infrastructure (or straight to the map). */
 export function chooseChassis(content: Content, prev: RunState, id: string): RunState {
   if (prev.phase !== 'chassis' || !content.chassis.some((c) => c.id === id)) return prev;
@@ -483,6 +506,7 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
       r.act <= content.run.acts &&
       Number.isInteger(r.climbed) &&
       (r.chassis === undefined || content.chassis.some((c) => c.id === r.chassis)) &&
+      (r.daily === undefined || /^\d{4}-\d{2}-\d{2}$/.test(r.daily)) &&
       (r.migrating === undefined || (content.chassis.some((c) => c.id === r.migrating!.to) && Number.isInteger(r.migrating.battles))) &&
       ['chassis', 'map', 'battle', 'reward', 'rest', 'event', 'shop', 'cleared', 'won', 'lost'].includes(r.phase) &&
       Array.isArray(r.deck) &&

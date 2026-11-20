@@ -1120,6 +1120,78 @@
     }
   },
   {
+    "id": "hotfix_prod",
+    "name": "Hotfix thẳng prod",
+    "type": "action",
+    "cost": 0,
+    "risk": 4,
+    "rarity": "uncommon",
+    "text": "Deploy liều: trừ 4 Error Budget. Lượt này +3 instance API và +4 Headroom. Không tốn Ops.",
+    "lesson": "Bỏ qua review và staging thì nhanh, nhưng mỗi lần như vậy là cược bằng error budget: còn budget thì được liều, hết thì phải đóng băng.",
+    "effects": [
+      {
+        "op": "scale",
+        "node": "api",
+        "n": 3,
+        "temp": true
+      },
+      {
+        "op": "headroom",
+        "n": 4
+      }
+    ],
+    "upgrade": {
+      "risk": 3,
+      "text": "Deploy liều: trừ 3 Error Budget. Lượt này +3 instance API và +4 Headroom. Không tốn Ops."
+    }
+  },
+  {
+    "id": "feature_flag",
+    "name": "Feature flag",
+    "type": "action",
+    "cost": 0,
+    "risk": 2,
+    "rarity": "common",
+    "text": "Deploy liều: trừ 2 Error Budget. Rút 2 lá. Không tốn Ops.",
+    "lesson": "Feature flag cho bật tính năng mới cho một phần người dùng và tắt ngay khi có lỗi: rủi ro nhỏ, đổi lại đi nhanh hơn.",
+    "effects": [
+      {
+        "op": "draw",
+        "n": 2
+      }
+    ],
+    "upgrade": {
+      "effects": [
+        {
+          "op": "draw",
+          "n": 3
+        }
+      ],
+      "text": "Deploy liều: trừ 2 Error Budget. Rút 3 lá. Không tốn Ops."
+    }
+  },
+  {
+    "id": "chaos_test",
+    "name": "Chaos test",
+    "type": "action",
+    "cost": 0,
+    "risk": 3,
+    "rarity": "uncommon",
+    "exhaust": true,
+    "text": "Deploy liều: trừ 3 Error Budget. Đến hết trận thấy trước 2 lượt của botnet. Tiêu hao.",
+    "lesson": "Chaos engineering (Chaos Monkey) cố tình gây lỗi lúc còn kiểm soát được, để biết hệ thống gãy ở đâu trước khi sự cố thật xảy ra.",
+    "effects": [
+      {
+        "op": "reveal",
+        "n": 2
+      }
+    ],
+    "upgrade": {
+      "risk": 2,
+      "text": "Deploy liều: trừ 2 Error Budget. Đến hết trận thấy trước 2 lượt của botnet. Tiêu hao."
+    }
+  },
+  {
     "id": "tech_debt",
     "name": "Tech Debt",
     "type": "curse",

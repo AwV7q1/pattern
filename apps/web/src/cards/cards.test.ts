@@ -1303,3 +1303,55 @@ test('sandbox: a weighted enemy is forced through its pick', () => {
   const list = rules.intentsNow(content, s);
   for (let i = 0; i < list.length; i++) assert.equal(rules.currentIntent(content, rules.forceIntent(content, s, i)).id, list[i].id);
 });
+
+// ---------------------------------------------------------------- error budget
+
+test('error budget: a risky deploy spends Error Budget instead of Ops, and stops during a freeze', () => {
+  const s = rules.newBattle(content, 1);
+  const [h, uid] = withCard(s, 'feature_flag');
+  h.ops = 0;
+  const after = rules.playCard(content, h, uid);
+  assert.equal(after.hp, h.hp - 2);
+  assert.equal(after.hand.length, h.hand.length - 1 + 2);
+
+  // not with the budget it would spend, nor in a freeze
+  const low = { ...h, hp: 2 };
+  assert.equal(rules.canPlay(content, low, uid), false);
+  const frozen = { ...h, hp: Math.floor(h.maxHp * rules.FREEZE_AT) - 1 };
+  assert.ok(rules.deployFrozen(frozen));
+  assert.equal(rules.riskBlock(frozen, rules.cardDef(content, 'feature_flag')), 'Đang đóng băng deploy');
+  assert.equal(rules.canPlay(content, frozen, uid), false);
+  // the upgraded copy keeps its own risk
+  assert.equal(rules.cardDef(content, 'hotfix_prod+').risk, 3);
+});
+
+test('error budget: a freeze recovers 1 a turn; Chaos test shows the next turns for the fight', () => {
+  const s = rules.newBattle(content, 1, { hp: 10, maxHp: 90 });
+  const next = endTurn(s);
+  assert.equal(next.hp, 11);
+  assert.ok(next.reports.at(-1)!.notes.some((n) => n.startsWith('Đóng băng deploy')));
+
+  const seen = playIn(rules.newBattle(content, 1, { enemy: 'swarm' }), 'chaos_test');
+  assert.equal(rules.foresightOf(content, seen), 2);
+  assert.equal(rules.foresightOf(content, endTurn(seen)), 2);
+});
+
+// ---------------------------------------------------------------- daily challenge
+
+test('daily: the same seed and chassis for everyone on a day, a different one the next', () => {
+  const a = runs.newDailyRun(content, '2026-11-20');
+  const b = runs.newDailyRun(content, '2026-11-20');
+  assert.deepEqual(a, b);
+  assert.equal(a.daily, '2026-11-20');
+  assert.notEqual(a.phase, 'chassis');
+  assert.equal(a.chassis, runs.dailyChassis(content, '2026-11-20').id);
+  assert.notEqual(runs.dailySeed('2026-11-21'), a.seed);
+  assert.ok(runs.isValidRun(content, a));
+  assert.equal(runs.isValidRun(content, { ...a, daily: 'yesterday' }), false);
+  assert.match(runs.utcDay(Date.UTC(2026, 0, 2, 23, 59)), /^2026-01-02$/);
+});
+
+test('daily: score = 100 per node cleared, 1000 for the tower, 5 per Error Budget left (same as the server)', () => {
+  assert.equal(runs.runScore({ climbed: 12, phase: 'lost', hp: 0 }), 1200);
+  assert.equal(runs.runScore({ climbed: 27, phase: 'won', hp: 40 }), 3900);
+});

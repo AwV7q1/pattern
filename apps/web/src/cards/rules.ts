@@ -51,7 +51,7 @@ export function cardDef(content: Content, id: string): CardDef {
   let up = upgradedDefs.get(def);
   if (!up) {
     const u = def.upgrade!;
-    up = { ...def, id, name: `${def.name}+`, cost: u.cost ?? def.cost, text: u.text, effects: u.effects ?? def.effects, upgraded: true };
+    up = { ...def, id, name: `${def.name}+`, cost: u.cost ?? def.cost, ...((u.risk ?? def.risk) !== undefined && { risk: u.risk ?? def.risk }), text: u.text, effects: u.effects ?? def.effects, upgraded: true };
     upgradedDefs.set(def, up);
   }
   return up;
@@ -308,7 +308,20 @@ export function canPlay(content: Content, state: BattleState, uid: number): bool
   const inst = state.hand.find((c) => c.uid === uid);
   if (!inst) return false;
   const def = cardDef(content, inst.id);
-  return !def.unplayable && def.cost <= state.ops && (!def.fits || placements(content, state, uid).length > 0);
+  return !def.unplayable && def.cost <= state.ops && (!def.fits || placements(content, state, uid).length > 0) && (!def.risk || riskBlock(state, def) === null);
+}
+
+/** Below this share of the Error Budget, risky deploys stop and the budget recovers 1 a turn. */
+export const FREEZE_AT = 0.25;
+/** A deploy freeze: the Error Budget is nearly spent. */
+export const deployFrozen = (state: Pick<BattleState, 'hp' | 'maxHp'>) => state.hp > 0 && state.hp < state.maxHp * FREEZE_AT;
+
+/** Why a risky card cannot be played now (null: it can). */
+export function riskBlock(state: BattleState, def: CardDef): string | null {
+  if (!def.risk) return null;
+  if (deployFrozen(state)) return 'Đang đóng băng deploy';
+  if (state.hp <= def.risk) return `Cần hơn ${def.risk} Error Budget`;
+  return null;
 }
 
 // ---------------------------------------------------------------- design helpers
@@ -432,7 +445,7 @@ function moduleEffects<K extends Effect['op']>(content: Content, state: BattleSt
 }
 
 /** Turns ahead the player sees (observability modules). */
-export const foresightOf = (content: Content, state: BattleState) => Math.max(0, ...moduleEffects(content, state, 'foresee').map(({ e, level }) => Math.min(e.max, e.n * level)));
+export const foresightOf = (content: Content, state: BattleState) => Math.max(state.revealed ?? 0, ...moduleEffects(content, state, 'foresee').map(({ e, level }) => Math.min(e.max, e.n * level)));
 /** The forecast marks the bottleneck (tracing). */
 export const tracing = (content: Content, state: BattleState) => moduleEffects(content, state, 'trace').length > 0;
 /** Extra cards drawn after a turn where a node failed (alerting). */
@@ -794,6 +807,9 @@ function apply(content: Content, state: BattleState, effect: Effect) {
     case 'cacheOpt':
       state.cache = { ...state.cache, ...(effect.swr && { swr: true }), ...(effect.normalize && { normalize: Math.max(state.cache?.normalize ?? 1, effect.normalize) }) };
       break;
+    case 'reveal':
+      state.revealed = Math.max(state.revealed ?? 0, effect.n);
+      break;
     case 'restart':
       delete state.enemy.leak;
       state.temp.api -= 1;
@@ -872,6 +888,7 @@ export function playCard(content: Content, prev: BattleState, uid: number, opts:
   const [inst] = state.hand.splice(idx, 1);
   const def = cardDef(content, inst.id);
   state.ops -= def.cost;
+  if (def.risk) state.hp -= def.risk;
   state.played.push(def.id);
   // the card leaves the hand before its effects, so "draw" cannot redraw it
   (def.exhaust ? state.exhausted : state.discard).push(inst);
@@ -1161,6 +1178,10 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0) + statusMods(content, state).opsPerTurn);
   if (state.ops < b.opsPerTurn) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
   draw(state, b.handSize);
+  if (deployFrozen(state) && state.phase !== 'lost') {
+    state.hp = Math.min(state.maxHp, state.hp + 1);
+    report.notes.push('Đóng băng deploy: hồi 1 Error Budget, chưa được deploy liều');
+  }
   const alert = alertDrawOf(content, state);
   const failed = hot?.find((h) => h.down || h.rejected > 0);
   if (alert && failed) {

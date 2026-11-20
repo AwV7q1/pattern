@@ -3,6 +3,9 @@
 
 import {
   ChartLine,
+  Flame,
+  Flag,
+  Shuffle,
   Route,
   Siren,
   Telescope,
@@ -101,6 +104,9 @@ const CARD_ICON: Record<string, LucideIcon> = {
   tracing: Route,
   alerting: Siren,
   o11y: Telescope,
+  hotfix_prod: Flame,
+  feature_flag: Flag,
+  chaos_test: Shuffle,
   tech_debt: Bug,
 };
 

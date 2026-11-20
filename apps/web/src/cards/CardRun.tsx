@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { api, ApiError } from '@/app/api';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, FlaskConical, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, CalendarDays, FlaskConical, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
@@ -22,12 +23,16 @@ import {
   eventText,
   finishBattle,
   migrateTarget,
+  dailyChassis,
+  newDailyRun,
+  utcDay,
   leaveShop,
   newRun,
   nextAct,
   pickReward,
   removePriceOf,
   rest,
+  runScore,
   shopRemove,
   stepsPerAct,
 } from './run';
@@ -88,7 +93,7 @@ export function CardRun() {
 
   return (
     <RunScreen run={run} best={best.best} onNew={startNew}>
-      {run.phase === 'chassis' && <ChassisScreen onPick={(id) => setRun((r) => chooseChassis(CONTENT, r, id))} />}
+      {run.phase === 'chassis' && <ChassisScreen onPick={(id) => setRun((r) => chooseChassis(CONTENT, r, id))} onDaily={() => setRun(newDailyRun(CONTENT, utcDay()))} />}
       {run.phase === 'map' && <TowerMap content={CONTENT} run={run} onChoose={(id) => setRun((r) => chooseNode(CONTENT, r, id))} />}
       {run.phase === 'reward' && <RewardScreen run={run} onPick={(id) => setRun((r) => pickReward(CONTENT, r, id))} />}
       {run.phase === 'rest' && <RestScreen run={run} onChoose={(c) => setRun((r) => rest(CONTENT, r, c))} />}
@@ -181,6 +186,11 @@ function Progress({ run }: { run: RunState }) {
           <Icon className="size-3" /> {tagged.kind === 'boss' ? 'Trùm' : 'Tinh anh'}
         </span>
       )}
+      {run.daily && (
+        <span className="flex items-center gap-0.5 rounded-full border border-amber-400/50 bg-amber-500/10 px-1.5 text-amber-200" title="Thử thách hằng ngày: cùng seed và kiến trúc với mọi người">
+          <CalendarDays className="size-3" /> Thử thách {run.daily}
+        </span>
+      )}
       {run.migrating && (
         <span className="flex items-center gap-0.5 rounded-full border border-sky-400/50 bg-sky-500/10 px-1.5 text-sky-200" title="Hệ mới chạy song song hệ cũ: có thêm ổ, nhưng API chậm hơn và tốn tiền hơn. Thắng đủ số trận thì chuyển hẳn.">
           <ArrowRightLeft className="size-3" /> Di trú sang {chassisDef(CONTENT, run.migrating.to).name}: còn {run.migrating.battles} trận
@@ -254,11 +264,73 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
   );
 }
 
+// ---------------------------------------------------------------- daily challenge
+
+type DailyEntry = { player: string; score: number; climbed: number; won: boolean };
+
+/** The end of a daily run: send it (signed in), then the day's top 20. */
+function DailyBoard({ run }: { run: RunState }) {
+  const [sent, setSent] = useState<{ score: number; best: number; rank: number } | 'login' | 'offline' | null>(null);
+  const [board, setBoard] = useState<DailyEntry[] | null>(null);
+  const once = useRef(false);
+  useEffect(() => {
+    if (once.current || !run.daily) return;
+    once.current = true;
+    const date = run.daily;
+    const summary = { deck: run.deck, relics: run.relics, floors: run.history.map((h) => ({ act: h.act, kind: h.kind, enemy: h.enemy, won: h.won })) };
+    api<{ score: number; best: number; rank: number }>(`/cards/daily/${date}`, { body: { climbed: run.climbed, won: run.phase === 'won', hp: run.hp, chassis: chassisDef(CONTENT, run.chassis).id, summary } })
+      .then(setSent)
+      .catch((err) => setSent(err instanceof ApiError && err.status === 401 ? 'login' : 'offline'))
+      .finally(() =>
+        api<DailyEntry[]>(`/cards/daily/${date}/leaderboard`)
+          .then(setBoard)
+          .catch(() => setBoard(null)),
+      );
+  }, [run]);
+  return (
+    <div className="mb-4 rounded-lg border border-amber-400/30 p-3 text-sm">
+      <div className="mb-1 flex items-baseline justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-amber-300">Thử thách {run.daily}</span>
+        <span className="font-mono">{runScore(run).toLocaleString('vi-VN')} điểm</span>
+      </div>
+      {sent === null && <p className="text-xs text-muted-foreground">Đang gửi kết quả…</p>}
+      {sent === 'login' && (
+        <p className="text-xs text-muted-foreground">
+          <Link to="/login" className="text-amber-200 underline">
+            Đăng nhập
+          </Link>{' '}
+          để lên bảng xếp hạng (chơi lại thử thách hôm nay sau khi đăng nhập).
+        </p>
+      )}
+      {sent === 'offline' && <p className="text-xs text-muted-foreground">Không kết nối được server: kết quả chưa lên bảng.</p>}
+      {sent && typeof sent === 'object' && (
+        <p className="text-xs text-muted-foreground">
+          Hạng <b className="text-foreground">#{sent.rank}</b> hôm nay{sent.best > sent.score ? ` (kỷ lục của bạn: ${sent.best.toLocaleString('vi-VN')})` : ''}.
+        </p>
+      )}
+      {board && board.length > 0 && (
+        <ol className="mt-2 space-y-0.5 text-xs">
+          {board.map((e, i) => (
+            <li key={e.player + i} className="flex items-center gap-2">
+              <span className="w-5 text-right font-mono text-muted-foreground">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{e.player}</span>
+              {e.won && <Trophy className="size-3 text-amber-300" />}
+              <span className="font-mono">{e.score.toLocaleString('vi-VN')}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="mt-2 text-[10px] text-muted-foreground">Điểm = 100 × số ô đã qua + 1.000 nếu chinh phục tháp + 5 × Error Budget còn lại. Kết quả chưa được server chơi lại để xác minh.</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- chassis
 
 /** The start of a run: which system to build on. Each one has its own shape, sockets and budget. */
-function ChassisScreen({ onPick }: { onPick: (id: string) => void }) {
+function ChassisScreen({ onPick, onDaily }: { onPick: (id: string) => void; onDaily: () => void }) {
   const [chosen, setChosen] = useState<string>(CONTENT.chassis[0].id);
+  const today = utcDay();
   return (
     <div className="mx-auto flex max-w-6xl flex-col items-center gap-6">
       <div className="text-center">
@@ -273,6 +345,9 @@ function ChassisScreen({ onPick }: { onPick: (id: string) => void }) {
       <div className="flex flex-wrap items-center justify-center gap-2">
         <Button onClick={() => onPick(chosen)}>
           Bắt đầu với {CONTENT.chassis.find((c) => c.id === chosen)?.name}
+        </Button>
+        <Button variant="outline" onClick={onDaily} title="Cùng seed, cùng kiến trúc với mọi người hôm nay; kết quả lên bảng xếp hạng">
+          <CalendarDays /> Thử thách hôm nay ({dailyChassis(CONTENT, today).name})
         </Button>
         <Button variant="outline" asChild>
           <Link to={`/cards/sandbox?chassis=${chosen}`}>
@@ -720,7 +795,7 @@ function HistoryRow({ h }: { h: FloorResult }) {
   const detail =
     h.kind === 'rest'
       ? h.healed !== undefined
-        ? `+${h.healed} máu`
+        ? `+${h.healed} Error Budget`
         : h.removed
           ? `bỏ ${cardDef(CONTENT, h.removed).name}`
           : h.upgraded
@@ -760,7 +835,7 @@ function RunEnd({ run, best, record, onNew }: { run: RunState; best: Best; recor
       <p className="mb-3 text-sm text-muted-foreground">
         {won
           ? `Bạn vượt ${CONTENT.run.acts} tầng, ${fights.length} trận trong ${turns} lượt, còn ${run.hp}/${run.maxHp} Error Budget.`
-          : `Hết Error Budget ở tầng ${run.act}, bậc ${node ? node.row + 1 : 0}. Mỗi ca mới là một seed mới: bản đồ, phần thưởng và bài trên tay đều khác.`}
+          : `Hết Error Budget ở tầng ${run.act}, bậc ${node ? node.row + 1 : 0}. ${run.daily ? "Thử thách hôm nay giữ nguyên seed: chơi lại để cải thiện điểm." : "Mỗi ca mới là một seed mới: bản đồ, phần thưởng và bài trên tay đều khác."}`}
       </p>
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
         <span className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-amber-200">
@@ -769,6 +844,7 @@ function RunEnd({ run, best, record, onNew }: { run: RunState; best: Best; recor
         <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Xa nhất: {best.bestClimbed} bậc</span>
         {record && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">Kỷ lục mới!</span>}
       </div>
+      {run.daily && <DailyBoard run={run} />}
       {!won && run.lastFight && run.lastFight.reports.length > 0 && (
         <div className="mb-4 rounded-lg border border-rose-400/30 p-3">
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-300">Postmortem trận cuối</div>

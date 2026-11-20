@@ -35,6 +35,7 @@ import {
   Turtle,
   Wallet,
   Zap,
+  Snowflake,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
@@ -56,6 +57,9 @@ import {
   guardNow,
   hotfixable,
   hotNodes,
+  deployFrozen,
+  FREEZE_AT,
+  riskBlock,
   chassisDef,
   MIGRATION,
   foresightOf,
@@ -774,7 +778,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     def: cardDef(CONTENT, inst.id),
     playable: canPlay(CONTENT, state, inst.uid) && !resolving,
     // a socketed card the system has no socket for
-    blocked: cardDef(CONTENT, inst.id).fits && !placementsOf(CONTENT, state, inst.id).length ? 'Hệ thống không có ổ hợp lệ' : undefined,
+    blocked: cardDef(CONTENT, inst.id).fits && !placementsOf(CONTENT, state, inst.id).length ? 'Hệ thống không có ổ hợp lệ' : (riskBlock(state, cardDef(CONTENT, inst.id)) ?? undefined),
   }));
 
   return (
@@ -834,6 +838,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                   hpRef={hpRef}
                   icon={<Heart />}
                   label="Error Budget"
+                  freeze={deployFrozen({ hp: live?.hp ?? state.hp, maxHp: state.maxHp })}
                   hp={live?.hp ?? state.hp}
                   max={state.maxHp}
                   headroom={live?.headroom ?? state.headroom}
@@ -1047,6 +1052,7 @@ function HpBar({
   hp,
   max,
   headroom = 0,
+  freeze,
   flash,
   pop,
   barClass,
@@ -1059,6 +1065,8 @@ function HpBar({
   hp: number;
   max: number;
   headroom?: number;
+  /** The player's bar: a deploy freeze is on. */
+  freeze?: boolean;
   flash: Flash | null;
   pop: number;
   barClass: string;
@@ -1081,8 +1089,13 @@ function HpBar({
         <span className="truncate" title={title}>
           {label}
         </span>
+        {freeze && (
+          <span className="flex items-center gap-0.5 rounded-full bg-cyan-500/15 px-1.5 text-[10px] text-cyan-200" title={`Dưới ${Math.round(FREEZE_AT * 100)}% Error Budget: không được deploy liều, mỗi lượt hồi 1.`}>
+            <Snowflake className="size-3" /> Đóng băng deploy
+          </span>
+        )}
         {headroom > 0 && (
-          <span className="flex items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-300" title="Headroom: hấp thụ sát thương trước khi trừ máu">
+          <span className="flex items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 text-[10px] text-sky-300" title="Headroom: hấp thụ sát thương trước khi trừ Error Budget">
             <Shield className="size-3" /> {headroom}
           </span>
         )}
@@ -1657,7 +1670,7 @@ function ReportCard({ report: r, onCollapse }: { report: TurnReport; onCollapse?
       </div>
       <div className="mt-3 grid gap-3">
         <div>
-          <div className="mb-1 text-xs font-medium text-rose-300">Bạn mất {r.damage.total} máu</div>
+          <div className="mb-1 text-xs font-medium text-rose-300">Bạn mất {r.damage.total} Error Budget</div>
           <ul className="space-y-0.5 text-xs text-muted-foreground">
             {r.damage.failed > 0 && <li>Người dùng gặp lỗi: −{r.damage.failed}</li>}
             {r.damage.latency > 0 && <li>Vượt SLO latency: −{r.damage.latency}</li>}
@@ -1827,7 +1840,8 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
       ['Engine quyết định', `Hệ thống chạy ${CONTENT.battle.turnMs / 1000}s mô phỏng thật: ${CONTENT.battle.legitRps} người dùng/s ở tầng 1${CONTENT.run.actScale.legit ? ` (mỗi tầng sau đông hơn ${Math.round(CONTENT.run.actScale.legit * 100)}%)` : ''} cộng với bot lọt qua bộ lọc.`],
       ['Hiệu ứng theo lượt', 'Một số lá và đòn của địch để lại hiệu ứng kéo dài vài lượt (số trên chip là số lượt còn lại). Hotfix không gỡ được debuff, Rollback thì gỡ được.'],
       ['Bot thích nghi', CONTENT.battle.adapt ? `Lượt nào bạn chặn từ ${Math.round(CONTENT.battle.adapt.at * 100)}% bot trở lên, bot cộng 1 tầng thích nghi và lách bộ lọc nhiều hơn. Ngừng lọc mạnh ${CONTENT.battle.adapt.turns} lượt thì hết.` : 'Tắt.'],
-      ['Bạn mất máu', `1 máu cho mỗi ${CONTENT.battle.failedPerDamage} request người dùng lỗi, ${CONTENT.battle.latencyDamage} máu nếu p99 > ${CONTENT.battle.sloP99Ms}ms, và khi chi phí vượt $${CONTENT.battle.budgetPerHour}/h.`],
+      ['Error Budget', `Phần lỗi còn được phép trước khi vi phạm SLO. Mất 1 cho mỗi ${CONTENT.battle.failedPerDamage} request người dùng lỗi, ${CONTENT.battle.latencyDamage} nếu p99 > ${CONTENT.battle.sloP99Ms}ms, và khi chi phí vượt ngân sách. Hết là thua.`],
+      ['Deploy liều', `Lá ghi "Deploy liều" không tốn Ops mà trừ thẳng Error Budget. Dưới ${Math.round(FREEZE_AT * 100)}% Error Budget là đóng băng deploy: không đánh được lá liều, nhưng mỗi lượt hồi 1.`],
       ['Địch mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Địch yếu thì gửi ít traffic hơn.`],
       ['Leo tháp', `${CONTENT.run.title} có ${CONTENT.run.acts} tầng. Mỗi tầng là một bản đồ rẽ nhánh: tự chọn đường qua trận thường, tinh anh (khó hơn, thưởng nhiều hơn), sự cố và chỗ nghỉ, rồi đánh trùm ở đỉnh. Máu và bộ bài giữ nguyên suốt ca; tầng càng cao địch càng mạnh.`],
       ['Thẻ bài', 'Hạ tầng và Chính sách tồn tại cả trận (nhưng tốn tiền mỗi giờ). Hành động chỉ có tác dụng trong lượt.'],

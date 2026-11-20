@@ -94,7 +94,9 @@ export type Effect =
   /** Socketed: the forecast marks the node that will be the bottleneck. */
   | { op: 'trace' }
   /** Socketed: a turn where a node went down or turned requests away, draw `draw` more cards (per level) at the start of the next. */
-  | { op: 'alert'; draw: number };
+  | { op: 'alert'; draw: number }
+  /** See the attacker's next `n` turns for the rest of the fight (like Metrics, without a socket). */
+  | { op: 'reveal'; n: number };
 
 /** What a status changes while it lasts. Multipliers apply once per stack (×v^stacks), additions add once per stack. */
 export interface StatusMods {
@@ -186,7 +188,9 @@ export interface CardDef {
   /** Curses: cannot be played, just clog the hand. */
   unplayable?: boolean;
   /** What the upgraded copy (id `<id>+`, from a rest stop) changes. */
-  upgrade?: { cost?: number; text: string; effects?: Effect[] };
+  upgrade?: { cost?: number; risk?: number; text: string; effects?: Effect[] };
+  /** A risky deploy: playing it spends this much Error Budget (not allowed during a deploy freeze). */
+  risk?: number;
   /** Set on the upgraded copy that `cardDef` builds. */
   upgraded?: boolean;
 }
@@ -554,6 +558,8 @@ export interface RunState {
   /** Boss relics offered in the `cleared` phase (pick one when climbing). */
   relicOffer: string[];
   history: FloorResult[];
+  /** The daily challenge this run is (UTC day, YYYY-MM-DD): same seed and chassis for everyone that day. */
+  daily?: string;
   /** Moving to another chassis: `battles` fights left on the hybrid system before the switch. */
   migrating?: { to: string; battles: number };
   /** The fight that ended the run (a loss), for its postmortem. */
@@ -643,6 +649,8 @@ export interface BattleState {
   chassis: string;
   /** Moving to this chassis (strangler fig): its extra sockets are in, latency and cost are up. */
   migrating?: string;
+  /** Turns ahead seen for the rest of the fight (`reveal`). */
+  revealed?: number;
   /** Installed modules, oldest first (see `CardDef.fits`). `card` keeps the "+" of an upgraded copy. */
   modules?: ModuleInst[];
   /** Timed effects in play (see `StatusDef`). */

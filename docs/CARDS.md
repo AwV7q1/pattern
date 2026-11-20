@@ -304,6 +304,26 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
 | Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
+## Thử thách hằng ngày
+
+Nút "Thử thách hôm nay" ở màn chọn kiến trúc mở run của ngày (UTC): seed là FNV-1a của ngày (`dailySeed`), kiến trúc cố định theo seed (`dailyChassis`), nên mọi người cùng bản đồ, phần thưởng và bài trên tay. `RunState.daily` giữ ngày.
+
+Hết run, màn tổng kết gửi kết quả lên server (`POST /api/cards/daily/:date`, cần đăng nhập, tối đa 10 lần/phút) rồi hiện top 20 (`GET /api/cards/daily/:date/leaderboard`, công khai).
+
+- Điểm (`runScore` ở web, `dailyScore` ở server, cùng công thức): 100 × số ô đã qua + 1.000 nếu chinh phục tháp + 5 × Error Budget còn lại. Server không nhận điểm từ client mà tính lại từ `climbed`, `won`, `hp`.
+- Server giữ kết quả tốt nhất của mỗi người mỗi ngày (bảng `CardsDailyEntry`), chỉ nhận ngày hôm nay hoặc hôm qua (run bắt đầu trước nửa đêm vẫn tính).
+- Chưa chống gian lận thật: server chưa chơi lại run, nên một client sửa đổi có thể khai số ô và Error Budget tuỳ ý (trong giới hạn kiểm tra). Bước tiếp theo: tách `rules.ts` và `run.ts` thành package dùng chung, client gửi nhật ký nước đi (chọn ô, đánh lá, chọn thưởng), server phát lại bằng engine WASM bản node đã có, như cách `/levels/:id/submit` đang chấm level.
+
+## Error Budget và deploy liều
+
+Thanh máu của người chơi là **Error Budget**: phần lỗi còn được phép trước khi vi phạm SLO. Nó mất đi vì request người dùng lỗi, p99 vượt SLO và vượt ngân sách; hết là thua. Mọi chữ "máu" của người chơi trong giao diện đã đổi thành Error Budget (máu của địch vẫn là máu).
+
+- **Deploy liều** (`CardDef.risk`): lá không tốn Ops mà trừ thẳng `risk` Error Budget khi đánh. Viên đỏ "−n" dưới viên Ops trên mặt lá. Không đánh được nếu Error Budget không còn hơn `risk`.
+  - Hotfix thẳng prod (−4, nâng cấp −3): lượt này +3 instance API, +4 Headroom.
+  - Feature flag (−2): rút 2 lá (nâng cấp: 3).
+  - Chaos test (−3, nâng cấp −2, tiêu hao): thấy trước 2 lượt của botnet đến hết trận (`reveal`, cùng cơ chế với Metrics).
+- **Đóng băng deploy** (`FREEZE_AT` = 25%, `deployFrozen`): dưới mức này không được đánh lá liều, và đầu mỗi lượt hồi 1 Error Budget. Thanh Error Budget hiện chip "Đóng băng deploy".
+
 ## Sandbox
 
 `/cards/sandbox` (`CardSandbox.tsx`; có nút từ màn chọn kiến trúc và từ Wiki): thử build mà không cần run hay bộ bài.
