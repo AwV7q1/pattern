@@ -52,5 +52,14 @@
       { "label": "Trả hoá đơn: mất 30 vàng", "effects": [{ "op": "gold", "n": -30 }] },
       { "label": "Cãi với kế toán: mất 7 Error Budget, nhận 1 Tech Debt", "effects": [{ "op": "damage", "n": 7 }, { "op": "addCard", "card": "tech_debt" }] }
     ]
+  },
+  {
+    "id": "hardware",
+    "title": "Đợt mua sắm cuối quý",
+    "text": "Phòng tài chính còn dư ngân sách cuối quý và hỏi team có cần gì không. Phải chốt trong hôm nay.",
+    "options": [
+      { "label": "Mua thêm switch: −40 vàng, nhận relic Thêm cổng mạng", "effects": [{ "op": "gold", "n": -40 }, { "op": "relic", "id": "rack_link" }] },
+      { "label": "Xin license công cụ: nhận 1 lá ngẫu nhiên", "effects": [{ "op": "randomCard" }] }
+    ]
   }
 ]

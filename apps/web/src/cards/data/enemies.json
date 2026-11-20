@@ -131,7 +131,22 @@
         "label": "Gửi hàng loạt",
         "icon": "spike",
         "text": "Bot ~1300 rps cùng lúc.",
-        "botRps": 1300
+        "botRps": 1300,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "edge_shield"
+              ]
+            },
+            "tag": "Phản ứng: bạn lọc tại biên",
+            "label": "Xoay IP liên tục",
+            "icon": "spike",
+            "botRps": 1300,
+            "bypass": 0.3,
+            "text": "Bị chặn ở biên: bot ~1300 rps xoay IP liên tục, lách 30% bộ lọc."
+          }
+        ]
       },
       {
         "id": "cooldown",
@@ -511,7 +526,22 @@
         "icon": "probe",
         "text": "Bot ~700 rps cào trang lạ: phá cache 15%.",
         "botRps": 700,
-        "cacheBust": 0.15
+        "cacheBust": 0.15,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "cdn"
+              ]
+            },
+            "tag": "Phản ứng: bạn có CDN",
+            "label": "Cào URL lạ",
+            "icon": "probe",
+            "botRps": 800,
+            "cacheBust": 0.5,
+            "text": "Thấy CDN: bot ~800 rps cào URL ngẫu nhiên, phá cache 50%."
+          }
+        ]
       },
       {
         "id": "deep_crawl",
@@ -1200,6 +1230,26 @@
           {
             "status": "replica_lag",
             "turns": 2
+          }
+        ],
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "shard"
+              ]
+            },
+            "tag": "Phản ứng: bạn có shard",
+            "label": "Query xuyên shard",
+            "icon": "slow",
+            "botRps": 1100,
+            "chaos": {
+              "node": "db",
+              "action": "latency",
+              "value": 4
+            },
+            "cacheBust": 0.25,
+            "text": "Thấy DB đã shard: bot ~1100 rps gửi query phải hỏi mọi shard, DB chậm ×4, phá cache 25%. Gây DB nghẽn kéo dài 2 lượt."
           }
         ]
       },

@@ -82,7 +82,13 @@ export type Effect =
   /** Gain a status (`statuses.json`) for `turns` turns, counting this one. */
   | { op: 'status'; status: string; turns: number; stacks?: number }
   /** Remove `n` debuffs (all when absent), newest first. */
-  | { op: 'cleanse'; n?: number };
+  | { op: 'cleanse'; n?: number }
+  /** Socketed: a CDN (a cache that is always warm) in front of the socket's node; each level adds `step` keys up to `max`. */
+  | { op: 'cdn'; capacity: number; step: number; max: number }
+  /** Socketed: filter this share of bot traffic per level (up to `max`) for as long as the module stays in. */
+  | { op: 'edgeFilter'; cut: number; max: number }
+  /** Socketed: split the socket's database in two shards behind a router; the second costs `costPerHour`. */
+  | { op: 'shard'; costPerHour: number };
 
 /** What a status changes while it lasts. Multipliers apply once per stack (×v^stacks), additions add once per stack. */
 export interface StatusMods {
@@ -329,6 +335,8 @@ export interface RelicDef {
   effects: Effect[];
   /** Applied once, when the relic is taken. */
   pickup?: { maxHp?: number };
+  /** More room in the system: +n to the capacity of every socket of these kinds. */
+  sockets?: Partial<Record<SocketKind, number>>;
 }
 
 export interface Content {
@@ -437,6 +445,7 @@ export interface RunConfig {
 }
 
 export type EventEffect =
+  | { op: 'relic'; id: string }
   | { op: 'heal'; n: number }
   | { op: 'damage'; n: number }
   | { op: 'maxHp'; n: number }

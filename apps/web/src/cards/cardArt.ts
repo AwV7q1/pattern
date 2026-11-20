@@ -2,6 +2,10 @@
 // new card in cards.json renders without touching this file.
 
 import {
+  Cloud,
+  ShieldHalf,
+  Split,
+  Waypoints,
   Archive,
   Inbox,
   TrendingUp,
@@ -85,6 +89,10 @@ const CARD_ICON: Record<string, LucideIcon> = {
   queue: Inbox,
   geo_block: Globe,
   tarpit: Snail,
+  cdn: Cloud,
+  edge_shield: ShieldHalf,
+  shard: Split,
+  mesh: Waypoints,
   tech_debt: Bug,
 };
 

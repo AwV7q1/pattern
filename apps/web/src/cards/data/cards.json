@@ -930,6 +930,104 @@
     }
   },
   {
+    "id": "cdn",
+    "name": "CDN",
+    "type": "infra",
+    "cost": 2,
+    "fits": ["edge"],
+    "rarity": "uncommon",
+    "text": "Đặt CDN trước cổng vào, giữ sẵn 300 trang phổ biến (luôn nóng): request trúng không vào tới hệ thống. Đánh lại: +200 trang, tối đa 900. $0.10/h.",
+    "lesson": "CDN trả nội dung từ biên mạng, gần người dùng: rẻ hơn và đỡ cho cả hệ thống phía sau, nhưng chỉ với nội dung cache được.",
+    "effects": [
+      {
+        "op": "cdn",
+        "capacity": 300,
+        "step": 200,
+        "max": 900
+      }
+    ],
+    "upgrade": {
+      "cost": 1,
+      "text": "Đặt CDN trước cổng vào, giữ sẵn 300 trang phổ biến (luôn nóng): request trúng không vào tới hệ thống. Đánh lại: +200 trang, tối đa 900. $0.10/h."
+    }
+  },
+  {
+    "id": "edge_shield",
+    "name": "Lọc tại biên",
+    "type": "policy",
+    "cost": 1,
+    "fits": ["edge"],
+    "rarity": "common",
+    "text": "Lọc 20% bot ngay tại biên chừng nào module còn lắp (cộng với WAF). Đánh lại: thêm 20%, tối đa 40%.",
+    "lesson": "Chặn ở biên (Anycast, scrubbing center) rẻ hơn chặn trong hệ thống, nhưng chỉ chặn được thứ nhận ra được.",
+    "effects": [
+      {
+        "op": "edgeFilter",
+        "cut": 0.2,
+        "max": 0.4
+      }
+    ],
+    "upgrade": {
+      "cost": 0,
+      "text": "Lọc 20% bot ngay tại biên chừng nào module còn lắp (cộng với WAF). Đánh lại: thêm 20%, tối đa 40%."
+    }
+  },
+  {
+    "id": "shard",
+    "name": "Shard DB",
+    "type": "infra",
+    "cost": 2,
+    "fits": ["storage"],
+    "rarity": "rare",
+    "text": "Chia DB làm 2 shard sau một router: mỗi shard nhận nửa tải, sự cố DB chỉ đánh 1 shard. Shard 2: $0.30/h.",
+    "lesson": "Sharding chia dữ liệu theo key cho nhiều máy: chịu tải ghi tốt hơn replica, đổi lại vận hành phức tạp hơn.",
+    "effects": [
+      {
+        "op": "shard",
+        "costPerHour": 0.3
+      }
+    ],
+    "upgrade": {
+      "cost": 1,
+      "text": "Chia DB làm 2 shard sau một router: mỗi shard nhận nửa tải, sự cố DB chỉ đánh 1 shard. Shard 2: $0.30/h."
+    }
+  },
+  {
+    "id": "mesh",
+    "name": "Service Mesh",
+    "type": "policy",
+    "cost": 2,
+    "fits": ["link"],
+    "rarity": "rare",
+    "text": "Một module cho cả đường gọi: timeout 300ms, retry 1 lần có backoff và budget, circuit breaker.",
+    "lesson": "Sidecar của service mesh (Istio, Linkerd) áp chính sách gọi đồng nhất cho mọi service, không phải sửa code từng nơi.",
+    "effects": [
+      {
+        "op": "edge",
+        "patch": {
+          "timeoutMs": 300,
+          "retries": 1,
+          "backoffMs": 50,
+          "jitter": true,
+          "retryBudget": {
+            "ratio": 0.1,
+            "minPerSec": 10
+          },
+          "circuitBreaker": {
+            "failureThreshold": 0.5,
+            "minRequests": 20,
+            "windowMs": 1000,
+            "openMs": 3000
+          }
+        }
+      }
+    ],
+    "upgrade": {
+      "cost": 1,
+      "text": "Một module cho cả đường gọi: timeout 300ms, retry 1 lần có backoff và budget, circuit breaker."
+    }
+  },
+  {
     "id": "tech_debt",
     "name": "Tech Debt",
     "type": "curse",

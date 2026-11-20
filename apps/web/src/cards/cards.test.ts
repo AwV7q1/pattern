@@ -1087,3 +1087,50 @@ test('run saves: a run from before chassis existed is still valid and builds on 
   assert.equal(rules.chassisDef(content, old.chassis).id, content.chassis[0].id);
   assert.ok(!runs.isValidRun(content, { ...old, chassis: 'nope' }));
 });
+
+test('new parts: CDN in front of the entry, edge filter while installed, DB shards behind a router', () => {
+  const s = rules.newBattle(content, 4, { enemy: 'swarm' });
+  // CDN: a warm cache every request meets first
+  const c = playIn(s, 'cdn');
+  const d = rules.planTurn(content, c).input.design;
+  const cdn = rules.nodeOf(d, 'cdn@edge')!;
+  assert.equal(cdn.kind, 'cache');
+  assert.equal(cdn.config!.cache!.warm, true);
+  assert.equal(d.edges.find((e) => e.source === 'client')!.target, 'cdn@edge');
+  assert.ok(d.edges.some((e) => e.source === 'cdn@edge' && e.target === 'lb'));
+  assert.equal(rules.nodeOf(rules.designOf(content, playIn(c, 'cdn')), 'cdn@edge')!.config!.cache!.capacity, 500, 'replaying grows it');
+
+  // edge filter: a bot cut that lasts while the module is in, and goes with it
+  const f = playIn(s, 'edge_shield');
+  assert.ok(Math.abs(rules.botCutNow(content, f) - 0.2) < 1e-9);
+  assert.equal(f.waf, 0, 'not a permanent WAF rule');
+  const [h, uid] = withCard(f, 'cdn');
+  const swapped = rules.playCard(content, h, uid, { replace: rules.moduleOf(f, 'edge_shield')!.uid });
+  assert.equal(rules.botCutNow(content, swapped), 0);
+
+  // shard: a router in front of two DBs; an incident on the DB hits one of them
+  const sh = playIn(playIn(s, 'index'), 'shard');
+  const sd = rules.designOf(content, sh);
+  assert.ok(sd.edges.some((e) => e.source === 'api' && e.target === 'db-router'));
+  assert.deepEqual(sd.edges.filter((e) => e.source === 'db-router').map((e) => e.target).sort(), ['db', 'db-2']);
+  assert.equal(rules.nodeOf(sd, 'db-2')!.config!.latencyP50Ms, rules.nodeOf(sd, 'db')!.config!.latencyP50Ms, 'the shard copies the indexed DB');
+  assert.equal(rules.nodeOf(sd, 'db-2')!.config!.costPerHour, 0.3);
+});
+
+test('relics can add sockets; an event can give one', () => {
+  const s = rules.newBattle(content, 4, { enemy: 'swarm', relics: ['rack_link'] });
+  assert.equal(rules.socketOf(content, s, 'api-db')!.cap, 4);
+  assert.equal(rules.socketOf(content, rules.newBattle(content, 4, { enemy: 'swarm' }), 'api-db')!.cap, 3);
+  const run = { ...structuredClone(fresh(2)), phase: 'event' as const, event: 'hardware', gold: 50 };
+  const after = runs.chooseEvent(content, run, 0);
+  assert.ok(after.relics.includes('rack_link'));
+  assert.equal(after.gold, 10);
+});
+
+test('shard after or before the cache: the cache always sits in front of both shards', () => {
+  const s = rules.newBattle(content, 4, { enemy: 'swarm' });
+  for (const order of [['cache', 'shard'], ['shard', 'cache']]) {
+    const d = rules.designOf(content, playIn(playIn(s, order[0]), order[1]));
+    assert.ok(d.edges.some((e) => e.source === 'cache' && e.target === 'db-router'), order.join(' → '));
+  }
+});

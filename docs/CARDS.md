@@ -66,6 +66,13 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
 
   - Mọi node cache (Redis của lá bài, CDN có sẵn) đều chịu cài đặt cache (`swr`, `normalize`) và phá cache của địch; chỉ Redis vừa lắp mới nguội. `designTraits.hasCache` tính cả CDN.
   - Lá có `fits` mà khung không có ổ hợp lệ thì không đánh được (trên tay ghi "Hệ thống không có ổ hợp lệ").
+  - Linh kiện chỉ có trên ổ (giai đoạn 3):
+    - **CDN** (`edge`, op `cdn`): node cache `cdn@<ổ>` trước cổng vào, luôn nóng, 300 trang (+200 mỗi cấp, tối đa 900). Mọi khung có 1 ổ `edge` trước Nginx (Đọc nhiều: trước CDN có sẵn).
+    - **Lọc tại biên** (`edge`, op `edgeFilter`): lọc 20% bot mỗi cấp (tối đa 40%) chừng nào module còn lắp; `moduleCut` cộng vào `botCutNow`. Khác WAF ở chỗ gỡ module là mất, và chiếm ổ `edge` mà CDN cũng cần.
+    - **Shard DB** (`storage`, op `shard`): router `db-router` trước DB và bản sao `db-2` (copy DB đã tune, $0.30/h). Sự cố DB (`chaos`, `squeeze`) chỉ đánh shard gốc. Module thêm node dựng theo thứ tự: chính sách và tune trước, rồi node chèn trước (cache, queue, CDN), shard sau cùng, nên cache luôn đứng trước cả hai shard.
+    - **Service Mesh** (`link`): một module gồm timeout 300ms, retry 1 lần có backoff và budget, circuit breaker; tiết kiệm ổ đường gọi.
+  - Relic mở ổ (`RelicDef.sockets`): **Thêm cổng mạng** (+1 ổ cho mỗi đường gọi), **Node pool lớn hơn** (+1 ổ cho mỗi service và DB). Sự kiện **Đợt mua sắm cuối quý** bán relic Thêm cổng mạng (op sự kiện `relic`).
+  - Địch phản ứng với linh kiện mới: Bot Spam xoay IP khi gặp Lọc tại biên (lách 30%), Crawler cào URL lạ khi có CDN (phá cache 50%), API Abuser gửi query xuyên shard (DB chậm ×4).
   - Lá có `fits` lắp vào một ổ hợp lệ thay vì sửa thẳng design. Hiệu ứng lấy đích từ ổ: `tune`, `scale`, `autoscale` lên node của ổ, `edge` lên đường gọi của ổ, `cache` chèn trước node của ổ, `queue` chèn vào lời gọi của ổ. `designOf(content, state)` dựng design từ khung cộng mọi module; module thêm node (`front`, `async`, `edge`) dựng sau cùng, nên policy trên đường gọi đi theo lời gọi vào node mới.
   - `placements(content, state, uid)` liệt kê các nước đi `{ socket, replace? }`: mọi ổ hợp lệ còn chỗ, và mỗi module của ổ hợp lệ đã đầy. `playCard(..., { socket, replace })` lắp theo nước đó; không chỉ định thì lắp vào ổ trống đầu tiên. Đánh lại lá đã lắp thì module lên cấp (Redis +1k key mỗi cấp; tune áp thêm một lần), không tốn ổ.
   - Giao diện: ổ vẽ ngay trên sơ đồ (chip dưới node, khung nét đứt "+ Cache" / "+ Queue" trong đường đi, dải ổ của đường gọi dưới sơ đồ). Kéo lá có `fits` thì ổ hợp lệ sáng lên; thả lên một module trong ổ đầy là thay module đó.
@@ -315,7 +322,7 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | `apps/web/src/cards/CardWiki.tsx` | Trang wiki `/cards/wiki`: chỉ số bot và lính theo tầng, xem thử animation, thẻ bài (cả bản nâng cấp), bảo vật |
 | `apps/web/scripts/cards-balance.mjs` | Bot tự chơi nhiều trận bằng engine thật để cân bằng |
 
-Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`). Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.
+Thêm lá bài: thêm một mục vào `cards.json` với các `effects` có sẵn (`scale`, `cache`, `edge`, `rateLimit`, `waf`, `attack`, `headroom`, `draw`, `ops`, `hotfix`, `cdn`, `edgeFilter`, `shard`…). Lá hạ tầng nên có `fits` để lắp vào ổ. Nếu cần hiệu ứng mới, thêm một nhánh trong `apply()` ở `rules.ts`.
 
 ### Cân bằng
 

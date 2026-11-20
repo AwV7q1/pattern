@@ -280,7 +280,7 @@ export function bypassNow(content: Content, state: BattleState): number {
 
 /** Share of bot traffic filtered this turn (WAF, rate limit and statuses stack multiplicatively; `bypass` slips past part of it). */
 export function botCutNow(content: Content, state: BattleState, bypass = 0): number {
-  return (1 - (1 - state.waf) * (1 - state.temp.botCut) * (1 - statusMods(content, state).botCut)) * (1 - bypass);
+  return (1 - (1 - state.waf) * (1 - state.temp.botCut) * (1 - statusMods(content, state).botCut) * (1 - moduleCut(content, state))) * (1 - bypass);
 }
 
 export function canPlay(content: Content, state: BattleState, uid: number): boolean {
@@ -321,12 +321,20 @@ export const mainCall = (content: Content, state: Pick<BattleState, 'chassis'>, 
 // ---------------------------------------------------------------- modules (infrastructure plugged into sockets)
 
 /** Effects that change the topology: from a socketed card they live in its module, so removing it undoes them. */
-const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue']);
-/** Socket kinds whose modules add nodes: built after the others, so a call policy follows the call into the new node. */
-const TOPOLOGY = new Set<SocketKind>(['front', 'async', 'edge']);
+const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue', 'cdn', 'shard']);
+/** Effects that only work while their module is in (read by the rules, not built into the design). */
+const MODULE_OPS = new Set<Effect['op']>(['edgeFilter']);
+/** Effects that add nodes: built after the others, so a call policy follows the call into the new node and a shard copies a tuned DB. */
+const TOPOLOGY = new Set<Effect['op']>(['cache', 'queue', 'cdn', 'shard']);
 
 export const modulesOf = (state: BattleState): ModuleInst[] => state.modules ?? [];
-export const socketsOf = (content: Content, state: BattleState): SocketDef[] => chassisOf(content, state).sockets;
+/** The system's sockets, with the room relics add. */
+export function socketsOf(content: Content, state: BattleState): SocketDef[] {
+  const bonus: Partial<Record<SocketKind, number>> = {};
+  for (const id of state.relics ?? []) for (const [k, n] of Object.entries(content.relics.find((r) => r.id === id)?.sockets ?? {})) bonus[k as SocketKind] = (bonus[k as SocketKind] ?? 0) + n!;
+  const list = chassisOf(content, state).sockets;
+  return Object.keys(bonus).length ? list.map((s) => (bonus[s.kind] ? { ...s, cap: s.cap + bonus[s.kind]! } : s)) : list;
+}
 export const socketOf = (content: Content, state: BattleState, id: string) => socketsOf(content, state).find((x) => x.id === id);
 export const modulesAt = (state: BattleState, socket: string) => modulesOf(state).filter((m) => m.socket === socket);
 /** The installed module of a card (either copy, upgraded or not). */
@@ -364,7 +372,15 @@ export function placementsOf(content: Content, state: BattleState, card: string)
 /** The node a module adds to the system (a cache, a queue), if it adds one. */
 export function insertedNode(content: Content, m: ModuleInst): string | undefined {
   const ops = cardDef(content, m.card).effects.map((e) => e.op);
-  return ops.includes('cache') ? 'cache' : ops.includes('queue') ? 'queue' : undefined;
+  return ops.includes('cache') ? 'cache' : ops.includes('queue') ? 'queue' : ops.includes('cdn') ? `cdn@${m.socket}` : undefined;
+}
+
+/** Bot traffic the modules filter while they are in (an edge filter). */
+export function moduleCut(content: Content, state: BattleState): number {
+  let pass = 1;
+  for (const m of modulesOf(state))
+    for (const e of cardDef(content, m.card).effects) if (e.op === 'edgeFilter') pass *= 1 - Math.min(e.max, e.cut * m.level);
+  return 1 - pass;
 }
 
 /** The placement a play resolves to: a level up wherever it was dropped, the one asked for, else the first free socket (null: no valid move). */
@@ -377,11 +393,12 @@ function resolvePlacement(content: Content, state: BattleState, uid: number, opt
 const cardOf = (state: BattleState, uid: number) => state.hand.find((c) => c.uid === uid)!.id;
 
 /** Where an effect lands: the socket's node or call, else the system's main roles. */
-type Place = { node?: string; edge: [string, string]; before: string; aliases: ChassisDef['aliases'] };
+type Place = { node?: string; edge: [string, string]; before: string; aliases: ChassisDef['aliases']; socket?: string };
 function placeOf(chassis: ChassisDef, socket?: SocketDef): Place {
   const a = chassis.aliases;
   const p: Place = { edge: [a.api, a.db], before: a.db, aliases: a };
   if (!socket) return p;
+  p.socket = socket.id;
   if ('node' in socket.at) p.node = socket.at.node;
   if ('before' in socket.at) p.before = socket.at.before;
   if ('edge' in socket.at) p.edge = socket.at.edge;
@@ -393,8 +410,12 @@ const nodeAt = (p: Place, ref?: NodeRef) => p.node ?? p.aliases[ref ?? 'api'];
 export function designOf(content: Content, state: BattleState): Design {
   const design = clone(state.design);
   const chassis = chassisOf(content, state);
-  const kind = (m: ModuleInst) => socketOf(content, state, m.socket)?.kind;
-  const ordered = [...modulesOf(state)].sort((x, y) => Number(TOPOLOGY.has(kind(x)!)) - Number(TOPOLOGY.has(kind(y)!)));
+  // policies and tuning first, then nodes put in front, then shards (which split whatever sits in front of the DB)
+  const rank = (m: ModuleInst) => {
+    const ops = cardDef(content, m.card).effects.map((e) => e.op);
+    return ops.includes('shard') ? 2 : ops.some((op) => TOPOLOGY.has(op)) ? 1 : 0;
+  };
+  const ordered = [...modulesOf(state)].sort((x, y) => rank(x) - rank(y));
   for (const m of ordered) {
     const place = placeOf(chassis, socketOf(content, state, m.socket));
     for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level, place);
@@ -432,6 +453,37 @@ function applyDesign(design: Design, e: Effect, level: number, place: Place) {
       const cfg = nodeOf(design, nodeAt(place, 'api'))!.config!;
       const n = cfg.instances ?? 1;
       cfg.autoscale = { min: n, max: n + e.extra, targetUtilization: e.target, evalEveryMs: 1000, stabilizationMs: 5000, podStartMs: e.podStartMs, metric: 'utilization' } as never;
+      break;
+    }
+    case 'cdn': {
+      const id = `cdn@${place.socket ?? 'edge'}`;
+      const model = nodeOf(design, id)?.config?.cache;
+      if (model) break;
+      insertBefore(design, place.before, {
+        id,
+        kind: 'cache',
+        label: 'CDN',
+        position: { x: 0, y: 0 },
+        config: {
+          instances: 1,
+          concurrency: 20000,
+          queueSize: 0,
+          latencyP50Ms: 0.5,
+          latencyP99Ms: 2,
+          costPerHour: 0.1,
+          cache: { keys: CACHE_KEYS, zipf: CACHE_ZIPF, capacity: Math.min(e.max, e.capacity + e.step * (level - 1)), ttlMs: CACHE_TTL_MS, coalesce: false, staleWhileRevalidate: false, warm: true },
+        },
+      } as DesignNode);
+      break;
+    }
+    case 'shard': {
+      const db = nodeAt(place, 'db');
+      const base = nodeOf(design, db);
+      if (!base || nodeOf(design, `${db}-2`)) break;
+      const router: DesignNode = { id: `${db}-router`, kind: 'loadBalancer', label: 'Router shard', position: { x: 0, y: 0 }, config: { instances: 1, concurrency: 20000, queueSize: 0, latencyP50Ms: 0.1, latencyP99Ms: 0.5, costPerHour: 0.02 } } as DesignNode;
+      insertBefore(design, db, router);
+      design.nodes.push({ ...clone(base), id: `${db}-2`, label: 'Shard 2', config: { ...clone(base.config!), costPerHour: e.costPerHour } } as DesignNode);
+      design.edges.push({ source: router.id, target: `${db}-2`, latencyMs: 1 } as DesignEdge);
       break;
     }
     case 'queue': {
@@ -488,6 +540,13 @@ function removeModule(content: Content, state: BattleState, uid: number) {
 export const CACHE_KEYS = 10_000;
 export const CACHE_ZIPF = 1;
 export const CACHE_TTL_MS = 30_000;
+
+/** Put `node` in front of `before`: every call into `before` now goes into it (with its policy), and it calls `before`. */
+function insertBefore(design: Design, before: string, node: DesignNode) {
+  design.nodes.splice(Math.max(0, design.nodes.findIndex((n) => n.id === before)), 0, node);
+  for (const e of design.edges) if (e.target === before) e.target = node.id;
+  design.edges.push({ source: node.id, target: before, latencyMs: 1 } as DesignEdge);
+}
 
 function addCache(design: Design, before: string, capacity: number) {
   const node: DesignNode = {
@@ -646,8 +705,14 @@ function apply(content: Content, state: BattleState, effect: Effect) {
     case 'tune':
       tuneNode(state.design, alias(content, state, effect.node), effect.mul);
       break;
+    case 'edgeFilter':
+      // outside a socket (a relic): a permanent filter, like a WAF rule
+      state.waf = Math.min(effect.max, state.waf + effect.cut);
+      break;
     case 'autoscale':
     case 'queue':
+    case 'cdn':
+    case 'shard':
       // relics and other unslotted sources: straight into the base design
       applyDesign(state.design, effect, 1, placeOf(chassisOf(content, state)));
       break;
@@ -694,7 +759,7 @@ export function playCard(content: Content, prev: BattleState, uid: number, opts:
     if (place.replace !== undefined) removeModule(content, state, place.replace);
     installModule(content, state, def, place.socket);
   }
-  for (const effect of def.effects) if (!(def.fits && DESIGN_OPS.has(effect.op))) apply(content, state, effect);
+  for (const effect of def.effects) if (!(def.fits && (DESIGN_OPS.has(effect.op) || MODULE_OPS.has(effect.op)))) apply(content, state, effect);
   fireRelics(content, state, 'cardPlayed', def.type);
   if (state.enemy.hp <= 0) {
     state.phase = 'won';

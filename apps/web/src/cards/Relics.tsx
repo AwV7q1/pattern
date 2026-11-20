@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import {
   Activity,
   BellRing,
+  Cable,
+  Cpu,
   BookOpen,
   Bookmark,
   CalendarClock,
@@ -37,6 +39,8 @@ const RELIC_ICON: Record<string, LucideIcon> = {
   ship: Ship,
   earth: Earth,
   network: Network,
+  cable: Cable,
+  cpu: Cpu,
 };
 
 export const RELIC_RARITY: Record<RelicRarity, { label: string; tone: string }> = {

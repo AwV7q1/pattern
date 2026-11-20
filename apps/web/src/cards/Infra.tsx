@@ -3,7 +3,7 @@
 // gateway on the right and flow left; side calls (the partner) sit below.
 
 import { type ReactNode, type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, Database, Handshake, ListPlus, Network, Plus, Server, Swords, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Cloud, Database, Split, Handshake, ListPlus, Network, Plus, Server, Swords, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Design, DesignNode } from '@/types';
 import { alias, cardDef, chassisOf, designOf, insertedNode, moduleOf, modulesAt, modulesOf, nodeOf, socketOf, socketsOf, type Placement } from './rules';
@@ -186,10 +186,11 @@ function nodeLook(node: DesignNode, design: Design, state: BattleState) {
   const extra = role === 'api' ? state.temp.api : role === 'db' ? state.temp.db : 0;
   switch (node.kind) {
     case 'loadBalancer':
-      return { icon: <Network />, title: node.label, sub: 'cổng vào' };
+      return { icon: node.id.endsWith('-router') ? <Split /> : <Network />, title: node.label, sub: node.id.endsWith('-router') ? 'chia 2 shard' : 'cổng vào' };
     case 'cache': {
       const cap = cfg.cache?.capacity ?? 0;
-      return { icon: <Zap />, title: node.label, sub: `${keysK(cap)} key${(state.cache?.placed ?? 0) >= state.turn ? ' · nguội' : ''}`, accent: 'red' as const };
+      const cold = node.id === 'cache' && (state.cache?.placed ?? 0) >= state.turn;
+      return { icon: node.label === 'CDN' ? <Cloud /> : <Zap />, title: node.label, sub: `${keysK(cap)} ${node.label === 'CDN' ? 'trang' : 'key'}${cold ? ' · nguội' : ''}`, accent: 'red' as const };
     }
     case 'queue':
       return { icon: <ListPlus />, title: node.label, sub: `${cfg.concurrency} worker`, accent: 'indigo' as const };
@@ -223,7 +224,7 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
   const linkOn = (src: string) => sockets.some((s) => s.kind === 'link' && 'edge' in s.at && s.at.edge[0] === src && modulesAt(state, s.id).length > 0);
 
   // a crowded line (microservices, a CDN in front) draws its nodes smaller
-  const ghosts = sockets.filter((s) => 'before' in s.at && s.cap > 0 && modulesAt(state, s.id).length === 0 && main.includes(s.at.before)).length;
+  const ghosts = sockets.filter((s) => 'before' in s.at && s.cap > 0 && modulesAt(state, s.id).length === 0).length;
   const compact = main.length + ghosts > 4;
   const node = (id: string, small?: boolean) => {
     const n = nodeOf(d, id);
@@ -259,8 +260,10 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
 
   // the main line in path order; flex-row-reverse draws it entry-right
   const line: ReactNode[] = [];
+  // a socket in front of a sharded DB sits in front of its router
+  const frontOf = (s: SocketDef) => ('before' in s.at ? (main.includes(`${s.at.before}-router`) ? `${s.at.before}-router` : s.at.before) : undefined);
   main.forEach((id, i) => {
-    for (const s of emptyAt((s) => 'before' in s.at && s.at.before === id)) {
+    for (const s of emptyAt((s) => frontOf(s) === id)) {
       line.push(<SocketGhost key={`g-${s.id}`} socket={s} state={state} plug={plug} refs={refs} />, <Pipe key={`gp-${s.id}`} />);
     }
     line.push(node(id));

@@ -67,6 +67,15 @@
             "ext"
           ]
         }
+      },
+      {
+        "id": "edge",
+        "kind": "edge",
+        "label": "Biên",
+        "cap": 1,
+        "at": {
+          "before": "lb"
+        }
       }
     ],
     "design": {
@@ -253,6 +262,15 @@
         "cap": 2,
         "at": {
           "node": "db"
+        }
+      },
+      {
+        "id": "edge",
+        "kind": "edge",
+        "label": "Biên",
+        "cap": 1,
+        "at": {
+          "before": "lb"
         }
       }
     ],
@@ -499,6 +517,15 @@
             "svcB",
             "ext"
           ]
+        }
+      },
+      {
+        "id": "edge",
+        "kind": "edge",
+        "label": "Biên",
+        "cap": 1,
+        "at": {
+          "before": "lb"
         }
       }
     ],

@@ -331,6 +331,8 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
       const n = Math.max(-run.gold, e.n);
       run.gold += n;
       entry.gold = (entry.gold ?? 0) + n;
+    } else if (e.op === 'relic') {
+      if (content.relics.some((r) => r.id === e.id) && !run.relics.includes(e.id)) gainRelic(content, run, e.id);
     } else if (e.op === 'pickCard') pick = true;
   }
   run.history.push(entry);
