@@ -3,10 +3,10 @@
 // gateway on the right and flow left; side calls (the partner) sit below.
 
 import { type ReactNode, type RefObject } from 'react';
-import { ArrowLeft, ArrowRight, Cloud, Database, Split, Handshake, ListPlus, Network, Plus, Server, Swords, Zap } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Cloud, Database, Split, TriangleAlert, Handshake, ListPlus, Network, Plus, Server, Swords, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { Design, DesignNode } from '@/types';
-import { alias, cardDef, chassisOf, designOf, insertedNode, moduleOf, modulesAt, modulesOf, nodeOf, socketOf, socketsOf, type Placement } from './rules';
+import { activeCombos, alias, cardDef, chassisOf, currentIntent, designOf, hotfixable, leakNow, insertedNode, moduleOf, modulesAt, modulesOf, nodeOf, socketOf, socketsOf, type Placement } from './rules';
 import type { BattleState, CardDef, SocketDef, SocketKind } from './types';
 import { CONTENT } from './content';
 import { cardIcon } from './cardArt';
@@ -98,7 +98,7 @@ const ring = (look: ReturnType<typeof socketLook>) =>
         : '';
 
 /** The modules in a socket as chips, its free room dashed. `label` for sockets not drawn on a node (a call). */
-function SocketStrip({ socket, state, plug, refs, label }: { socket: SocketDef; state: BattleState; plug: Plug | null; refs: InfraRefs; label?: boolean }) {
+function SocketStrip({ socket, state, plug, refs, label, combo }: { socket: SocketDef; state: BattleState; plug: Plug | null; refs: InfraRefs; label?: boolean; combo: Map<number, string> }) {
   const mods = modulesAt(state, socket.id);
   const free = Math.max(0, socket.cap - mods.length);
   const look = socketLook(plug, socket);
@@ -120,10 +120,14 @@ function SocketStrip({ socket, state, plug, refs, label }: { socket: SocketDef; 
             key={m.uid}
             ref={(el) => void (refs.mods.current[m.uid] = el)}
             data-module={m.uid}
-            title={`${def.name}${m.level > 1 ? ` (cấp ${m.level})` : ''}: ${def.text}`}
+            title={`${def.name}${m.level > 1 ? ` (cấp ${m.level})` : ''}: ${def.text}${combo.has(m.uid) ? `\nCombo: ${combo.get(m.uid)}` : ''}`}
             className={cn(
               'flex max-w-[92px] items-center gap-0.5 rounded border px-1 py-0.5 transition-colors',
-              hit ? 'border-rose-400 bg-rose-500/25 text-rose-100 line-through decoration-rose-300/70' : 'border-violet-400/50 bg-violet-500/15 text-violet-200',
+              hit
+                ? 'border-rose-400 bg-rose-500/25 text-rose-100 line-through decoration-rose-300/70'
+                : combo.has(m.uid)
+                  ? 'border-amber-300/70 bg-amber-400/15 text-amber-100 shadow-[0_0_8px_rgba(251,191,36,0.35)]'
+                  : 'border-violet-400/50 bg-violet-500/15 text-violet-200',
             )}
           >
             <Icon className="size-3 shrink-0" />
@@ -220,6 +224,10 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
     const socket = socketOf(CONTENT, state, m.socket);
     if (id && socket) added.set(id, { socket, uid: m.uid });
   }
+  // modules in an active combo glow, with the combo's name
+  const combo = new Map<number, string>();
+  for (const c of activeCombos(CONTENT, state)) for (const id of c.needs) for (const m of modulesOf(state)) if (m.card.replace(/\+$/, '') === id) combo.set(m.uid, c.name);
+  const threat = threatsOf(state, d);
   const emptyAt = (pred: (s: SocketDef) => boolean) => sockets.filter((s) => pred(s) && s.cap > 0 && modulesAt(state, s.id).length === 0);
   const linkOn = (src: string) => sockets.some((s) => s.kind === 'link' && 'edge' in s.at && s.at.edge[0] === src && modulesAt(state, s.id).length > 0);
 
@@ -246,13 +254,14 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
           }}
           {...look}
           load={loads?.[id]}
+          threat={loads ? undefined : threat.get(id)}
           small={small}
           compact={compact || small}
-          className={ownLook ? ring(ownLook) : undefined}
+          className={ownLook ? ring(ownLook) : own && combo.has(own.uid) ? 'shadow-[0_0_14px_rgba(251,191,36,0.45)]' : undefined}
         />
         {own && ownLook?.over && plug && <DropTag tone="system" text={dropText(plug, own.socket, state)} className="bottom-full mb-2" />}
         {strips.map((s) => (
-          <SocketStrip key={s.id} socket={s} state={state} plug={plug} refs={refs} />
+          <SocketStrip key={s.id} socket={s} state={state} plug={plug} refs={refs} combo={combo} />
         ))}
       </div>
     );
@@ -298,12 +307,31 @@ export function InfraLine({ state, loads, refs, plug }: { state: BattleState; lo
       {links.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
           {links.map((s) => (
-            <SocketStrip key={s.id} socket={s} state={state} plug={plug} refs={refs} label />
+            <SocketStrip key={s.id} socket={s} state={state} plug={plug} refs={refs} label combo={combo} />
           ))}
         </div>
       )}
     </div>
   );
+}
+
+/** What this turn's intent does to which node (none when Hotfix cancels it), for a warning on the node. */
+function threatsOf(state: BattleState, d: Design): Map<string, string> {
+  const out = new Map<string, string>();
+  const it = currentIntent(CONTENT, state);
+  const add = (id: string, text: string) => out.set(id, out.has(id) ? `${out.get(id)}, ${text}` : text);
+  const cancelled = state.temp.hotfix && hotfixable(it);
+  if (!cancelled) {
+    if (it.chaos) add(alias(CONTENT, state, it.chaos.node), it.chaos.action === 'latency' ? `chậm ×${it.chaos.value}` : `lỗi ${Math.round(it.chaos.value * 100)}%`);
+    if (it.squeeze) add(alias(CONTENT, state, it.squeeze.node), `còn ${Math.round(it.squeeze.concurrency * 100)}% slot`);
+    if (it.cacheBust || it.cacheTtlMs) for (const n of d.nodes) if (n.kind === 'cache') add(n.id, it.cacheTtlMs ? 'TTL ngắn' : `phá cache ${Math.round((it.cacheBust ?? 0) * 100)}%`);
+  }
+  if (leakNow(state, it) > 0) add(alias(CONTENT, state, 'api'), `rò rỉ ×${(1 + leakNow(state, it)).toFixed(1)}`);
+  if (it.bandwidth) {
+    const entry = layoutOf(d).main[0];
+    if (entry) add(entry, 'nghẽn băng thông');
+  }
+  return out;
 }
 
 function InfraNode({
@@ -317,6 +345,7 @@ function InfraNode({
   nodeRef,
   small,
   compact,
+  threat,
   className,
 }: {
   icon: ReactNode;
@@ -332,6 +361,8 @@ function InfraNode({
   small?: boolean;
   /** A crowded line: smaller text so names fit. */
   compact?: boolean;
+  /** What this turn's intent does to the node. */
+  threat?: string;
   className?: string;
 }) {
   const color =
@@ -365,6 +396,11 @@ function InfraNode({
             className={cn('h-full rounded-full transition-[width,background-color] duration-200', load.util > 0.95 || load.bad ? 'bg-rose-500' : load.util > 0.7 ? 'bg-amber-400' : 'bg-emerald-400')}
             style={{ width: `${clamp(load.util, 0, 1) * 100}%` }}
           />
+        </div>
+      )}
+      {threat && (
+        <div title={`Ý định lượt này: ${threat}`} className="absolute -left-2 -top-2 z-10 flex size-5 items-center justify-center rounded-full border border-rose-300/70 bg-rose-600 text-white shadow-[0_0_10px_rgba(244,63,94,0.6)]">
+          <TriangleAlert className="size-3 !text-white" />
         </div>
       )}
       {count !== undefined && (

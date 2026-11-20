@@ -2,23 +2,26 @@
   {
     "id": "keda",
     "name": "Autoscale theo hàng đợi",
-    "text": "Autoscaler đọc độ dài hàng đợi (như KEDA) và bật thêm worker cho Queue khi việc dồn lại: tối đa 4 worker pod, mỗi pod nhận 200 việc tồn.",
+    "text": "Autoscaler lắp trên service đẩy việc vào Queue: nó đọc độ dài hàng đợi (như KEDA) và bật thêm worker cho Queue khi việc dồn lại, tối đa 4 worker pod, mỗi pod nhận 200 việc tồn.",
     "needs": ["queue", "autoscaler"],
-    "flag": "keda"
+    "flag": "keda",
+    "adjacent": true
   },
   {
     "id": "resilience",
     "name": "Retry có kỷ luật",
-    "text": "Breaker cắt khi phía sau hỏng, retry budget giữ retry dưới 10% lưu lượng: bão retry của client không khuếch đại được nữa.",
+    "text": "Breaker và retry budget trên cùng một đường gọi: breaker cắt khi phía sau hỏng, budget giữ retry dưới 10% lưu lượng. Bão retry của client không khuếch đại được nữa.",
     "needs": ["breaker", "retry_budget"],
-    "flag": "retryShield"
+    "flag": "retryShield",
+    "sameSocket": true
   },
   {
     "id": "fail_fast",
     "name": "Fail fast",
-    "text": "Timeout ngắn và breaker cùng nhau: request hỏng được trả về ngay thay vì giữ slot, API nhanh hơn ×0.85.",
+    "text": "Timeout ngắn và breaker trên cùng một đường gọi: request hỏng được trả về ngay thay vì giữ slot, API nhanh hơn ×0.85.",
     "needs": ["timeout", "breaker"],
-    "mods": { "apiLatency": 0.85 }
+    "mods": { "apiLatency": 0.85 },
+    "sameSocket": true
   },
   {
     "id": "read_path",
@@ -33,5 +36,20 @@
     "text": "Redis đỡ phần đọc, Queue đỡ phần ghi: API rảnh tay, mỗi instance chịu thêm tải (API nhanh hơn ×0.9).",
     "needs": ["cache", "queue"],
     "mods": { "apiLatency": 0.9 }
+  },
+  {
+    "id": "cache_tiers",
+    "name": "Cache nhiều tầng",
+    "text": "CDN ở biên và Redis trước DB: phần lớn request dừng ở CDN, phần còn lại dừng ở Redis. API rảnh tay hơn (API nhanh hơn ×0.9).",
+    "needs": ["cdn", "cache"],
+    "mods": { "apiLatency": 0.9 }
+  },
+  {
+    "id": "bulkhead",
+    "name": "Cô lập service",
+    "text": "Load shed trên một service và breaker trên đường gọi của chính nó: service đó tự bảo vệ, không kéo cả hệ thống sập theo (API nhanh hơn ×0.85).",
+    "needs": ["load_shed", "breaker"],
+    "adjacent": true,
+    "mods": { "apiLatency": 0.85 }
   }
 ]

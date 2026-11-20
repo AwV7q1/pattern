@@ -139,6 +139,10 @@ export interface ComboDef {
   name: string;
   text: string;
   needs: string[];
+  /** Only when all of them sit in the same socket (on the same call). */
+  sameSocket?: boolean;
+  /** Only when their sockets touch: each pair shares a node (a call and its service, a cache and the DB behind it). */
+  adjacent?: boolean;
   mods?: StatusMods;
   /** keda: the autoscaler follows the queue's backlog (scales its workers). retryShield: client retry storms do nothing. */
   flag?: 'keda' | 'retryShield';
@@ -191,6 +195,8 @@ export interface IntentWhen {
   noRetryBudget?: boolean;
   /** Every one of these cards has its module installed. */
   hasModule?: string[];
+  /** The system is one of these chassis. */
+  chassis?: string[];
 }
 
 /** What an intent turns into when the player's build matches `when`; `tag` tells the player why. */

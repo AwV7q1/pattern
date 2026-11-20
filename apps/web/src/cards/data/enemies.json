@@ -271,7 +271,27 @@
           "action": "latency",
           "value": 3
         },
-        "cacheBust": 0.4
+        "cacheBust": 0.4,
+        "variants": [
+          {
+            "when": {
+              "chassis": [
+                "microservice"
+              ]
+            },
+            "tag": "Phản ứng: bạn chạy microservice",
+            "label": "Đánh nhánh chậm nhất",
+            "icon": "slow",
+            "botRps": 900,
+            "chaos": {
+              "node": "ext",
+              "action": "latency",
+              "value": 5
+            },
+            "cacheBust": 0.4,
+            "text": "Thấy gateway chờ mọi service: bot ~900 rps nhắm vào luồng thanh toán, đối tác chậm ×5, phá cache 40%. Cả request chậm theo nhánh chậm nhất."
+          }
+        ]
       },
       {
         "id": "big_spike",
@@ -436,7 +456,27 @@
         "icon": "spike",
         "text": "Bot ~2600 rps, client retry 2 lần khi lỗi.",
         "botRps": 2600,
-        "clientRetries": 2
+        "clientRetries": 2,
+        "variants": [
+          {
+            "when": {
+              "chassis": [
+                "event_driven"
+              ]
+            },
+            "tag": "Phản ứng: bạn chạy hướng sự kiện",
+            "label": "Bão sự kiện",
+            "icon": "spike",
+            "botRps": 2600,
+            "clientRetries": 2,
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~2600 rps, client retry 2 lần; mỗi request đẩy một sự kiện vào bus và đối tác lỗi 35%: việc lỗi trong bus vẫn tính."
+          }
+        ]
       },
       {
         "id": "heavy",
@@ -1072,6 +1112,32 @@
           {
             "status": "replica_lag",
             "turns": 2
+          }
+        ],
+        "variants": [
+          {
+            "when": {
+              "chassis": [
+                "read_heavy"
+              ]
+            },
+            "tag": "Phản ứng: bạn chạy hệ đọc nhiều",
+            "label": "Ghi né cache",
+            "icon": "slow",
+            "botRps": 1400,
+            "chaos": {
+              "node": "db",
+              "action": "latency",
+              "value": 2
+            },
+            "cacheBust": 0.8,
+            "inflict": [
+              {
+                "status": "replica_lag",
+                "turns": 2
+              }
+            ],
+            "text": "Thao tác giỏ hàng không cache được: bot ~1400 rps đi thẳng qua CDN (phá cache 80%), DB chậm ×2 vì khoá tồn kho. Gây DB nghẽn kéo dài 2 lượt."
           }
         ]
       },

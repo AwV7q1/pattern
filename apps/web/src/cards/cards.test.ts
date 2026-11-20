@@ -1134,3 +1134,31 @@ test('shard after or before the cache: the cache always sits in front of both sh
     assert.ok(d.edges.some((e) => e.source === 'cache' && e.target === 'db-router'), order.join(' → '));
   }
 });
+
+test('combos by position: same call, touching sockets', () => {
+  const m = rules.newBattle(content, 4, { enemy: 'swarm', chassis: 'microservice' });
+  const put = (st: BattleState, id: string, socket: string) => {
+    const [h, uid] = withCard(st, id);
+    const next = rules.playCard(content, h, uid, { socket });
+    assert.notEqual(next, h, `${id} → ${socket}`);
+    return next;
+  };
+  const ids = (st: BattleState) => rules.activeCombos(content, st).map((c) => c.id);
+  // breaker and retry budget on two different calls: no combo; on the same call: on
+  assert.ok(!ids(put(put(m, 'breaker', 'a-db'), 'retry_budget', 'b-ext')).includes('resilience'));
+  assert.ok(ids(put(put(m, 'breaker', 'a-db'), 'retry_budget', 'a-db')).includes('resilience'));
+  // load shed on a service and a breaker on that service's call touch; on the other service's call they do not
+  assert.ok(ids(put(put(m, 'load_shed', 'svcB'), 'breaker', 'b-ext')).includes('bulkhead'));
+  assert.ok(!ids(put(put(m, 'load_shed', 'svcA'), 'breaker', 'b-ext')).includes('bulkhead'));
+});
+
+test('the attacker reads the chassis', () => {
+  const at = (chassis: string, enemy: string, label: string) => {
+    let s = rules.newBattle(content, 4, { enemy, chassis });
+    for (let i = 0; i < 12 && rules.currentIntent(content, s).id !== label; i++) s = endTurn(s);
+    return rules.currentIntent(content, s);
+  };
+  assert.equal(at('microservice', 'swarm', 'heavy_query').label, 'Đánh nhánh chậm nhất');
+  assert.equal(at('monolith', 'swarm', 'heavy_query').label, 'Truy vấn nặng');
+  assert.equal(at('read_heavy', 'sneaker_bot', 'cart_hold').label, 'Ghi né cache');
+});

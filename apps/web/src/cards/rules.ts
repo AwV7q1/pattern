@@ -151,6 +151,7 @@ export function designTraits(content: Content, state: BattleState) {
     retries: out?.retries ?? 0,
     retryBudget: !!out?.retryBudget,
     modules: [...modulesOf(state).map((m) => baseId(m.card)), ...(chassisOf(content, state).builtin ?? [])],
+    chassis: chassisOf(content, state).id,
   };
 }
 
@@ -161,6 +162,7 @@ export function matchesWhen(when: IntentWhen, t: ReturnType<typeof designTraits>
   if (when.retriesAtLeast !== undefined && t.retries < when.retriesAtLeast) return false;
   if (when.noRetryBudget && t.retryBudget) return false;
   if (when.hasModule && !when.hasModule.every((id) => t.modules.includes(id))) return false;
+  if (when.chassis && !when.chassis.includes(t.chassis)) return false;
   return true;
 }
 
@@ -206,9 +208,26 @@ export function addStatus(content: Content, state: BattleState, id: string, turn
 export type Mods = Required<StatusMods>;
 const NO_MODS: Mods = { apiLatency: 1, dbLatency: 1, cost: 1, botRps: 1, blockedDamage: 1, apiInstances: 0, dbInstances: 0, botCut: 0, bypass: 0, opsPerTurn: 0 };
 
-/** Combos whose modules are all installed. */
-export const activeCombos = (content: Content, state: BattleState): ComboDef[] =>
-  (content.combos ?? []).filter((c) => c.needs.every((id) => moduleOf(state, id)));
+/** The nodes a socket touches: its node, the node it sits in front of, or both ends of its call. */
+function socketNodes(socket: SocketDef | undefined): string[] {
+  if (!socket) return [];
+  const at = socket.at;
+  return 'node' in at ? [at.node] : 'before' in at ? [at.before] : at.edge;
+}
+
+/** Combos whose modules are all installed, where the combo wants them (same socket, or sockets that touch). */
+export function activeCombos(content: Content, state: BattleState): ComboDef[] {
+  return (content.combos ?? []).filter((c) => {
+    const mods = c.needs.map((id) => moduleOf(state, id));
+    if (!mods.every(Boolean)) return false;
+    if (c.sameSocket && new Set(mods.map((m) => m!.socket)).size > 1) return false;
+    if (c.adjacent) {
+      const nodes = mods.map((m) => socketNodes(socketOf(content, state, m!.socket)));
+      for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) if (!nodes[i].some((n) => nodes[j].includes(n))) return false;
+    }
+    return true;
+  });
+}
 
 /** Everything the statuses in play (and the active combos) change, combined. The only place the rules read them from. */
 export function statusMods(content: Content, state: BattleState): Mods {

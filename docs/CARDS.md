@@ -87,10 +87,14 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
   - Circuit Breaker → **Lỗi chập chờn** (DB lỗi 30%, breaker mở và chặn cả người thật).
   - Index → **Lật trang sâu** (OFFSET lớn, index không cứu).
   - Redis → Cache Buster, TTL ngắn (từ giai đoạn 1).
-- **Combo** (`data/combos.json`): bật khi đủ module, tính chung trong `statusMods`.
-  - Queue + Autoscaler: autoscale theo độ dài hàng đợi (KEDA, engine `metric: queueLength`).
-  - Breaker + Retry budget: bão retry của client không còn tác dụng.
-  - Timeout + Breaker: API ×0.85. Index + Replica: DB ×0.8. Redis + Queue: API ×0.9.
+- **Combo** (`data/combos.json`): bật khi đủ module, tính chung trong `statusMods`. Combo có thể đòi vị trí: `sameSocket` (cùng một ổ, tức cùng một đường gọi) hoặc `adjacent` (các ổ chạm nhau: cùng chung một node, như một service và đường gọi của nó, hay cache và DB phía sau). Trên Monolith gần như luôn thoả; trên Microservice phải lắp đúng service.
+  - Queue + Autoscaler (`adjacent`): autoscale theo độ dài hàng đợi (KEDA, engine `metric: queueLength`).
+  - Breaker + Retry budget (`sameSocket`): bão retry của client không còn tác dụng.
+  - Timeout + Breaker (`sameSocket`): API ×0.85. Index + Replica: DB ×0.8. Redis + Queue: API ×0.9.
+  - CDN + Redis (Cache nhiều tầng): API ×0.9. Load shed + Breaker (`adjacent`, Cô lập service): API ×0.85.
+  - Giao diện: module đang nằm trong combo có viền vàng, di chuột thấy tên combo.
+- **Địch đọc khung** (`IntentWhen.chassis`): Bầy Kiến đánh nhánh chậm nhất của Microservice (đối tác chậm ×5), Bầy Đàn gây bão sự kiện trên hệ hướng sự kiện (đối tác lỗi 35%, việc lỗi trong bus vẫn tính), Sneaker Bot ghi né cache trên hệ đọc nhiều (phá cache 80%). Biến thể theo khung đứng trước biến thể theo module.
+- **Cảnh báo trên sơ đồ**: node bị ý định lượt này nhắm (`chaos`, `squeeze`, phá cache, rò rỉ, nghẽn băng thông) có dấu cảnh báo đỏ; Hotfix huỷ được thì dấu biến mất.
 - **Bot thích nghi** (`battle.adapt`): lượt nào chặn từ `at` bot trở lên thì cộng 1 tầng `adapted` (lách thêm bộ lọc mỗi tầng, tối đa `maxStacks`). Ngừng lọc mạnh `turns` lượt thì hết. Luật này để lọc bot không còn vừa là phòng thủ vừa là sát thương miễn phí mãi.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.
