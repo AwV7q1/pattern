@@ -9,11 +9,14 @@ import * as rules from './rules.ts';
 import * as runs from './run.ts';
 import { generateMap, ELITE_ROW } from './map.ts';
 import type { BattleState, Content, RunState } from './types';
-import type { Summary } from '@/types';
+import type { Design, Summary } from '@/types';
+
+/** The API's call to its data in the default system (monolith). */
+const apiCall = (d: Design) => rules.edgeAt(d, ['api', 'db']);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json'), chassis: data('chassis.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -25,6 +28,11 @@ function withCard(s: BattleState, id: string): [BattleState, number] {
   next.ops = 10;
   return [next, uid];
 }
+
+const playIn = (st: BattleState, id: string, replace?: number) => {
+  const [h, uid] = withCard(st, id);
+  return rules.playCard(content, h, uid, replace === undefined ? {} : { replace });
+};
 
 /** A new run past the starting infrastructure pick (Redis), standing on the map. */
 const fresh = (seed: number) => runs.pickReward(content, runs.newRun(content, seed), 'cache');
@@ -84,7 +92,7 @@ test('effects: cache, edge, tune, waf, purge', () => {
   s = rules.playCard(content, s, uid);
   const d = (st: BattleState) => rules.designOf(content, st);
   assert.ok(rules.nodeOf(d(s), 'cache'), 'cache node added');
-  assert.equal(rules.apiOut(d(s))?.target, 'cache');
+  assert.equal(apiCall(d(s))?.target, 'cache');
 
   const p50 = rules.nodeOf(d(s), 'db')!.config!.latencyP50Ms!;
   [s, uid] = withCard(s, 'index');
@@ -730,9 +738,9 @@ test('variants: the intent answers the build read at the start of the turn, and 
   assert.ok(!rules.matchesWhen({ instancesAtLeast: { api: 4 } }, traits(base)));
   assert.ok(rules.matchesWhen({ wafAtLeast: 0.25 }, traits({ ...base, waf: 0.25 })));
   const retrying = structuredClone(base);
-  Object.assign(rules.apiOut(retrying.design)!, { retries: 2 });
+  Object.assign(apiCall(retrying.design)!, { retries: 2 });
   assert.ok(rules.matchesWhen({ retriesAtLeast: 2, noRetryBudget: true }, traits(retrying)));
-  Object.assign(rules.apiOut(retrying.design)!, { retryBudget: { ratio: 0.1, minPerSec: 10 } });
+  Object.assign(apiCall(retrying.design)!, { retryBudget: { ratio: 0.1, minPerSec: 10 } });
   assert.ok(!rules.matchesWhen({ retriesAtLeast: 2, noRetryBudget: true }, traits(retrying)));
 });
 
@@ -904,52 +912,65 @@ test('adaptation: heavy filtering adds a stack, two calm turns clear it, and the
   assert.equal(calm(calm(t2)).statuses, undefined);
 });
 
-test('modules: a full slot group needs a replacement, which undoes the old module; replaying levels up', () => {
+test('modules: a full socket needs a replacement, which undoes the old module; replaying levels up', () => {
   let s = rules.newBattle(content, 5, { enemy: 'swarm' });
   const play = (st: BattleState, id: string, replace?: number) => {
     const [h, uid] = withCard(st, id);
-    return rules.playCard(content, h, uid, { replace });
+    return rules.playCard(content, h, uid, replace === undefined ? {} : { replace });
   };
   for (const id of ['timeout', 'backoff', 'breaker']) s = play(s, id);
-  assert.equal(rules.modulesIn(content, s, 'api').length, content.battle.slots.api);
-  assert.equal(rules.apiOut(rules.designOf(content, s))!.timeoutMs, 250);
+  const link = rules.socketOf(content, s, 'api-db')!;
+  assert.equal(rules.modulesAt(s, link.id).length, link.cap);
+  assert.equal(apiCall(rules.designOf(content, s))!.timeoutMs, 250);
 
   const [h, uid] = withCard(s, 'pool');
-  assert.equal(rules.needsReplace(content, h, uid), 'api');
-  assert.equal(rules.playCard(content, h, uid), h, 'no free slot, no replacement: not played');
+  assert.deepEqual(
+    rules.placements(content, h, uid).map((m) => m.replace),
+    rules.modulesAt(s, link.id).map((m) => m.uid),
+    'a full socket: one move per module to take out',
+  );
+  assert.equal(rules.playCard(content, h, uid), h, 'no free socket, no replacement: not played');
   const timeout = rules.moduleOf(s, 'timeout')!.uid;
-  const swapped = rules.playCard(content, h, uid, { replace: timeout });
+  const swapped = rules.playCard(content, h, uid, { socket: link.id, replace: timeout });
   assert.ok(!rules.moduleOf(swapped, 'timeout') && rules.moduleOf(swapped, 'pool'));
-  const out = rules.apiOut(rules.designOf(content, swapped))!;
+  const out = apiCall(rules.designOf(content, swapped))!;
   assert.equal(out.timeoutMs, undefined, 'the timeout is gone with its module');
   assert.equal(out.poolSize, 8);
 
-  // the same card again: a level, not a slot (a cache grows by its step)
+  // the same card again: a level, not a socket (a cache grows by its step)
   s = play(s, 'cache');
   s = play(s, 'cache');
   assert.equal(rules.moduleOf(s, 'cache')!.level, 2);
   assert.equal(rules.nodeOf(rules.designOf(content, s), 'cache')!.config!.cache!.capacity, 2000);
-  assert.equal(rules.modulesIn(content, s, 'data').length, 1);
-  // scale and WAF never take a slot
+  assert.equal(rules.modulesAt(s, 'db-front').length, 1);
+  // scale and WAF never take a socket
   s = play(play(s, 'scale_api'), 'waf');
   assert.equal(rules.modulesOf(s).length, 4);
 });
 
-test('modules: removing the cache and building it again starts it cold', () => {
+test('sockets: each module plugs where it acts; other sockets are not touched', () => {
   let s = rules.newBattle(content, 5, { enemy: 'swarm' });
-  const play = (st: BattleState, id: string, replace?: number) => {
-    const [h, uid] = withCard(st, id);
-    return rules.playCard(content, h, uid, { replace });
-  };
-  s = endTurn(play(play(s, 'cache'), 'index'));
-  const warm = (st: BattleState) => rules.planTurn(content, st).input.design.nodes.find((n) => n.id === 'cache')?.config?.cache?.warm;
-  assert.equal(warm(s), true);
-  s = play(s, 'replica', rules.moduleOf(s, 'cache')!.uid);
-  assert.equal(rules.nodeOf(rules.designOf(content, s), 'cache'), undefined);
-  assert.equal(rules.nodeOf(rules.designOf(content, s), 'db')!.config!.instances, 2);
-  s = endTurn(s);
-  s = play(s, 'cache', rules.moduleOf(s, 'replica')!.uid);
-  assert.equal(warm(s), false, 'cold again the turn it is rebuilt');
+  s = playIn(playIn(playIn(s, 'cache'), 'replica'), 'bigger_queue');
+  assert.deepEqual(
+    rules.modulesOf(s).map((m) => [rules.baseId(m.card), m.socket]),
+    [
+      ['cache', 'db-front'],
+      ['replica', 'db'],
+      ['bigger_queue', 'api'],
+    ],
+  );
+  const d = rules.designOf(content, s);
+  assert.equal(rules.nodeOf(d, 'db')!.config!.instances, 2, 'replica scales the storage socket node');
+  assert.ok(rules.nodeOf(d, 'cache'));
+  // the storage socket is full: Index has to replace the replica, the cache stays
+  const [h, uid] = withCard(s, 'index');
+  assert.deepEqual(rules.placements(content, h, uid), [{ socket: 'db', replace: rules.moduleOf(s, 'replica')!.uid }]);
+  const swapped = rules.playCard(content, h, uid, { replace: rules.moduleOf(s, 'replica')!.uid });
+  assert.ok(rules.moduleOf(swapped, 'cache') && rules.moduleOf(swapped, 'index') && !rules.moduleOf(swapped, 'replica'));
+  // a call policy put in after the cache still sits on the API's call, now into the cache
+  const t = playIn(s, 'timeout');
+  assert.equal(apiCall(rules.designOf(content, t))!.target, 'cache');
+  assert.equal(apiCall(rules.designOf(content, t))!.timeoutMs, 250);
 });
 
 test('queue: the API answers at once, the partner is called through a queue; lost async work hurts', () => {
@@ -962,7 +983,7 @@ test('queue: the API answers at once, the partner is called through a queue; los
   assert.ok(d.edges.some((e) => e.source === 'api' && e.target === 'queue'));
   assert.ok(d.edges.some((e) => e.source === 'queue' && e.target === 'ext'));
   assert.ok(!d.edges.some((e) => e.source === 'api' && e.target === 'ext'));
-  assert.equal(rules.apiOut(d)!.target, 'db', 'call policies stay on the data call');
+  assert.equal(apiCall(d)!.target, 'db', 'call policies stay on the data call');
 
   const plan = rules.planTurn(content, q);
   const sent = plan.legitRps + plan.botRps - plan.botBlockedRps;
@@ -986,10 +1007,6 @@ test('autoscaler: HPA on the API from this turn’s count, with its headroom', (
   assert.equal(burst.max - burst.min, 4);
 });
 
-const playIn = (st: BattleState, id: string, replace?: number) => {
-  const [h, uid] = withCard(st, id);
-  return rules.playCard(content, h, uid, { replace });
-};
 
 test('module counters: the enemy reads installed modules (autoscaler → short burst, queue → poison messages)', () => {
   // Bầy Kiến's 2nd intent is a spike; with an autoscaler in, it comes as a burst too short for new pods
@@ -1027,5 +1044,5 @@ test('combos: on while every module is in, off when one goes; mods and flags app
   const queue = rules.nodeOf(rules.planTurn(content, q).input.design, 'queue')!.config!;
   assert.equal((queue.autoscale as unknown as { metric: string }).metric, 'queueLength', 'KEDA: workers follow the backlog');
   q = playIn(q, 'cache');
-  assert.equal(rules.modulesIn(content, q, 'data').length, 2);
+  assert.equal(rules.modulesOf(q).length, 3, 'queue, autoscaler and cache each have their own socket');
 });

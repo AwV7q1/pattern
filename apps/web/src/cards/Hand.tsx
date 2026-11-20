@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import { Layers } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { SOCKET_KIND_LABEL } from './Infra';
 import type { CardDef, CardType, Rarity } from './types';
 import { reduced } from './fx';
 import { TYPE_ICON, cardIcon } from './cardArt';
@@ -49,7 +50,8 @@ export interface HandCard {
 }
 
 /** Where a dragged card would land: your system, the enemy, or one of its minions. */
-export type DropTarget = { kind: 'system' } | { kind: 'bot' } | { kind: 'minion'; uid: number };
+/** Where a dragged card would land: your system, a socket of it (replacing a module), the enemy or a minion. */
+export type DropTarget = { kind: 'system' } | { kind: 'socket'; socket: string; replace?: number } | { kind: 'bot' } | { kind: 'minion'; uid: number };
 
 interface Drag {
   uid: number;
@@ -391,7 +393,7 @@ export function CardFace({
       <span className={cn('mx-auto mt-1 flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
         <TypeIcon aria-hidden className="size-2.5" />
         {style.label}
-        {def.slot && <span className="whitespace-nowrap opacity-80">· slot {def.slot === 'api' ? 'API' : 'data'}</span>}
+        {def.fits && <span className="whitespace-nowrap opacity-80">· ổ {def.fits.map((k) => SOCKET_KIND_LABEL[k]).join('/')}</span>}
       </span>
       <p className="flex flex-1 items-center justify-center px-1 pt-1 text-center text-[11px] leading-snug text-foreground/90">{def.text}</p>
       {lesson && <p className="mt-1 border-t border-white/10 px-1 pt-1.5 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>}

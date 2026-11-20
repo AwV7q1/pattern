@@ -23,7 +23,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json'), chassis: data('chassis.json') };
 
 // BALANCE_RUN='{"fight":{"hp":0.6}}': merge over run.json (one level deep), to try difficulty knobs without editing it.
 if (process.env.BALANCE_RUN) {
@@ -58,10 +58,9 @@ const policies = {
     const playable = s.hand.filter((c) => rules.canPlay(content, s, c.uid));
     if (!playable.length) return null;
     const uid = playable[Math.floor(rnd() * playable.length)].uid;
-    const layer = rules.needsReplace(content, s, uid);
-    if (!layer) return uid;
-    const mods = rules.modulesIn(content, s, layer);
-    return { uid, replace: mods[Math.floor(rnd() * mods.length)].uid };
+    const moves = rules.placements(content, s, uid);
+    if (!moves.length) return uid;
+    return { uid, ...moves[Math.floor(rnd() * moves.length)] };
   },
 };
 
@@ -119,13 +118,14 @@ function useless(id, s, intent) {
   return false;
 }
 
-// A full slot group: take out the module this policy values least, if it values it less than the new card.
+// Every fitting socket full: take out the module this policy values least, if it values it less than the new card.
 function replaceFor(p, s, uid, id) {
-  const layer = rules.needsReplace(content, s, uid);
-  if (!layer) return { uid };
-  const rank = (card) => { const i = p.big.indexOf(rules.baseId(card)); return i < 0 ? Infinity : i; };
-  const worst = rules.modulesIn(content, s, layer).reduce((a, b) => (rank(b.card) > rank(a.card) ? b : a));
-  return rank(worst.card) > rank(id) ? { uid, replace: worst.uid } : null;
+  const moves = rules.placements(content, s, uid);
+  if (!moves.length || moves.some((m) => m.replace === undefined)) return { uid };
+  const rankOf = (card) => { const i = p.big.indexOf(rules.baseId(card)); return i < 0 ? Infinity : i; };
+  const rank = (mod) => rankOf(rules.modulesOf(s).find((m) => m.uid === mod.replace).card);
+  const worst = moves.reduce((a, b) => (rank(b) > rank(a) ? b : a));
+  return rank(worst) > rankOf(id) ? { uid, ...worst } : null;
 }
 
 for (const [name, p] of Object.entries(SMART)) {
@@ -143,7 +143,7 @@ for (const [name, p] of Object.entries(SMART)) {
 }
 
 // Forecast: what a player who reads the "Dự kiến" panel does. For every card in hand (and every module it could
-// replace when its slot group is full) it plays the card on a copy, asks the engine about the turn, and scores it
+// replace when its sockets are full) it plays the card on a copy, asks the engine about the turn, and scores it
 // like the panel does: HP lost, plus how much enemy HP is left. It plays the best card that beats ending the turn,
 // and repeats. Modules and permanent scale keep working in later turns, so their gain counts double; cards whose
 // worth this turn cannot show (Ops, draw) get a small fixed bonus.
@@ -157,7 +157,7 @@ function forecastValue(s) {
   if (sc.damage.total >= s.hp) return -1e4 + s.hp - sc.damage.total;
   return -sc.damage.total - ENEMY_W * Math.max(0, enemyHp(s) - sc.enemyDamage);
 }
-const isPermanent = (def) => !!def.slot || def.effects.some((e) => e.op === 'scale' && !e.temp);
+const isPermanent = (def) => !!def.fits || def.effects.some((e) => e.op === 'scale' && !e.temp);
 const isEnabler = (def) => def.effects.some((e) => e.op === 'ops' || e.op === 'draw' || e.op === 'purge');
 function forecastMove(s) {
   const intent = rules.currentIntent(content, s);
@@ -168,10 +168,10 @@ function forecastMove(s) {
     if (seen.has(c.id) || !rules.canPlay(content, s, c.uid)) continue;
     seen.add(c.id);
     const def = rules.cardDef(content, c.id);
-    const layer = rules.needsReplace(content, s, c.uid);
-    const moves = layer ? rules.modulesIn(content, s, layer).map((m) => ({ uid: c.uid, replace: m.uid })) : [{ uid: c.uid }];
+    const places = rules.placements(content, s, c.uid);
+    const moves = places.length ? places.map((m) => ({ uid: c.uid, ...m })) : [{ uid: c.uid }];
     for (const move of moves) {
-      const next = rules.playCard(content, s, move.uid, { replace: move.replace });
+      const next = rules.playCard(content, s, move.uid, move);
       if (next === s) continue;
       let gain = forecastValue(next) - base;
       if (isPermanent(def) && gain > 0 && next.phase !== 'won') gain *= 2;
@@ -217,8 +217,8 @@ function fight(policy, seed, setup) {
     s = rules.setTarget(s, aim(policy, s, rnd));
     let move;
     while (s.phase === 'player' && (move = policies[policy](s, rnd)) != null) {
-      const { uid, replace } = typeof move === 'number' ? { uid: move } : move;
-      const next = rules.playCard(content, s, uid, { replace });
+      const { uid, ...place } = typeof move === 'number' ? { uid: move } : move;
+      const next = rules.playCard(content, s, uid, place);
       if (next === s) break;
       s = next;
     }

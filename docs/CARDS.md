@@ -53,12 +53,13 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
   - Hotfix chỉ huỷ sự cố trong lượt, không gỡ debuff. **Rollback** (`op: cleanse`) gỡ mọi debuff; Hotfix nâng cấp gỡ 1.
   - Debuff: Hàng xóm ồn ào (API −1 instance), Hết CPU credit (API chậm ×1.4), DB nghẽn kéo dài (DB chậm ×1.5), Hoá đơn tăng vọt (chi phí ×1.5), Kiệt sức on-call (−1 Ops mỗi lượt).
   - Buff: Chặn theo vùng (lá Geo-block, bot ×0.7), Tarpit (request bot bị chặn gây sát thương ×1.5).
-- **Slot hạ tầng** (`battle.slots`, `CardDef.slot`). Lá có `slot` lắp một module (`state.modules`) thay vì sửa thẳng design. `designOf(content, state)` dựng design của trận từ design gốc (scale vĩnh viễn và relic sửa thẳng vào đây) cộng mọi module theo thứ tự lắp, nên gỡ module là hiệu ứng của nó mất sạch.
-  - Nhóm `api` (3 slot): timeout, backoff, breaker, pool, retry budget, bigger queue, load shed, Autoscaler.
-  - Nhóm `data` (2 slot): Redis, Index, Replica, Vertical, Message Queue.
-  - Đánh lại lá đã lắp thì module lên cấp, không tốn slot (Redis +1k key mỗi cấp; tune áp thêm một lần).
-  - Nhóm đầy: `playCard(..., { replace })` bắt buộc chỉ ra module bị gỡ; `needsReplace` cho UI biết khi nào phải hỏi.
-  - Scale API, WAF và các lá Hành động không tốn slot.
+- **Khung và ổ cắm** (`data/chassis.json`, `CardDef.fits`, `state.modules`). Mỗi trận dựng trên một khung (`ChassisDef`): topology gốc, danh sách ổ cắm (`sockets`) và bí danh vai trò (`aliases`: node nào là `api`, `db`, `ext`). Nội dung (ý định địch, status, lá scale/tune) chỉ gọi tên vai trò, nên chạy được trên mọi khung.
+  - Ổ có kiểu theo vị trí: `link` (đường gọi giữa hai node: timeout, retry, breaker, pool, retry budget), `compute` (trên service: bigger queue, load shed, Autoscaler), `front` (chèn node trước một node: Redis), `storage` (trên DB: Index, Vertical, Replica), `async` (biến lời gọi thành bất đồng bộ: Message Queue), `edge` (trước cổng vào, dùng từ giai đoạn linh kiện mới).
+  - Khung Monolith: `API → DB` 3 ổ `link`, `API` 1 ổ `compute`, `Trước DB` 1 ổ `front`, `DB` 1 ổ `storage`, `API → Đối tác` 1 ổ `async`.
+  - Lá có `fits` lắp vào một ổ hợp lệ thay vì sửa thẳng design. Hiệu ứng lấy đích từ ổ: `tune`, `scale`, `autoscale` lên node của ổ, `edge` lên đường gọi của ổ, `cache` chèn trước node của ổ, `queue` chèn vào lời gọi của ổ. `designOf(content, state)` dựng design từ khung cộng mọi module; module thêm node (`front`, `async`, `edge`) dựng sau cùng, nên policy trên đường gọi đi theo lời gọi vào node mới.
+  - `placements(content, state, uid)` liệt kê các nước đi `{ socket, replace? }`: mọi ổ hợp lệ còn chỗ, và mỗi module của ổ hợp lệ đã đầy. `playCard(..., { socket, replace })` lắp theo nước đó; không chỉ định thì lắp vào ổ trống đầu tiên. Đánh lại lá đã lắp thì module lên cấp (Redis +1k key mỗi cấp; tune áp thêm một lần), không tốn ổ.
+  - Giao diện: ổ vẽ ngay trên sơ đồ (chip dưới node, khung nét đứt "+ Cache" / "+ Queue" trong đường đi, dải ổ của đường gọi dưới sơ đồ). Kéo lá có `fits` thì ổ hợp lệ sáng lên; thả lên một module trong ổ đầy là thay module đó.
+  - Scale API, WAF và các lá Hành động không cần ổ.
 - **Đối tác** (`ext`): mỗi request, sau khi đọc dữ liệu, API còn gọi đồng bộ một dịch vụ đối tác (thanh toán, email). Một số địch làm đối tác chậm (`chaos.node: 'ext'`), giữ slot API.
   - **Message Queue** đặt hàng đợi giữa API và đối tác: API trả lời ngay, worker gọi đối tác sau. Việc lỗi (`asyncErr`) hoặc còn tồn (`backlog`) cuối lượt tính là request lỗi theo phần của người dùng thật.
   - **Autoscaler (HPA)** gắn `autoscale` của engine vào API: thêm tối đa 4 pod khi bận, mỗi pod mất 3s mới nhận tải, chỉ tính tiền lúc chạy.
@@ -292,9 +293,11 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | `apps/web/src/cards/data/relics.json` | Relic: độ hiếm, lúc kích hoạt, hiệu ứng |
 | `apps/web/src/cards/data/run.json` | Tháp: số tầng, bản đồ, hệ số địch, vàng, cửa hàng, tỉ lệ độ hiếm |
 | `apps/web/src/cards/run.ts` | **Luật của tháp**: bản đồ, phần thưởng, nghỉ, sự cố, cửa hàng, relic, lên tầng |
-| `apps/web/src/cards/data/battle.json` | Thiết lập trận: máu, Ops, traffic, SLO, ngân sách, hệ số sát thương, bộ bài đầu, design ban đầu |
+| `apps/web/src/cards/data/battle.json` | Thiết lập trận: máu, Ops, traffic, SLO, ngân sách, hệ số sát thương, bộ bài đầu |
+| `apps/web/src/cards/data/chassis.json` | Khung hệ thống: topology gốc, ổ cắm, bí danh vai trò |
 | `apps/web/src/cards/rules.ts` | **Luật thuần**: `newBattle`, `playCard`, `planTurn`, `resolveTurn`. Không React, không DOM, RNG có seed nằm trong state |
 | `apps/web/src/cards/CardBattle.tsx` | Giao diện. Gọi engine qua `compute.run` (Web Worker) |
+| `apps/web/src/cards/Infra.tsx` | Sơ đồ hệ thống vẽ từ đồ thị design (`layoutOf`), ổ cắm và module, đích thả của lá có `fits` |
 | `apps/web/src/cards/BotAvatar.tsx` | Tạo hình địch (SVG): thân theo địch, tư thế theo ý định |
 | `apps/web/src/cards/moves/minions.tsx` | Thân và chuyển động riêng của từng loại lính |
 | `apps/web/src/cards/botMotion.ts` | Chuyển động chung của địch và lính: dáng đi, kiểu ra đòn, trúng đòn, gọi lính, bị hạ theo cấp; chuyển sang bộ riêng nếu địch có |
@@ -317,7 +320,7 @@ pnpm balance:cards 40 --run --jobs=4       # chia seed ra 4 tiến trình (bot f
 BALANCE_RUN='{"fight":{"hp":0.6}}' pnpm balance:cards 20 --run  # thử hệ số độ khó mà không sửa run.json
 ```
 
-Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý; giữ bộ bài mỏng sau 18 lá), `rut` (bộ bài lối mòn cũ của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): có sẵn Redis và Index, thêm 2 Scale API và 2 Rate limit, không nhận thêm lá; đây là mốc khó nhất), `thin` (bộ khởi đầu hiện tại cộng Redis, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Các bot thông minh biết chọn module để gỡ khi nhóm slot đầy. Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
+Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý; giữ bộ bài mỏng sau 18 lá), `rut` (bộ bài lối mòn cũ của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): có sẵn Redis và Index, thêm 2 Scale API và 2 Rate limit, không nhận thêm lá; đây là mốc khó nhất), `thin` (bộ khởi đầu hiện tại cộng Redis, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Các bot thông minh biết chọn module để gỡ khi các ổ hợp lệ đều đầy. Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
 
 Mục tiêu hiện tại cho trận đầu:
 - Không làm gì: thua.

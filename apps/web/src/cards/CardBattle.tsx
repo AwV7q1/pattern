@@ -15,12 +15,9 @@ import {
   EyeOff,
   ShieldOff,
   Unplug,
-  Database,
   Heart,
   Hourglass,
   Sparkles,
-  Handshake,
-  ListPlus,
   HeartPulse,
   Info,
   LibraryBig,
@@ -31,8 +28,6 @@ import {
   Radar,
   Repeat,
   RotateCcw,
-  Server,
-  Swords,
   Shield,
   ShieldAlert,
   Skull,
@@ -46,7 +41,6 @@ import { compute } from '@/sim/compute';
 import { cn } from '@/lib/utils';
 import type { Design, WindowMetrics } from '@/types';
 import {
-  apiOut,
   botCutNow,
   botRpsNow,
   bypassNow,
@@ -55,8 +49,10 @@ import {
   activeCombos,
   currentIntent,
   designOf,
-  modulesIn,
-  needsReplace,
+  moduleOf,
+  placementsOf,
+  budgetOf,
+  alias,
   guardNow,
   hotfixable,
   leakNow,
@@ -75,17 +71,17 @@ import {
   statusDef,
   targetOf,
 } from './rules';
-import type { BattleSetup, BattleState, CardDef, Intent, Layer, MinionState, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, Intent, MinionState, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
-import { cardIcon, statusIcon } from './cardArt';
+import { statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
 import { botDieMs, MINION_EXIT_MS, minionDieClass, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration, type DropTarget } from './Hand';
+import { DropTag, InfraLine, keysK, pathOf, type InfraRefs, type NodeLoad, type Plug } from './Infra';
 import { absorb, anchor, bolts, floatText, flow, glow, infuse, pulse, ring, shake, wait, wave } from './fx';
-
 
 export const INTENT_ICON: Record<Intent['icon'], typeof Zap> = {
   probe: Radar,
@@ -127,7 +123,6 @@ function costOf(design: Design, temp: BattleState['temp']) {
 type Flash = { key: number; player: number; enemy: number };
 
 /** Load on one node during the replay of a turn. */
-type NodeLoad = { util: number; bad: boolean };
 
 /**
  * The turn as it plays out: what the meters show while the bot attacks.
@@ -217,8 +212,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     setDragDef(def);
     setDragOver(over);
   }, []);
-  /** A slotted card dropped on a full slot group: which module it replaces. */
-  const [replacing, setReplacing] = useState<{ uid: number; at?: { x: number; y: number }; target: DropTarget; layer: Layer } | null>(null);
   /** The enemy side while attacks fly at it (null: it shows the rules' state). */
   const [foe, setFoe] = useState<Foe | null>(null);
   /** Bumped by each new attack: a stale volley's landing must not move the shown enemy. */
@@ -264,6 +257,12 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   const deckRef = useRef<HTMLDivElement>(null);
   const discardRef = useRef<HTMLDivElement>(null);
   const nodeEls = useRef<Record<string, HTMLDivElement | null>>({});
+  /** Sockets of your system by id, and the modules in them by uid (socketed cards drop there). */
+  const socketEls = useRef<Record<string, HTMLElement | null>>({});
+  const modEls = useRef<Record<number, HTMLElement | null>>({});
+  const infraRefs = useMemo<InfraRefs>(() => ({ nodes: nodeEls, sockets: socketEls, mods: modEls, gate: gateRef }), []);
+  /** A role's node element (`api`, `db`, `ext`) in this fight's system. */
+  const roleNode = (ref: 'api' | 'db' | 'ext') => nodeEls.current[alias(CONTENT, state, ref)] ?? null;
   /** Minion avatars by uid (bolts aimed at a minion land there). */
   const minionEls = useRef<Record<number, HTMLDivElement | null>>({});
   /** Where attacks land now: the targeted minion, or the enemy. */
@@ -271,7 +270,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     const m = targetOf(s);
     return (m && minionEls.current[m.uid]) || botRef.current;
   };
-
 
   /** Green bolts from your gateway into the bot. */
   /** Green bolts from your gateway into the bot (or a minion); `onLand` runs as they hit. */
@@ -304,6 +302,23 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         for (const m of minionsOf(state)) if (inside(minionEls.current[m.uid]?.parentElement, 6)) return { kind: 'minion', uid: m.uid };
         if (inside(botZoneRef.current, 0)) return { kind: 'bot' };
       }
+      if (def.fits) {
+        // a socketed card: onto a module it replaces, a socket with room, its own module (a level), or anywhere on the system when that is unambiguous
+        const moves = placementsOf(CONTENT, state, def.id);
+        const leveling = !!moduleOf(state, def.id);
+        for (const m of moves) if (m.replace !== undefined && inside(modEls.current[m.replace], 3)) return { kind: 'socket', socket: m.socket, replace: m.replace };
+        for (const m of moves) {
+          if (m.replace !== undefined || !inside(socketEls.current[m.socket], 4)) continue;
+          return { kind: 'socket', socket: m.socket };
+        }
+        // a full socket of one module: dropping on the socket replaces that module
+        for (const m of moves) {
+          if (m.replace === undefined || moves.filter((x) => x.socket === m.socket).length !== 1) continue;
+          if (inside(socketEls.current[m.socket], 4)) return { kind: 'socket', socket: m.socket, replace: m.replace };
+        }
+        if ((leveling || moves.some((m) => m.replace === undefined)) && inside(systemZoneRef.current, 12)) return { kind: 'system' };
+        return null;
+      }
       if (side.system && !side.bot && inside(systemZoneRef.current, 12)) return { kind: 'system' };
       return null;
     },
@@ -312,12 +327,16 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
   /** What a card touches in your system, and the label shown there. */
   const targetsOf = (def: CardDef, next: BattleState) => {
-    const nodes = nodeEls.current;
+    const ids = nodeEls.current;
+    const nodes = { api: roleNode('api'), db: roleNode('db'), ext: roleNode('ext'), cache: ids.cache ?? null, queue: ids.queue ?? null };
     const hits: { el: HTMLElement | null; label?: string }[] = [];
+    // a socketed card lands in its socket (the module, once its node is drawn)
+    const mod = def.fits ? moduleOf(next, def.id) : undefined;
+    const home = mod ? (modEls.current[mod.uid] ?? socketEls.current[mod.socket] ?? null) : null;
     for (const e of def.effects) {
       switch (e.op) {
         case 'scale':
-          hits.push({ el: nodes[e.node], label: `+${e.n} instance${e.temp ? ' (lượt này)' : ''}` });
+          hits.push({ el: (def.fits && home) || nodes[e.node], label: `+${e.n} instance${e.temp ? ' (lượt này)' : ''}` });
           break;
         case 'cache': {
           const cap = nodeOf(designOf(CONTENT, next), 'cache')?.config?.cache?.capacity ?? e.capacity;
@@ -325,7 +344,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           break;
         }
         case 'cacheOpt':
-          hits.push({ el: nodes.cache ?? nodes.policy, label: e.swr ? 'stale-while-revalidate' : 'chuẩn hoá key' });
+          hits.push({ el: nodes.cache ?? nodes.db, label: e.swr ? 'stale-while-revalidate' : 'chuẩn hoá key' });
           break;
         case 'restart':
           hits.push({ el: nodes.api, label: 'restart: hết rò rỉ' });
@@ -333,7 +352,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         case 'edge': {
           const p = e.patch;
           const label = p.timeoutMs ? `timeout ${p.timeoutMs}ms` : p.retries ? `retry ×${p.retries} + backoff` : p.circuitBreaker ? 'circuit breaker' : 'policy';
-          hits.push({ el: nodes.policy, label });
+          hits.push({ el: home ?? nodes.api, label });
           break;
         }
         case 'rateLimit':
@@ -352,7 +371,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           hits.push({ el: nodes.api, label: 'hotfix' }, { el: nodes.db });
           break;
         case 'autoscale':
-          hits.push({ el: nodes.api, label: `autoscale +${e.extra} pod` });
+          hits.push({ el: home ?? nodes.api, label: `autoscale +${e.extra} pod` });
           break;
         case 'queue':
           hits.push({ el: nodes.ext ?? nodes.api, label: 'hàng đợi' });
@@ -379,7 +398,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                 : m.queueSize !== undefined
                   ? `queue ×${m.queueSize}`
                   : 'tune';
-          hits.push({ el: nodes[e.node], label });
+          hits.push({ el: (def.fits && home) || nodes[e.node], label });
           break;
         }
         case 'purge':
@@ -420,17 +439,13 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     floatText(layer, anchor(deck, layer, 0.5, 0), 'Xáo lại chồng bỏ', '#7dd3fc');
   };
 
-  const play = (uid: number, at: { x: number; y: number } | undefined, target: DropTarget, replace?: number) => {
+  const play = (uid: number, at: { x: number; y: number } | undefined, target: DropTarget) => {
     if (resolving || state.phase !== 'player') return;
     const inst = state.hand.find((c) => c.uid === uid);
-    const full = needsReplace(CONTENT, state, uid);
-    if (full && replace === undefined) {
-      setReplacing({ uid, at, target, layer: full });
-      return;
-    }
     // an attack dropped on a minion hits it; dropped on the enemy, it hits the enemy
     const aimedState = target.kind === 'minion' ? setTarget(state, target.uid) : target.kind === 'bot' ? setTarget(state, null) : state;
-    const next = playCard(CONTENT, aimedState, uid, { replace });
+    // a socketed card goes into the socket it was dropped on (anywhere else: the first one with room)
+    const next = playCard(CONTENT, aimedState, uid, target.kind === 'socket' ? { socket: target.socket, replace: target.replace } : {});
     if (!inst || next === aimedState) return;
     const def = cardDef(CONTENT, inst.id);
     const arena = arenaRef.current?.getBoundingClientRect();
@@ -467,8 +482,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     });
   };
 
-  /** The request path inside your system, gateway first: Nginx → API → (Redis) → Postgres. */
-  const pathIds = () => ['lb', 'api', ...(nodeEls.current.cache ? ['cache'] : []), 'db'];
+  /** The request path inside your system, gateway first (Nginx → API → (Redis) → Postgres in a monolith). */
+  const pathIds = () => pathOf(state);
   const pathPts = (layer: HTMLElement) =>
     pathIds()
       .map((id) => nodeEls.current[id])
@@ -737,6 +752,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   /** The enemy side as drawn: lags the rules until attacks land. */
   const shown: BattleState = foe ? { ...state, enemy: { ...state.enemy, hp: foe.enemyHp }, minions: foe.minions, target: foe.target } : state;
   const aiming: Aiming | null = sides.bot ? { over: dragOver, card: dragDef?.name ?? '' } : null;
+  const plug: Plug | null = dragDef?.fits ? { def: dragDef, moves: placementsOf(CONTENT, state, dragDef.id), over: dragOver } : null;
   const enemy = CONTENT.enemies.find((e) => e.id === state.enemy.id)!;
   const over = state.phase === 'won' || state.phase === 'lost';
   const hand = state.hand.map((inst) => ({
@@ -786,19 +802,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       </div>
 
       {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
-      {replacing && (
-        <ReplacePanel
-          state={state}
-          {...replacing}
-          onPick={(m) => {
-            const r = replacing;
-            setReplacing(null);
-            play(r.uid, r.at, r.target, m);
-          }}
-          onClose={() => setReplacing(null)}
-        />
-      )}
-
       <div ref={arenaRef} className="relative min-h-0 flex-1">
         {/* the two sides face each other across the arena; equal side columns
             keep the middle on the exact center. Each side is its panel with its
@@ -807,9 +810,9 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
         <div className="absolute inset-0 grid grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)] items-center gap-x-4 gap-y-2 overflow-y-auto px-6 pb-[200px] pt-[152px] [align-content:safe_center]">
           <div className="col-start-1 row-start-1 flex min-w-0 flex-col items-start">
             <div ref={systemZoneRef} className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(canSystem))}>
-              {canSystem && <SystemTarget over={dragOver?.kind === 'system'} />}
+              {canSystem && <SystemTarget over={dragOver?.kind === 'system'} text={dragDef?.fits ? (moduleOf(state, dragDef.id) ? `Thả để nâng cấp ${dragDef.name}` : 'Thả để lắp vào ổ trống') : undefined} />}
               <div className="w-full">
-                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} gateRef={gateRef} shieldRef={shieldRef} nodeEls={nodeEls} hit={resolving} />
+                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} refs={infraRefs} plug={plug} shieldRef={shieldRef} hit={resolving} />
               </div>
                 <HpBar
                   hpRef={hpRef}
@@ -867,7 +870,6 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
             </div>
           )}
         </div>
-
 
         <div ref={fxRef} className="pointer-events-none absolute inset-0 z-[15] overflow-hidden" />
 
@@ -929,22 +931,6 @@ function sidesOf(def: CardDef) {
 /** What an attack card being dragged can hit, and what is under the pointer. */
 type Aiming = { over: DropTarget | null; card: string };
 
-/** A drop hint above a target: what letting go here does. */
-function DropTag({ text, tone, className }: { text: string; tone: 'bot' | 'system'; className?: string }) {
-  return (
-    <span
-      className={cn(
-        'pointer-events-none absolute left-1/2 z-30 flex -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-sm font-semibold shadow-lg shadow-black/40 [&_svg]:size-4',
-        tone === 'bot' ? 'border-rose-400/60 bg-rose-950/90 text-rose-200' : 'border-sky-400/60 bg-sky-950/90 text-sky-200',
-        className,
-      )}
-    >
-      {tone === 'bot' ? <Swords /> : <Server />}
-      {text}
-    </span>
-  );
-}
-
 /** The ring around a round target (the enemy, a minion) while an attack is dragged: faint when it can be hit, bright under the pointer. */
 function AimRing({ on, className }: { on: boolean; className?: string }) {
   return (
@@ -960,7 +946,7 @@ function AimRing({ on, className }: { on: boolean; className?: string }) {
 }
 
 /** Your system lit up as the target of a dragged card. */
-function SystemTarget({ over }: { over: boolean }) {
+function SystemTarget({ over, text = 'Thả để áp dụng lên hệ thống' }: { over: boolean; text?: string }) {
   return (
     <div
       className={cn(
@@ -968,7 +954,7 @@ function SystemTarget({ over }: { over: boolean }) {
         over ? 'border-sky-400/90 bg-sky-500/[0.07] shadow-[0_0_48px_rgba(56,189,248,0.35)]' : 'border-dashed border-sky-400/40',
       )}
     >
-      {over && <DropTag tone="system" text="Thả để áp dụng lên hệ thống" className="top-0 -translate-y-1/2" />}
+      {over && <DropTag tone="system" text={text} className="top-0 -translate-y-1/2" />}
     </div>
   );
 }
@@ -1111,9 +1097,9 @@ function SystemPanel({
   hp,
   loads,
   panelRef,
-  gateRef,
+  refs,
+  plug,
   shieldRef,
-  nodeEls,
   hit,
 }: {
   state: BattleState;
@@ -1121,13 +1107,13 @@ function SystemPanel({
   hp: number;
   loads?: Record<string, NodeLoad>;
   panelRef: React.RefObject<HTMLDivElement | null>;
-  gateRef: React.RefObject<HTMLDivElement | null>;
+  refs: InfraRefs;
+  plug: Plug | null;
   shieldRef: React.RefObject<HTMLDivElement | null>;
-  nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
   hit: boolean;
 }) {
   const cost = costOf(designOf(CONTENT, state), state.temp);
-  const budget = CONTENT.battle.budgetPerHour;
+  const budget = budgetOf(CONTENT, state);
   const ratio = hp / state.maxHp;
   const status = ratio > 0.5 ? 'ok' : ratio > 0.25 ? 'warn' : 'crit';
   const shields = [state.waf > 0 ? `WAF ${Math.round(state.waf * 100)}%` : null, state.temp.botCut > 0 ? `rate limit ${Math.round(state.temp.botCut * 100)}%` : null].filter(
@@ -1171,7 +1157,7 @@ function SystemPanel({
               <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
             </span>
           </div>
-          <InfraLine state={state} loads={loads} gateRef={gateRef} nodeEls={nodeEls} />
+          <InfraLine state={state} loads={loads} refs={refs} plug={plug} />
         </div>
       </div>
 
@@ -1213,7 +1199,6 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
 type IntentEffect = { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal'; lasting?: boolean };
 
 /** 1000 → "1k". */
-const keysK = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
 
 function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
   const out: IntentEffect[] = [];
@@ -1599,219 +1584,6 @@ function Row({ icon, label, value, good, bad, lg }: { icon?: ReactNode; label: s
 
 // ---------------------------------------------------------------- your infrastructure
 
-/**
- * Your system, drawn facing the bot: requests enter at Nginx on the right and
- * flow left to the database, behind the WAF / rate-limit shield.
- */
-function InfraLine({
-  state,
-  loads,
-  gateRef,
-  nodeEls,
-}: {
-  state: BattleState;
-  loads?: Record<string, NodeLoad>;
-  gateRef: React.RefObject<HTMLDivElement | null>;
-  nodeEls: React.RefObject<Record<string, HTMLDivElement | null>>;
-}) {
-  const d = designOf(CONTENT, state);
-  const api = nodeOf(d, 'api')!.config!;
-  const ext = nodeOf(d, 'ext');
-  const queue = nodeOf(d, 'queue');
-  const auto = api.autoscale as { max: number; min: number } | undefined;
-  const db = nodeOf(d, 'db')!.config!;
-  const cache = nodeOf(d, 'cache');
-  const out = apiOut(d)!;
-  const policies = [out.timeoutMs ? `timeout ${out.timeoutMs}ms` : null, out.retries ? `retry ×${out.retries}` : null, out.circuitBreaker ? 'breaker' : null].filter(
-    Boolean,
-  ) as string[];
-  const set = (id: string) => (el: HTMLDivElement | null) => {
-    nodeEls.current[id] = el;
-  };
-
-  return (
-    <div className="pt-4">
-      <div className="flex items-center gap-0.5">
-        <InfraNode nodeRef={set('db')} icon={<Database />} title="Postgres" sub={`${db.concurrency} conn`} count={db.instances ?? 1} extra={state.temp.db} accent="indigo" load={loads?.db} />
-        {cache && (
-          <>
-            <Pipe />
-            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`${keysK(cache.config?.cache?.capacity ?? 0)} key${(state.cache?.placed ?? 0) >= state.turn ? ' · nguội' : ''}`} accent="red" load={loads?.cache} />
-          </>
-        )}
-        <Pipe policy={policies.length > 0} pipeRef={set('policy')} />
-        <InfraNode nodeRef={set('api')} icon={<Server />} title="API" sub={auto ? `HPA +${auto.max - auto.min} pod` : `${api.concurrency} slot`} count={api.instances ?? 1} extra={state.temp.api} accent="sky" load={loads?.api} />
-        <Pipe />
-        <InfraNode nodeRef={(el) => { gateRef.current = el; set('lb')(el); }} icon={<Network />} title="Nginx" sub="cổng vào" load={loads?.lb} />
-      </div>
-      {/* the API's second call: the partner service, through a queue when there is one */}
-      {ext && (
-        <div className="mt-2 flex items-center justify-center gap-0.5 text-[11px]">
-          <span className="text-muted-foreground">API gọi</span>
-          <ArrowRight className="size-3 text-muted-foreground/60" />
-          {queue && (
-            <>
-              <InfraNode nodeRef={set('queue')} icon={<ListPlus />} title="Queue" sub={`${queue.config?.concurrency} worker`} accent="indigo" load={loads?.queue} small />
-              <ArrowRight className="size-3 text-muted-foreground/60" />
-            </>
-          )}
-          <InfraNode nodeRef={set('ext')} icon={<Handshake />} title="Đối tác" sub={queue ? 'bất đồng bộ' : 'đồng bộ'} load={loads?.ext} small />
-        </div>
-      )}
-      <SlotBar state={state} />
-      {/* API → downstream policies, under the line so they never cover a node */}
-      {policies.length > 0 && (
-        <div className="mt-2 text-center">
-          <span className="rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] text-violet-300">API → DB: {policies.join(' · ')}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function InfraNode({
-  icon,
-  title,
-  sub,
-  count,
-  extra = 0,
-  accent,
-  load,
-  nodeRef,
-  small,
-}: {
-  icon: ReactNode;
-  title: string;
-  sub: string;
-  count?: number;
-  extra?: number;
-  accent?: 'sky' | 'red' | 'indigo';
-  /** Live load while a turn plays: a meter at the bottom, red when overloaded. */
-  load?: NodeLoad;
-  nodeRef?: (el: HTMLDivElement | null) => void;
-  /** A side node (partner, queue): fixed width, not stretched along the line. */
-  small?: boolean;
-}) {
-  const color =
-    accent === 'sky'
-      ? 'border-sky-500/50 [&_svg]:text-sky-300'
-      : accent === 'red'
-        ? 'border-red-500/50 [&_svg]:text-red-300'
-        : accent === 'indigo'
-          ? 'border-indigo-500/50 [&_svg]:text-indigo-300'
-          : 'border-foreground/20 [&_svg]:text-foreground/80';
-  return (
-    <div
-      ref={nodeRef}
-      className={cn(
-        'relative flex min-w-0 flex-col items-center overflow-visible rounded-xl border-2 bg-card/80 px-1.5 pb-2.5 pt-2 text-center shadow-lg shadow-black/30 backdrop-blur transition-colors',
-        small ? 'w-24 shrink-0' : 'flex-1',
-        color,
-        load?.bad && 'border-rose-500 bg-rose-950/60',
-      )}
-    >
-      <span className="[&_svg]:size-5">{icon}</span>
-      <div className="mt-0.5 max-w-full truncate text-sm font-medium">{title}</div>
-      <div className={cn('max-w-full truncate text-[11px] text-muted-foreground', load && 'font-mono', load?.bad && 'text-rose-300')}>
-        {load ? `tải ${Math.round(load.util * 100)}%` : sub}
-      </div>
-      {load && (
-        <div className="absolute inset-x-1.5 bottom-1 h-1 overflow-hidden rounded-full bg-muted/60">
-          <div
-            className={cn('h-full rounded-full transition-[width,background-color] duration-200', load.util > 0.95 || load.bad ? 'bg-rose-500' : load.util > 0.7 ? 'bg-amber-400' : 'bg-emerald-400')}
-            style={{ width: `${clamp(load.util, 0, 1) * 100}%` }}
-          />
-        </div>
-      )}
-      {count !== undefined && (
-        <div className="absolute -right-2 -top-2 rounded-full border bg-card px-1.5 font-mono text-xs">
-          ×{count}
-          {extra > 0 && <span className="text-emerald-300">+{extra}</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const LAYER_LABEL: Record<Layer, string> = { api: 'Slot API', data: 'Slot data' };
-
-/** Installed modules per slot group, empty slots dashed. */
-function SlotBar({ state }: { state: BattleState }) {
-  return (
-    <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[10px]" aria-label="Slot hạ tầng">
-      {(Object.keys(CONTENT.battle.slots) as Layer[]).map((layer) => {
-        const mods = modulesIn(CONTENT, state, layer);
-        const free = Math.max(0, CONTENT.battle.slots[layer] - mods.length);
-        return (
-          <div key={layer} className="flex items-center gap-1">
-            <span className="text-muted-foreground">{LAYER_LABEL[layer]}</span>
-            {mods.map((m) => {
-              const def = cardDef(CONTENT, m.card);
-              const Icon = cardIcon(def);
-              return (
-                <span key={m.uid} title={`${def.name}${m.level > 1 ? ` (cấp ${m.level})` : ''}: ${def.text}`} className="flex items-center gap-0.5 rounded border border-violet-400/50 bg-violet-500/15 px-1 py-0.5 text-violet-200">
-                  <Icon className="size-3" />
-                  {def.name}
-                  {m.level > 1 && <span className="font-mono">×{m.level}</span>}
-                </span>
-              );
-            })}
-            {Array.from({ length: free }, (_, i) => (
-              <span key={i} className="h-4 w-8 rounded border border-dashed border-muted-foreground/40" title="Slot trống" />
-            ))}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Pick which module a slotted card takes out of its full group. */
-function ReplacePanel({ state, uid, layer, onPick, onClose }: { state: BattleState; uid: number; layer: Layer; onPick: (moduleUid: number) => void; onClose: () => void }) {
-  const card = state.hand.find((c) => c.uid === uid);
-  const def = card && cardDef(CONTENT, card.id);
-  if (!def) return null;
-  return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-[420px] max-w-[92vw] rounded-2xl border bg-card p-4 shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Thay module">
-        <div className="mb-1 text-base font-semibold">{LAYER_LABEL[layer]} đã đầy</div>
-        <p className="mb-3 text-sm text-muted-foreground">
-          Lắp <b className="text-foreground">{def.name}</b> thì phải gỡ một module. Module bị gỡ mất hết tác dụng (lá của nó vẫn ở trong bộ bài).
-        </p>
-        <div className="flex flex-col gap-2">
-          {modulesIn(CONTENT, state, layer).map((m) => {
-            const md = cardDef(CONTENT, m.card);
-            const Icon = cardIcon(md);
-            return (
-              <button key={m.uid} type="button" onClick={() => onPick(m.uid)} className="flex items-start gap-2 rounded-lg border p-2 text-left text-sm hover:border-rose-400/60 hover:bg-rose-500/10">
-                <Icon className="mt-0.5 size-4 shrink-0 text-violet-300" />
-                <span>
-                  <span className="font-medium">Gỡ {md.name}</span>
-                  {m.level > 1 && <span className="ml-1 font-mono text-xs">cấp {m.level}</span>}
-                  <span className="block text-xs text-muted-foreground">{md.text}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <Button size="sm" variant="ghost" className="mt-3 w-full" onClick={onClose}>
-          Huỷ, giữ nguyên
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-/** A connection; requests flow right to left, from the gateway inwards. */
-function Pipe({ policy, pipeRef }: { policy?: boolean; pipeRef?: (el: HTMLDivElement | null) => void }) {
-  return (
-    <div ref={pipeRef} className="flex w-4 shrink-0 items-center rounded-full">
-      <ArrowLeft className={cn('-mr-1 size-3', policy ? 'text-violet-300' : 'text-muted-foreground/60')} />
-      <div className={cn('h-px flex-1', policy ? 'bg-violet-400/70' : 'bg-muted-foreground/40')} />
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------- reports
 
 /** A guide over the arena before the first turn; "Đã hiểu" closes it. */
@@ -1983,7 +1755,7 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
       ['Địch mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Địch yếu thì gửi ít traffic hơn.`],
       ['Leo tháp', `${CONTENT.run.title} có ${CONTENT.run.acts} tầng. Mỗi tầng là một bản đồ rẽ nhánh: tự chọn đường qua trận thường, tinh anh (khó hơn, thưởng nhiều hơn), sự cố và chỗ nghỉ, rồi đánh trùm ở đỉnh. Máu và bộ bài giữ nguyên suốt ca; tầng càng cao địch càng mạnh.`],
       ['Thẻ bài', 'Hạ tầng và Chính sách tồn tại cả trận (nhưng tốn tiền mỗi giờ). Hành động chỉ có tác dụng trong lượt.'],
-      ['Slot hạ tầng', `Lá có ghi "slot" lắp một module: ${CONTENT.battle.slots.api} slot API (timeout, retry, breaker, autoscaler...) và ${CONTENT.battle.slots.data} slot dữ liệu (Redis, Index, Replica, Queue...). Đầy thì phải gỡ một module để lắp cái mới. Đánh lại lá đã lắp thì nâng cấp module, không tốn slot. Scale API và WAF không tốn slot.`],
+      ['Ổ cắm hạ tầng', 'Hệ thống có các ổ cắm ngay trên sơ đồ: trên đường gọi (timeout, retry, breaker), trên service (autoscaler, load shed), trước DB (Redis), trên DB (Index, Replica) và trên lời gọi đối tác (Queue). Lá có ghi "ổ" phải kéo vào đúng ổ; ổ đầy thì thả lên một module để thay nó. Đánh lại lá đã lắp thì nâng cấp module. Scale API và WAF không cần ổ.'],
       ['Đối tác', 'Mỗi request còn gọi một dịch vụ đối tác (thanh toán, email) một cách đồng bộ. Đối tác chậm thì API bị giữ slot; Message Queue tách phần này ra chạy sau.'],
     ],
     [],

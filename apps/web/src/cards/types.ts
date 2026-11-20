@@ -13,8 +13,36 @@ export type RarityWeights = Record<Exclude<Rarity, 'basic'>, number>;
 export type CardType = 'infra' | 'policy' | 'action' | 'attack' | 'curse';
 /** Node a card targets. The battle topology is client → lb → api → [cache] → db. */
 export type NodeRef = 'api' | 'db';
-/** Slot groups of the system: a card with `slot` installs a module there, and a full group means replacing one. */
-export type Layer = 'api' | 'data';
+/**
+ * Where on the system a module plugs in. `link`: the call between two nodes (timeouts, retries, breakers).
+ * `compute`: on a service. `front`: a node put in front of one (a cache). `storage`: on a database.
+ * `async`: a call made asynchronous (a queue). `edge`: in front of the entry (CDN, edge limits).
+ */
+export type SocketKind = 'edge' | 'compute' | 'link' | 'front' | 'storage' | 'async';
+
+/** A socket of the system: `cap` modules of a fitting kind plug in at `at`. */
+export interface SocketDef {
+  id: string;
+  kind: SocketKind;
+  label: string;
+  cap: number;
+  at: { node: string } | { edge: [string, string] } | { before: string };
+}
+
+/** A system to build on: its topology, its sockets, and which nodes the rules' roles mean. */
+export interface ChassisDef {
+  id: string;
+  name: string;
+  text: string;
+  pros: string[];
+  cons: string[];
+  /** Node ids behind the roles the content names: `api` (the main service), `db`, `ext` (the partner). */
+  aliases: Record<NodeRef | 'ext', string>;
+  sockets: SocketDef[];
+  design: Design;
+  /** Replaces `battle.budgetPerHour`. */
+  budgetPerHour?: number;
+}
 
 export type Effect =
   /** Add instances to a node. `temp`: only for the turn it is played. */
@@ -93,6 +121,8 @@ export interface ModuleInst {
   card: string;
   /** Times the card was played: each extra play levels the module up. */
   level: number;
+  /** The socket it plugs into (`SocketDef.id`). */
+  socket: string;
 }
 
 /** Two or more modules that work better together: on while all of `needs` are installed. */
@@ -133,8 +163,8 @@ export interface CardDef {
   effects: Effect[];
   /** Removed from the fight after playing. */
   exhaust?: boolean;
-  /** Installs a module in this slot group (see `Layer`); playing it again levels the module up instead. */
-  slot?: Layer;
+  /** Installs a module in a socket of one of these kinds (see `SocketDef`); playing it again levels the module up instead. */
+  fits?: SocketKind[];
   /** Curses: cannot be played, just clog the hand. */
   unplayable?: boolean;
   /** What the upgraded copy (id `<id>+`, from a rest stop) changes. */
@@ -272,12 +302,9 @@ export interface BattleConfig {
   overBudgetDamage: number;
   /** Bot requests filtered per point of damage to the attacker. */
   blockedPerDamage: number;
-  /** Module slots per group. */
-  slots: Record<Layer, number>;
   /** Bots adapt: a turn that filters at least `at` of them adds a stack of `status` for `turns` turns. */
   adapt?: { at: number; status: string; turns: number };
   startingDeck: string[];
-  design: Design;
 }
 
 export type RelicRarity = 'common' | 'uncommon' | 'rare' | 'boss';
@@ -312,6 +339,7 @@ export interface Content {
   events: RunEvent[];
   statuses: StatusDef[];
   combos: ComboDef[];
+  chassis: ChassisDef[];
 }
 
 /** What a fight starts from when it is part of a run (defaults: `battle.json`). */
@@ -325,6 +353,8 @@ export interface BattleSetup {
   relics?: string[];
   /** Real users' traffic multiplier (higher floors). */
   legitScale?: number;
+  /** `ChassisDef.id` (default: the first chassis). */
+  chassis?: string;
 }
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
@@ -556,7 +586,9 @@ export interface BattleState {
     /** Memory leak built up so far (see `Intent.leak`). */
     leak?: number;
   };
-  /** Installed modules, oldest first (see `CardDef.slot`). `card` keeps the "+" of an upgraded copy. */
+  /** The system built on (`ChassisDef.id`). */
+  chassis: string;
+  /** Installed modules, oldest first (see `CardDef.fits`). `card` keeps the "+" of an upgraded copy. */
   modules?: ModuleInst[];
   /** Timed effects in play (see `StatusDef`). */
   statuses?: StatusInst[];

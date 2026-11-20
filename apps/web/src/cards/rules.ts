@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, ComboDef, Content, Effect, EnemyDef, Intent, IntentWhen, Layer, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, ChassisDef, CardInst, ComboDef, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, SocketDef, SocketKind, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -142,8 +142,8 @@ function baseIntent(content: Content, state: BattleState): Intent {
 /** What the attacker can read of the player's build. */
 export function designTraits(content: Content, state: BattleState) {
   const design = designOf(content, state);
-  const inst = (id: string) => nodeOf(design, id)?.config?.instances ?? 1;
-  const out = apiOut(design);
+  const inst = (ref: NodeRef) => nodeOf(design, alias(content, state, ref))?.config?.instances ?? 1;
+  const out = mainCall(content, state, design);
   return {
     hasCache: !!nodeOf(design, 'cache'),
     instances: { api: inst('api'), db: inst('db') },
@@ -288,38 +288,117 @@ export function canPlay(content: Content, state: BattleState, uid: number): bool
   const inst = state.hand.find((c) => c.uid === uid);
   if (!inst) return false;
   const def = cardDef(content, inst.id);
-  return !def.unplayable && def.cost <= state.ops;
+  return !def.unplayable && def.cost <= state.ops && (!def.fits || placements(content, state, uid).length > 0);
 }
 
 // ---------------------------------------------------------------- design helpers
 
 export const nodeOf = (design: Design, id: string) => design.nodes.find((n) => n.id === id);
-/** The API's call to its data (cache or DB): where the call policies (timeout, retry, breaker, pool) live. */
-export const apiOut = (design: Design) => design.edges.find((e) => e.source === 'api' && e.target !== 'ext' && e.target !== 'queue');
 
-// ---------------------------------------------------------------- modules (slotted infrastructure)
+/** Whether a call into `from` ends up at `to`: directly, or through nodes a module put in between (a cache, a queue). */
+function leadsTo(design: Design, from: string, to: string, hops = 4): boolean {
+  if (from === to) return true;
+  const kind = nodeOf(design, from)?.kind;
+  if (!hops || (kind !== 'cache' && kind !== 'queue')) return false;
+  return design.edges.some((e) => e.source === from && leadsTo(design, e.target, to, hops - 1));
+}
 
-/** Effects that change the topology: from a slotted card they live in its module, so removing it undoes them. */
+/** The call from `source` towards `target` (through any cache or queue a module put in between). */
+export const edgeAt = (design: Design, [source, target]: [string, string]) => design.edges.find((e) => e.source === source && leadsTo(design, e.target, target));
+
+// ---------------------------------------------------------------- chassis (the system built on)
+
+export function chassisDef(content: Content, id?: string): ChassisDef {
+  return content.chassis.find((c) => c.id === id) ?? content.chassis[0];
+}
+export const chassisOf = (content: Content, state: Pick<BattleState, 'chassis'>) => chassisDef(content, state.chassis);
+/** The node id behind a role the content names (`api`, `db`, `ext`) in this fight's system. */
+export const alias = (content: Content, state: Pick<BattleState, 'chassis'>, ref: NodeRef | 'ext') => chassisOf(content, state).aliases[ref];
+export const budgetOf = (content: Content, state: Pick<BattleState, 'chassis'>) => chassisOf(content, state).budgetPerHour ?? content.battle.budgetPerHour;
+/** The main service's call to its data (cache or DB): where call policies from outside a socket (relics) go. */
+export const mainCall = (content: Content, state: Pick<BattleState, 'chassis'>, design: Design) => edgeAt(design, [alias(content, state, 'api'), alias(content, state, 'db')]);
+
+// ---------------------------------------------------------------- modules (infrastructure plugged into sockets)
+
+/** Effects that change the topology: from a socketed card they live in its module, so removing it undoes them. */
 const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue']);
+/** Socket kinds whose modules add nodes: built after the others, so a call policy follows the call into the new node. */
+const TOPOLOGY = new Set<SocketKind>(['front', 'async', 'edge']);
 
 export const modulesOf = (state: BattleState): ModuleInst[] => state.modules ?? [];
-export const layerOf = (content: Content, m: ModuleInst): Layer => cardDef(content, m.card).slot!;
-export const modulesIn = (content: Content, state: BattleState, layer: Layer) => modulesOf(state).filter((m) => layerOf(content, m) === layer);
+export const socketsOf = (content: Content, state: BattleState): SocketDef[] => chassisOf(content, state).sockets;
+export const socketOf = (content: Content, state: BattleState, id: string) => socketsOf(content, state).find((x) => x.id === id);
+export const modulesAt = (state: BattleState, socket: string) => modulesOf(state).filter((m) => m.socket === socket);
 /** The installed module of a card (either copy, upgraded or not). */
 export const moduleOf = (state: BattleState, card: string) => modulesOf(state).find((m) => baseId(m.card) === baseId(card));
 
-/** The slot group a card in hand would need a free slot in, when that group is full (null: it can just be played). */
-export function needsReplace(content: Content, state: BattleState, uid: number): Layer | null {
+/** A way to play a socketed card: into `socket`, taking out module `replace` when the socket is full. */
+export type Placement = { socket: string; replace?: number };
+
+/**
+ * Where a card in hand can go. A card already installed levels its module up (its own socket);
+ * otherwise every fitting socket with room, and every module of a full fitting socket as a replacement.
+ * Empty for a card with no `fits`, or when the system has no socket it fits.
+ */
+export function placements(content: Content, state: BattleState, uid: number): Placement[] {
   const inst = state.hand.find((c) => c.uid === uid);
-  const def = inst && cardDef(content, inst.id);
-  if (!def?.slot || moduleOf(state, def.id)) return null;
-  return modulesIn(content, state, def.slot).length >= content.battle.slots[def.slot] ? def.slot : null;
+  return inst ? placementsOf(content, state, inst.id) : [];
 }
 
-/** The fight's topology: the base design (with permanent scaling and relics) plus every module, in the order installed. */
+/** `placements` for a card id (any copy of it). */
+export function placementsOf(content: Content, state: BattleState, card: string): Placement[] {
+  const def = cardDef(content, card);
+  if (!def.fits) return [];
+  const cur = moduleOf(state, def.id);
+  if (cur) return [{ socket: cur.socket }];
+  const out: Placement[] = [];
+  for (const sk of socketsOf(content, state)) {
+    if (!def.fits.includes(sk.kind) || sk.cap <= 0) continue;
+    const here = modulesAt(state, sk.id);
+    if (here.length < sk.cap) out.push({ socket: sk.id });
+    else for (const m of here) out.push({ socket: sk.id, replace: m.uid });
+  }
+  return out;
+}
+
+/** The node a module adds to the system (a cache, a queue), if it adds one. */
+export function insertedNode(content: Content, m: ModuleInst): string | undefined {
+  const ops = cardDef(content, m.card).effects.map((e) => e.op);
+  return ops.includes('cache') ? 'cache' : ops.includes('queue') ? 'queue' : undefined;
+}
+
+/** The placement a play resolves to: a level up wherever it was dropped, the one asked for, else the first free socket (null: no valid move). */
+function resolvePlacement(content: Content, state: BattleState, uid: number, opts: Partial<Placement>): Placement | null {
+  const moves = placements(content, state, uid);
+  if (moduleOf(state, cardOf(state, uid))) return moves[0] ?? null;
+  if (opts.socket === undefined && opts.replace === undefined) return moves.find((m) => m.replace === undefined) ?? null;
+  return moves.find((m) => (opts.socket === undefined || m.socket === opts.socket) && m.replace === opts.replace) ?? null;
+}
+const cardOf = (state: BattleState, uid: number) => state.hand.find((c) => c.uid === uid)!.id;
+
+/** Where an effect lands: the socket's node or call, else the system's main roles. */
+type Place = { node?: string; edge: [string, string]; before: string; aliases: ChassisDef['aliases'] };
+function placeOf(chassis: ChassisDef, socket?: SocketDef): Place {
+  const a = chassis.aliases;
+  const p: Place = { edge: [a.api, a.db], before: a.db, aliases: a };
+  if (!socket) return p;
+  if ('node' in socket.at) p.node = socket.at.node;
+  if ('before' in socket.at) p.before = socket.at.before;
+  if ('edge' in socket.at) p.edge = socket.at.edge;
+  return p;
+}
+const nodeAt = (p: Place, ref?: NodeRef) => p.node ?? p.aliases[ref ?? 'api'];
+
+/** The fight's topology: the chassis (with permanent scaling and relics) plus every module, node-adding ones last. */
 export function designOf(content: Content, state: BattleState): Design {
   const design = clone(state.design);
-  for (const m of modulesOf(state)) for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level);
+  const chassis = chassisOf(content, state);
+  const kind = (m: ModuleInst) => socketOf(content, state, m.socket)?.kind;
+  const ordered = [...modulesOf(state)].sort((x, y) => Number(TOPOLOGY.has(kind(x)!)) - Number(TOPOLOGY.has(kind(y)!)));
+  for (const m of ordered) {
+    const place = placeOf(chassis, socketOf(content, state, m.socket));
+    for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level, place);
+  }
   // KEDA: the queue's workers scale with its backlog
   const queue = nodeOf(design, 'queue');
   if (queue && activeCombos(content, state).some((c) => c.flag === 'keda'))
@@ -328,35 +407,38 @@ export function designOf(content: Content, state: BattleState): Design {
 }
 
 /** One module effect on a design, `level` times (a cache grows by `step` per extra level instead). */
-function applyDesign(design: Design, e: Effect, level: number) {
+function applyDesign(design: Design, e: Effect, level: number, place: Place) {
   switch (e.op) {
     case 'scale': {
-      const cfg = nodeOf(design, e.node)!.config!;
+      const cfg = nodeOf(design, nodeAt(place, e.node))!.config!;
       cfg.instances = (cfg.instances ?? 1) + e.n * level;
       break;
     }
     case 'cache': {
       const model = nodeOf(design, 'cache')?.config?.cache;
       if (model) model.capacity = Math.min(e.max, model.capacity + e.step * level);
-      else addCache(design, Math.min(e.max, e.capacity + e.step * (level - 1)));
+      else addCache(design, place.before, Math.min(e.max, e.capacity + e.step * (level - 1)));
       break;
     }
-    case 'edge':
-      Object.assign(apiOut(design)!, clone(e.patch));
+    case 'edge': {
+      const call = edgeAt(design, place.edge);
+      if (call) Object.assign(call, clone(e.patch));
       break;
+    }
     case 'tune':
-      for (let i = 0; i < level; i++) tuneNode(design, e.node, e.mul);
+      for (let i = 0; i < level; i++) tuneNode(design, nodeAt(place, e.node), e.mul);
       break;
     case 'autoscale': {
-      const cfg = nodeOf(design, 'api')!.config!;
+      const cfg = nodeOf(design, nodeAt(place, 'api'))!.config!;
       const n = cfg.instances ?? 1;
       cfg.autoscale = { min: n, max: n + e.extra, targetUtilization: e.target, evalEveryMs: 1000, stabilizationMs: 5000, podStartMs: e.podStartMs, metric: 'utilization' } as never;
       break;
     }
     case 'queue': {
-      const toExt = design.edges.find((x) => x.source === 'api' && x.target === 'ext');
-      if (!toExt) break;
-      toExt.target = 'queue';
+      const [source, target] = place.node ? [place.aliases.api, place.aliases.ext] : place.edge;
+      const call = design.edges.find((x) => x.source === source && x.target === target);
+      if (!call) break;
+      call.target = 'queue';
       design.nodes.push({
         id: 'queue',
         kind: 'queue',
@@ -364,13 +446,13 @@ function applyDesign(design: Design, e: Effect, level: number) {
         position: { x: 0, y: 0 },
         config: { instances: 1, concurrency: e.consumers, queueSize: e.queueSize, latencyP50Ms: 0.2, latencyP99Ms: 1, costPerHour: 0.05 },
       } as DesignNode);
-      design.edges.push({ source: 'queue', target: 'ext', latencyMs: 1 } as DesignEdge);
+      design.edges.push({ source: 'queue', target, latencyMs: 1 } as DesignEdge);
       break;
     }
   }
 }
 
-function tuneNode(design: Design, node: NodeRef, m: TuneMul) {
+function tuneNode(design: Design, node: string, m: TuneMul) {
   const cfg = nodeOf(design, node)!.config!;
   const round2 = (v: number) => Math.round(v * 100) / 100;
   if (m.latency !== undefined) {
@@ -382,8 +464,8 @@ function tuneNode(design: Design, node: NodeRef, m: TuneMul) {
   if (m.cost !== undefined) cfg.costPerHour = round2((cfg.costPerHour ?? 0) * m.cost);
 }
 
-/** Install a slotted card's module, or level it up when that card's module is already in. */
-function installModule(content: Content, state: BattleState, def: CardDef) {
+/** Install a socketed card's module, or level it up when that card's module is already in. */
+function installModule(content: Content, state: BattleState, def: CardDef, socket: string) {
   const cur = moduleOf(state, def.id);
   if (cur) {
     cur.level++;
@@ -391,7 +473,7 @@ function installModule(content: Content, state: BattleState, def: CardDef) {
     return;
   }
   const hadCache = !!nodeOf(designOf(content, state), 'cache');
-  (state.modules ??= []).push({ uid: state.nextUid++, card: def.id, level: 1 });
+  (state.modules ??= []).push({ uid: state.nextUid++, card: def.id, level: 1, socket });
   if (!hadCache && nodeOf(designOf(content, state), 'cache')) state.cache = { ...state.cache, placed: state.turn };
 }
 
@@ -407,7 +489,7 @@ export const CACHE_KEYS = 10_000;
 export const CACHE_ZIPF = 1;
 export const CACHE_TTL_MS = 30_000;
 
-function addCache(design: Design, capacity: number) {
+function addCache(design: Design, before: string, capacity: number) {
   const node: DesignNode = {
     id: 'cache',
     kind: 'cache',
@@ -423,11 +505,11 @@ function addCache(design: Design, capacity: number) {
       cache: { keys: CACHE_KEYS, zipf: CACHE_ZIPF, capacity, ttlMs: CACHE_TTL_MS, coalesce: false, staleWhileRevalidate: false, warm: true },
     },
   };
-  design.nodes.splice(design.nodes.findIndex((n) => n.id === 'db'), 0, node);
-  const old = apiOut(design)!;
-  // the API's call policy (timeout, retry, breaker) moves to the API → cache call
+  design.nodes.splice(design.nodes.findIndex((n) => n.id === before), 0, node);
+  const old = design.edges.find((e) => e.target === before)!;
+  // the caller's call policy (timeout, retry, breaker) moves to the call into the cache
   const toCache: DesignEdge = { ...old, target: 'cache' };
-  const toDb: DesignEdge = { source: 'cache', target: 'db', latencyMs: 1 };
+  const toDb: DesignEdge = { source: 'cache', target: before, latencyMs: 1 };
   design.edges = design.edges.filter((e) => e !== old).concat(toCache, toDb);
 }
 
@@ -447,6 +529,7 @@ function draw(state: BattleState, n: number) {
 export function newBattle(content: Content, seed: number, setup: BattleSetup = {}): BattleState {
   const b = content.battle;
   const enemyId = setup.enemy ?? b.enemy;
+  const chassis = chassisDef(content, setup.chassis);
   const enemy = content.enemies.find((e) => e.id === enemyId);
   if (!enemy) throw new Error(`unknown enemy ${enemyId}`);
   const maxHp = setup.maxHp ?? b.hp;
@@ -465,7 +548,8 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     hand: [],
     discard: [],
     exhausted: [],
-    design: clone(b.design),
+    chassis: chassis.id,
+    design: clone(chassis.design),
     waf: 0,
     temp: { api: 0, db: 0, botCut: 0, hotfix: false },
     enemy: { id: enemy.id, hp: enemyHp, maxHp: enemyHp, step: 0, ...(scale.rps !== 1 && { rps: scale.rps }), ...(scale.hp > 1 && { minionHp: scale.hp }) },
@@ -514,7 +598,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       if (effect.temp) {
         state.temp[effect.node] += effect.n;
       } else {
-        const cfg = nodeOf(state.design, effect.node)!.config!;
+        const cfg = nodeOf(state.design, alias(content, state, effect.node))!.config!;
         cfg.instances = (cfg.instances ?? 1) + effect.n;
       }
       break;
@@ -523,7 +607,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       const model = nodeOf(state.design, 'cache')?.config?.cache;
       if (model) model.capacity = Math.min(effect.max, model.capacity + effect.step);
       else {
-        addCache(state.design, effect.capacity);
+        addCache(state.design, alias(content, state, 'db'), effect.capacity);
         state.cache = { ...state.cache, placed: effect.warm ? 0 : state.turn };
       }
       break;
@@ -536,7 +620,7 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       state.temp.api -= 1;
       break;
     case 'edge':
-      Object.assign(apiOut(state.design)!, clone(effect.patch));
+      Object.assign(mainCall(content, state, state.design)!, clone(effect.patch));
       break;
     case 'rateLimit':
       state.temp.botCut = 1 - (1 - state.temp.botCut) * (1 - effect.cut);
@@ -560,12 +644,12 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       state.temp.hotfix = true;
       break;
     case 'tune':
-      tuneNode(state.design, effect.node, effect.mul);
+      tuneNode(state.design, alias(content, state, effect.node), effect.mul);
       break;
     case 'autoscale':
     case 'queue':
       // relics and other unslotted sources: straight into the base design
-      applyDesign(state.design, effect, 1);
+      applyDesign(state.design, effect, 1, placeOf(chassisOf(content, state)));
       break;
     case 'purge': {
       const curses = state.hand.filter((c) => cardDef(content, c.id).unplayable);
@@ -588,11 +672,15 @@ function apply(content: Content, state: BattleState, effect: Effect) {
   }
 }
 
-/** Play a card from hand. A slotted card whose group is full needs `replace`: the uid of a module of that group to take out. */
-export function playCard(content: Content, prev: BattleState, uid: number, opts: { replace?: number } = {}): BattleState {
+/**
+ * Play a card from hand. A socketed card goes where `opts` says (see `placements`): into `socket`,
+ * taking out module `replace` when it is full. Without `opts`, the first fitting socket with room.
+ */
+export function playCard(content: Content, prev: BattleState, uid: number, opts: Partial<Placement> = {}): BattleState {
   if (!canPlay(content, prev, uid)) return prev;
-  const layer = needsReplace(content, prev, uid);
-  if (layer && !modulesIn(content, prev, layer).some((m) => m.uid === opts.replace)) return prev;
+  const fits = !!cardDef(content, cardOf(prev, uid)).fits;
+  const place = fits ? resolvePlacement(content, prev, uid, opts) : null;
+  if (fits && !place) return prev;
   const state = clone(prev);
   state.relicFired = [];
   const idx = state.hand.findIndex((c) => c.uid === uid);
@@ -602,11 +690,11 @@ export function playCard(content: Content, prev: BattleState, uid: number, opts:
   state.played.push(def.id);
   // the card leaves the hand before its effects, so "draw" cannot redraw it
   (def.exhaust ? state.exhausted : state.discard).push(inst);
-  if (def.slot) {
-    if (layer) removeModule(content, state, opts.replace!);
-    installModule(content, state, def);
+  if (place) {
+    if (place.replace !== undefined) removeModule(content, state, place.replace);
+    installModule(content, state, def, place.socket);
   }
-  for (const effect of def.effects) if (!(def.slot && DESIGN_OPS.has(effect.op))) apply(content, state, effect);
+  for (const effect of def.effects) if (!(def.fits && DESIGN_OPS.has(effect.op))) apply(content, state, effect);
   fireRelics(content, state, 'cardPlayed', def.type);
   if (state.enemy.hp <= 0) {
     state.phase = 'won';
@@ -628,8 +716,9 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   const mods = statusMods(content, state);
 
   const design = designOf(content, state);
+  const id = (ref: NodeRef | 'ext') => alias(content, state, ref);
   for (const node of ['api', 'db'] as const) {
-    const cfg = nodeOf(design, node)!.config!;
+    const cfg = nodeOf(design, id(node))!.config!;
     const before = cfg.instances ?? 1;
     cfg.instances = Math.max(1, before + state.temp[node] + mods[`${node}Instances`]);
     // the autoscaler starts from this turn's count and keeps its headroom
@@ -648,19 +737,19 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   if (!hotfix) {
     if (intent.chaos?.action === 'latency' && intent.chaos.node === 'api') apiSlow *= intent.chaos.value;
     else if (intent.chaos?.action === 'latency' && intent.chaos.node === 'db') dbSlow *= intent.chaos.value;
-    else if (intent.chaos) events.push({ atMs: 0, node: intent.chaos.node, action: intent.chaos.action, value: intent.chaos.value });
+    else if (intent.chaos) events.push({ atMs: 0, node: id(intent.chaos.node), action: intent.chaos.action, value: intent.chaos.value });
     const shield = activeCombos(content, state).some((c) => c.flag === 'retryShield');
     if (intent.clientRetries && !shield) Object.assign(client, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
     if (intent.squeeze) {
-      const cfg = nodeOf(design, intent.squeeze.node)!.config!;
+      const cfg = nodeOf(design, id(intent.squeeze.node))!.config!;
       cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * intent.squeeze.concurrency));
     }
   }
-  if (apiSlow > 1.001) events.push({ atMs: 0, node: 'api', action: 'latency', value: Math.round(apiSlow * 100) / 100 });
-  if (dbSlow > 1.001) events.push({ atMs: 0, node: 'db', action: 'latency', value: Math.round(dbSlow * 100) / 100 });
+  if (apiSlow > 1.001) events.push({ atMs: 0, node: id('api'), action: 'latency', value: Math.round(apiSlow * 100) / 100 });
+  if (dbSlow > 1.001) events.push({ atMs: 0, node: id('db'), action: 'latency', value: Math.round(dbSlow * 100) / 100 });
   // not incidents either: the attacker's traffic is simply expensive or heavy
   if (intent.costSpike) {
-    const cfg = nodeOf(design, 'api')!.config!;
+    const cfg = nodeOf(design, id('api'))!.config!;
     cfg.costPerHour = Math.round((cfg.costPerHour ?? 0) * intent.costSpike * 1000) / 1000;
   }
   if (intent.bandwidth) Object.assign(client, { responseKb: intent.bandwidth.responseKb, bandwidthMbps: intent.bandwidth.mbps });
@@ -720,7 +809,7 @@ export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, 
   const legitFailed = Math.round(summary.errorRate * plan.legitRps * sec + (sent > 0 ? (lostAsync * plan.legitRps) / sent : 0));
   const failed = Math.round(legitFailed / b.failedPerDamage);
   const latency = summary.p99Ms > b.sloP99Ms ? b.latencyDamage : 0;
-  const over = summary.costPerHour - b.budgetPerHour;
+  const over = summary.costPerHour - budgetOf(content, state);
   const budget = over > 0.001 ? Math.ceil(over * b.overBudgetDamage) : 0;
   const raw = failed + latency + budget;
   const absorbed = Math.min(state.headroom, raw);
@@ -744,7 +833,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
 
   if (legitFailed > 0) notes.push(`${legitFailed.toLocaleString('vi-VN')} request của người dùng thật bị lỗi`);
   if (latency) notes.push(`p99 ${Math.round(summary.p99Ms)}ms vượt SLO ${b.sloP99Ms}ms`);
-  if (budget) notes.push(`Vượt ngân sách: $${summary.costPerHour.toFixed(2)}/h > $${b.budgetPerHour.toFixed(2)}/h`);
+  if (budget) notes.push(`Vượt ngân sách: $${summary.costPerHour.toFixed(2)}/h > $${budgetOf(content, state).toFixed(2)}/h`);
   if (absorbed) notes.push(`Headroom hấp thụ ${absorbed} sát thương`);
   if (capped) notes.push(`Sát thương tối đa ${b.maxDamagePerTurn}/lượt (bỏ qua ${capped})`);
   const lostAsync = (summary.asyncErr ?? 0) + (summary.backlog ?? 0);
