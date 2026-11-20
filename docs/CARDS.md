@@ -32,6 +32,21 @@ Cạnh nút **Kết thúc lượt** có ô **Dự kiến**: sau mỗi lá đánh
 
 Một số tình huống được dạy qua cơ chế, không cần viết kịch bản:
 - Redis đỡ được spike, nhưng "Truy vấn nặng" né cache.
+- Redis là cache theo key thật của engine (`CacheModel`: 10k key, phân bố zipf, LRU theo dung lượng, TTL). Hit rate do engine tính chứ không phải con số cố định:
+  - Lượt vừa đặt cache thì cache còn nguội.
+  - Đánh lại lá Redis tăng dung lượng (+1k key, tối đa 4k), giúp cache chịu phá key tốt hơn.
+  - Địch "phá cache" (`cacheBust`) làm phẳng phân bố key bằng URL ngẫu nhiên; lá **Chuẩn hoá cache key** chỉ còn để lọt 1/3.
+  - Địch rút ngắn TTL (`cacheTtlMs`) kéo hit rate xuống khoảng 50% bất kể dung lượng; chỉ **Stale-while-revalidate** cứu được.
+- Một số ý định đọc build của bạn lúc bắt đầu lượt (`variants` + `when`, xem `designTraits`):
+  - Có cache thì gặp Cache Buster hoặc hết hạn đồng loạt.
+  - API từ 4 instance thì gặp Denial of Wallet (chi phí API ×3).
+  - WAF từ 25% thì bot chuyển sang proxy dân cư.
+  - Retry mà không có budget thì client retry chồng lên.
+
+  Biến thể được chọn một lần khi bắt đầu lượt, nên đánh bài giữa lượt không làm ý định đổi, và ô Dự kiến vẫn đúng.
+- Slowloris giữ slot API (`squeeze`), nên cache và index không giúp gì; cần thêm instance, Burst hoặc Hotfix.
+- Rò Rỉ Bộ Nhớ tích tụ qua các lượt (`leak`): API chậm dần cho tới khi pod tự restart hoặc bạn đánh **Rolling restart** (lượt đó thiếu 1 instance). Hotfix không chữa được.
+- Khuếch Đại DNS làm nghẽn đường truyền bằng phản hồi lớn (`bandwidth`); scale không giúp, chỉ lọc bot mới giảm được tải.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.
 - Retry flood khuếch đại lỗi.
@@ -268,7 +283,10 @@ pnpm balance:cards 50 --log   # in diễn biến từng lượt
 pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng và nơi bot chết
 pnpm balance:cards 40 --run --by-enemy  # thêm tỉ lệ thắng, máu mất, số lượt theo từng địch
 pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật; trận quá 30 lượt tính là thua do giằng co
+pnpm balance:cards 20 --each               # từng địch thường và tinh anh, không nhân hệ số, 80 máu
 ```
+
+Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý), `rut` (bộ bài lối mòn của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): Redis → Scale → Index → Timeout → Rate limit, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
 
 Mục tiêu hiện tại cho trận đầu:
 - Không làm gì: thua.

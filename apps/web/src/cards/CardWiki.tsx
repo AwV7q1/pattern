@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ArrowLeft, BookOpen, Bot, Crown, Flame, Gem, HeartPulse, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Users, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -225,11 +225,17 @@ function BotsTab({ id, onPick, onMinion }: { id: string; onPick: (id: string) =>
   );
 }
 
-const extras = (it: Intent): string[] => {
+const extras = (it: Partial<Intent>): string[] => {
   const out: string[] = [];
   if (it.chaos) out.push(`${it.chaos.node.toUpperCase()} ${it.chaos.action === 'latency' ? `chậm ×${it.chaos.value}` : `lỗi ${pct(it.chaos.value)}`}`);
   if (it.clientRetries) out.push(`retry ×${it.clientRetries}`);
-  if (it.cacheHitScale !== undefined) out.push(`cache hit ×${it.cacheHitScale}`);
+  if (it.cacheBust) out.push(`phá cache ${pct(it.cacheBust)}`);
+  if (it.cacheTtlMs) out.push(`cache TTL ${it.cacheTtlMs / 1000}s`);
+  if (it.squeeze) out.push(`${it.squeeze.node.toUpperCase()} còn ${pct(it.squeeze.concurrency)} slot`);
+  if (it.leak) out.push(`rò rỉ +${it.leak}`);
+  if (it.leakReset) out.push('hết rò rỉ');
+  if (it.costSpike) out.push(`chi phí API ×${it.costSpike}`);
+  if (it.bandwidth) out.push(`${it.bandwidth.responseKb}KB / ${it.bandwidth.mbps}Mbps`);
   if (it.bypass) out.push(`lách lọc ${pct(it.bypass)}`);
   if (it.heal) out.push(`hồi ${it.heal} máu`);
   if (it.drainOps) out.push(`-${it.drainOps} Ops lượt sau`);
@@ -405,7 +411,8 @@ function IntentTable({ intents, rps, stance, onStance, onMinion }: { intents: In
             const Icon = INTENT_ICON[it.icon];
             const summoned = it.summon && minionById(it.summon.minion);
             return (
-              <tr key={it.id} onClick={() => onStance(it.icon)} className={cn('cursor-pointer border-t transition-colors hover:bg-accent/40', stance === it.icon && 'bg-amber-400/5')}>
+              <Fragment key={it.id}>
+              <tr onClick={() => onStance(it.icon)} className={cn('cursor-pointer border-t transition-colors hover:bg-accent/40', stance === it.icon && 'bg-amber-400/5')}>
                 <td className="whitespace-nowrap px-3 py-2 font-medium">
                   <span className="flex items-center gap-1.5">
                     <Icon className="size-4 text-amber-300" />
@@ -439,6 +446,26 @@ function IntentTable({ intents, rps, stance, onStance, onMinion }: { intents: In
                   </div>
                 </td>
               </tr>
+              {it.variants?.map((v) => (
+                <tr key={`${it.id}:${v.tag}`} className="border-t border-dashed bg-rose-500/5">
+                  <td className="whitespace-nowrap px-3 py-2 pl-6 text-rose-200">↳ {v.label ?? it.label}</td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    <span className="block text-[11px] font-semibold text-rose-300">{v.tag}</span>
+                    {v.text ?? it.text}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono">{n0((v.botRps ?? it.botRps) * rps)}</td>
+                  <td className="px-3 py-2">
+                    <div className="flex flex-wrap gap-1">
+                      {extras({ ...it, ...v }).map((x) => (
+                        <span key={x} className="rounded-full bg-muted px-1.5 py-px text-[10px]">
+                          {x}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              </Fragment>
             );
           })}
         </tbody>

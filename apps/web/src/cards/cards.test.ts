@@ -551,7 +551,8 @@ test('bosses: weighted intents, second phase, passives', () => {
   const [withCache, uid] = withCard({ ...poisoned, temp: { ...poisoned.temp, hotfix: true } }, 'cache');
   const plan = rules.planTurn(content, rules.playCard(content, withCache, uid));
   const cache = plan.input.design.nodes.find((n) => n.id === 'cache')!;
-  assert.equal(cache.config!.hitRate, 0.7 * content.enemies.find((e) => e.id === 'cache_poisoner')!.passive!.cacheHitScale!);
+  const bust = content.enemies.find((e) => e.id === 'cache_poisoner')!.passive!.cacheBust!;
+  assert.equal(cache.config!.cache!.zipf, Math.round((1 - bust) * 1000) / 1000);
 });
 
 test('run: every floor has its own normal and elite enemies', () => {
@@ -675,4 +676,141 @@ test('minions: add traffic, take aimed hits, guard and heal their master, flee w
   const won = rules.playCard(content, lastHit, p4);
   assert.equal(won.phase, 'won');
   assert.deepEqual(won.minions, []);
+});
+
+/** A fresh battle against `enemy` whose current intent is the one with id `intent`. */
+function facing(enemy: string, intent: string, seed = 5): BattleState {
+  const s = rules.newBattle(content, seed, { enemy });
+  const list = rules.intentsNow(content, s);
+  const step = list.findIndex((i) => i.id === intent);
+  assert.ok(step >= 0, `${enemy}:${intent}`);
+  return { ...s, enemy: { ...s.enemy, step, pick: step } };
+}
+
+/** End the turn with a quiet summary and play until the intent `id` comes up again (on the same design). */
+const nextTurn = (s: BattleState) => endTurn({ ...s, hand: [] });
+
+test('variants: the intent answers the build read at the start of the turn, and stays put while cards are played', () => {
+  const plain = facing('swarm', 'probe');
+  assert.equal(rules.currentIntent(content, plain).label, 'Thăm dò');
+  assert.equal(rules.currentIntent(content, plain).tag, undefined);
+
+  // playing Redis mid-turn does not change the intent shown
+  const [withCard_, uid] = withCard(plain, 'cache');
+  const played = rules.playCard(content, withCard_, uid);
+  assert.equal(rules.currentIntent(content, played).label, 'Thăm dò');
+
+  // the next time the turn starts with a cache, the botnet answers it (and the forecast still matches)
+  let s = played;
+  const loop = rules.intentsNow(content, s).length;
+  for (let i = 0; i < loop; i++) s = nextTurn(s);
+  const it = rules.currentIntent(content, s);
+  assert.equal(it.label, 'Cache Buster');
+  assert.ok(it.tag && it.cacheBust! > 0);
+  assert.equal(it.variants, undefined);
+  const plan = rules.planTurn(content, s);
+  assert.ok(plan.input.design.nodes.find((n) => n.id === 'cache')!.config!.cache!.zipf < 1);
+  const sum = summary({ errorRate: 0.1 });
+  assert.deepEqual(rules.scoreTurn(content, s, plan, sum).damage, rules.resolveTurn(content, s, plan, sum).reports.at(-1)!.damage);
+
+  // other conditions: instance count, WAF, retries without a budget
+  const traits = rules.designTraits;
+  const base = rules.newBattle(content, 1);
+  assert.ok(rules.matchesWhen({ instancesAtLeast: { api: 2 } }, traits(base)));
+  assert.ok(!rules.matchesWhen({ instancesAtLeast: { api: 4 } }, traits(base)));
+  assert.ok(rules.matchesWhen({ wafAtLeast: 0.25 }, traits({ ...base, waf: 0.25 })));
+  const retrying = structuredClone(base);
+  Object.assign(rules.apiOut(retrying.design)!, { retries: 2 });
+  assert.ok(rules.matchesWhen({ retriesAtLeast: 2, noRetryBudget: true }, traits(retrying)));
+  Object.assign(rules.apiOut(retrying.design)!, { retryBudget: { ratio: 0.1, minPerSec: 10 } });
+  assert.ok(!rules.matchesWhen({ retriesAtLeast: 2, noRetryBudget: true }, traits(retrying)));
+});
+
+test('cache: key-level model, cold the turn it is placed, grows with replays; SWR, key normalisation and Hotfix', () => {
+  let s = facing('crawler', 'deep_crawl');
+  let uid: number;
+  [s, uid] = withCard(s, 'cache');
+  s = rules.playCard(content, s, uid);
+  const model = (st: BattleState) => rules.planTurn(content, st).input.design.nodes.find((n) => n.id === 'cache')!.config!.cache!;
+  assert.equal(model(s).capacity, 1000);
+  assert.equal(model(s).warm, false, 'cold the turn it is placed');
+  const bust = rules.currentIntent(content, s).cacheBust!;
+  assert.equal(model(s).zipf, Math.round((1 - bust) * 1000) / 1000);
+
+  [s, uid] = withCard(s, 'cache');
+  s = rules.playCard(content, s, uid);
+  assert.equal(model(s).capacity, 2000);
+
+  [s, uid] = withCard(s, 'cache_key');
+  s = rules.playCard(content, s, uid);
+  assert.equal(model(s).zipf, Math.round((1 - bust / 3) * 1000) / 1000);
+  [s, uid] = withCard(s, 'swr');
+  s = rules.playCard(content, s, uid);
+  assert.equal(model(s).staleWhileRevalidate, true);
+
+  [s, uid] = withCard(s, 'hotfix');
+  s = rules.playCard(content, s, uid);
+  assert.equal(model(s).zipf, 1, 'Hotfix cancels the cache busting');
+
+  s = nextTurn(s);
+  assert.equal(model(s).warm, true, 'warm from the next turn');
+
+  // options played before the cache exist carry over; a warm relic places a warm cache
+  let o = rules.newBattle(content, 2);
+  [o, uid] = withCard(o, 'swr');
+  o = rules.playCard(content, o, uid);
+  [o, uid] = withCard(o, 'cache');
+  o = rules.playCard(content, o, uid);
+  assert.equal(model(o).staleWhileRevalidate, true);
+  const warm = rules.newBattle(content, 2, { relics: ['warm_cache'] });
+  assert.equal(model(warm).warm, true);
+
+  // short TTL
+  const herd = facing('herd', 'expire');
+  const [h, hu] = withCard(herd, 'cache');
+  assert.equal(model(rules.playCard(content, h, hu)).ttlMs, 500);
+});
+
+test('slowloris holds slots, the amplifier fills the link, denial of wallet bills the API', () => {
+  const slow = facing('slowloris', 'hold');
+  const api = (st: BattleState) => rules.planTurn(content, st).input.design.nodes.find((n) => n.id === 'api')!.config!;
+  const slots = rules.nodeOf(slow.design, 'api')!.config!.concurrency!;
+  assert.equal(api(slow).concurrency, Math.round(slots * 0.45));
+  const [hf, hu] = withCard(slow, 'hotfix');
+  assert.equal(api(rules.playCard(content, hf, hu)).concurrency, slots, 'Hotfix frees the slots');
+
+  const amp = rules.planTurn(content, facing('amplifier', 'saturate')).input.design.edges.find((e) => e.source === 'client')!;
+  assert.equal(amp.responseKb, 60);
+  assert.equal(amp.bandwidthMbps, 600);
+
+  const iot = structuredClone(facing('iot_botnet', 'wake'));
+  rules.nodeOf(iot.design, 'api')!.config!.instances = 4;
+  // the variant is chosen at the start of a turn: replay the cycle on the scaled design
+  let s = iot;
+  for (let i = 0; i < rules.intentsNow(content, s).length; i++) s = nextTurn(s);
+  assert.equal(rules.currentIntent(content, s).label, 'Denial of Wallet');
+  const cost = rules.nodeOf(s.design, 'api')!.config!.costPerHour!;
+  assert.equal(api(s).costPerHour, Math.round(cost * 3 * 1000) / 1000);
+});
+
+test('memory leak builds up across turns, Hotfix does not help, a restart (card or intent) clears it', () => {
+  let s = facing('memory_leak', 'leak');
+  const apiSlow = (st: BattleState) => (rules.planTurn(content, st).input.scenario as { events: { node: string; action: string; value: number }[] }).events.find((e) => e.node === 'api' && e.action === 'latency')?.value;
+  assert.equal(apiSlow(s), 1.4);
+  s = nextTurn(s);
+  assert.equal(s.enemy.leak, 0.4);
+  assert.equal(apiSlow(s), 2, 'gc_pause adds 0.6 on top');
+  const [hf, hu] = withCard(s, 'hotfix');
+  assert.equal(apiSlow(rules.playCard(content, hf, hu)), 2, 'Hotfix does not stop a leak');
+
+  const [rs, ru] = withCard(s, 'restart');
+  const restarted = rules.playCard(content, rs, ru);
+  assert.equal(restarted.enemy.leak, undefined);
+  assert.equal(apiSlow(restarted), 1.6);
+  const api = rules.planTurn(content, restarted).input.design.nodes.find((n) => n.id === 'api')!.config!;
+  assert.equal(api.instances, rules.nodeOf(s.design, 'api')!.config!.instances! - 1, 'one instance short this turn');
+
+  let r = facing('memory_leak', 'restart');
+  r = { ...r, enemy: { ...r.enemy, leak: 1 } };
+  assert.equal(nextTurn(r).enemy.leak, undefined);
 });

@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, MinionDef, MinionState, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -133,18 +133,58 @@ export function intentsNow(content: Content, state: BattleState): Intent[] {
   return state.enemy.phase === 2 && def.phase2 ? def.phase2.intents : def.intents;
 }
 
-/** The attacker's plan for the current turn, with escalation per loop. */
+/** The intent of the current turn as written in the content, before its variant and escalation. */
+function baseIntent(content: Content, state: BattleState): Intent {
+  const list = intentsNow(content, state);
+  return enemyDef(content, state).pattern === 'weighted' ? list[state.enemy.pick ?? 0] : list[state.enemy.step % list.length];
+}
+
+/** What the attacker can read of the player's build. */
+export function designTraits(state: BattleState) {
+  const inst = (id: string) => nodeOf(state.design, id)?.config?.instances ?? 1;
+  const out = apiOut(state.design);
+  return {
+    hasCache: !!nodeOf(state.design, 'cache'),
+    instances: { api: inst('api'), db: inst('db') },
+    waf: state.waf,
+    retries: out?.retries ?? 0,
+    retryBudget: !!out?.retryBudget,
+  };
+}
+
+export function matchesWhen(when: IntentWhen, t: ReturnType<typeof designTraits>): boolean {
+  if (when.hasCache !== undefined && when.hasCache !== t.hasCache) return false;
+  for (const [node, n] of Object.entries(when.instancesAtLeast ?? {})) if (t.instances[node as 'api' | 'db'] < n!) return false;
+  if (when.wafAtLeast !== undefined && t.waf < when.wafAtLeast - 1e-9) return false;
+  if (when.retriesAtLeast !== undefined && t.retries < when.retriesAtLeast) return false;
+  if (when.noRetryBudget && t.retryBudget) return false;
+  return true;
+}
+
+/** The attacker's plan for the current turn: its variant (chosen at the start of the turn), with escalation per loop. */
 export function currentIntent(content: Content, state: BattleState): Intent {
   const def = enemyDef(content, state);
   const list = intentsNow(content, state);
   const loop = Math.floor(state.enemy.step / list.length);
-  const base = def.pattern === 'weighted' ? list[state.enemy.pick ?? 0] : list[state.enemy.step % list.length];
-  return { ...base, botRps: Math.round(base.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
+  const base = baseIntent(content, state);
+  const v = state.enemy.variant === undefined ? undefined : base.variants?.[state.enemy.variant];
+  const { variants: _variants, ...plain } = base;
+  const { when: _when, ...over } = v ?? { when: {} };
+  const merged: Intent = { ...plain, ...over };
+  return { ...merged, botRps: Math.round(merged.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
 }
 
 /** Real users' traffic this fight (a boss passive can raise it). */
 export function legitRpsNow(content: Content, state: BattleState): number {
   return Math.round(content.battle.legitRps * (enemyDef(content, state).passive?.legitRpsMul ?? 1));
+}
+
+/** Start of a turn, once the hand and relics are in: pick the variant of the intent that answers the player's build. */
+function chooseVariant(content: Content, state: BattleState) {
+  const t = designTraits(state);
+  const i = baseIntent(content, state).variants?.findIndex((v) => matchesWhen(v.when, t)) ?? -1;
+  if (i >= 0) state.enemy.variant = i;
+  else delete state.enemy.variant;
 }
 
 /** weighted enemies: draw this turn's intent, never the same one three turns running. */
@@ -192,13 +232,26 @@ export function canPlay(content: Content, state: BattleState, uid: number): bool
 export const nodeOf = (design: Design, id: string) => design.nodes.find((n) => n.id === id);
 export const apiOut = (design: Design) => design.edges.find((e) => e.source === 'api');
 
-function addCache(design: Design, hitRate: number) {
+/** Key space of the battle's traffic: 10k keys with web-like popularity (zipf 1). */
+export const CACHE_KEYS = 10_000;
+export const CACHE_ZIPF = 1;
+export const CACHE_TTL_MS = 30_000;
+
+function addCache(design: Design, capacity: number) {
   const node: DesignNode = {
     id: 'cache',
     kind: 'cache',
     label: 'Redis',
     position: { x: 0, y: 0 },
-    config: { instances: 1, concurrency: 2000, queueSize: 1000, latencyP50Ms: 0.5, latencyP99Ms: 2, hitRate, costPerHour: 0.15 },
+    config: {
+      instances: 1,
+      concurrency: 2000,
+      queueSize: 1000,
+      latencyP50Ms: 0.5,
+      latencyP99Ms: 2,
+      costPerHour: 0.15,
+      cache: { keys: CACHE_KEYS, zipf: CACHE_ZIPF, capacity, ttlMs: CACHE_TTL_MS, coalesce: false, staleWhileRevalidate: false, warm: true },
+    },
   };
   design.nodes.splice(design.nodes.findIndex((n) => n.id === 'db'), 0, node);
   const old = apiOut(design)!;
@@ -260,6 +313,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
   pickIntent(content, state);
   fireRelics(content, state, 'battleStart');
   fireRelics(content, state, 'turnStart');
+  chooseVariant(content, state);
   if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
 }
@@ -295,11 +349,21 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       break;
     }
     case 'cache': {
-      const cache = nodeOf(state.design, 'cache');
-      if (cache) cache.config!.hitRate = Math.min(effect.max, (cache.config!.hitRate ?? 0) + effect.step);
-      else addCache(state.design, effect.hitRate);
+      const model = nodeOf(state.design, 'cache')?.config?.cache;
+      if (model) model.capacity = Math.min(effect.max, model.capacity + effect.step);
+      else {
+        addCache(state.design, effect.capacity);
+        state.cache = { ...state.cache, placed: effect.warm ? 0 : state.turn };
+      }
       break;
     }
+    case 'cacheOpt':
+      state.cache = { ...state.cache, ...(effect.swr && { swr: true }), ...(effect.normalize && { normalize: Math.max(state.cache?.normalize ?? 1, effect.normalize) }) };
+      break;
+    case 'restart':
+      delete state.enemy.leak;
+      state.temp.api -= 1;
+      break;
     case 'edge':
       Object.assign(apiOut(state.design)!, clone(effect.patch));
       break;
@@ -382,22 +446,40 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   const design = clone(state.design);
   for (const node of ['api', 'db'] as const) {
     const cfg = nodeOf(design, node)!.config!;
-    cfg.instances = (cfg.instances ?? 1) + state.temp[node];
+    cfg.instances = Math.max(1, (cfg.instances ?? 1) + state.temp[node]);
   }
-  const events: object[] = [];
-  if (!state.temp.hotfix) {
-    if (intent.chaos) events.push({ atMs: 0, node: intent.chaos.node, action: intent.chaos.action, value: intent.chaos.value });
-    if (intent.clientRetries) {
-      const edge = design.edges.find((e) => e.source === 'client')!;
-      Object.assign(edge, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
-    }
-    const cache = nodeOf(design, 'cache');
-    if (cache && intent.cacheHitScale !== undefined) cache.config!.hitRate = (cache.config!.hitRate ?? 0) * intent.cacheHitScale;
-  }
-  // a boss passive is not an incident: Hotfix does not cancel it
+  const hotfix = state.temp.hotfix;
   const passive = enemyDef(content, state).passive;
-  const cache = nodeOf(design, 'cache');
-  if (cache && passive?.cacheHitScale !== undefined) cache.config!.hitRate = (cache.config!.hitRate ?? 0) * passive.cacheHitScale;
+  const events: object[] = [];
+  const client = design.edges.find((e) => e.source === 'client')!;
+  // the leak is state, not an incident: Hotfix does not cancel it, a restart does
+  let apiSlow = 1 + leakNow(state, intent);
+  if (!hotfix) {
+    if (intent.chaos?.node === 'api' && intent.chaos.action === 'latency') apiSlow *= intent.chaos.value;
+    else if (intent.chaos) events.push({ atMs: 0, node: intent.chaos.node, action: intent.chaos.action, value: intent.chaos.value });
+    if (intent.clientRetries) Object.assign(client, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
+    if (intent.squeeze) {
+      const cfg = nodeOf(design, intent.squeeze.node)!.config!;
+      cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * intent.squeeze.concurrency));
+    }
+  }
+  if (apiSlow > 1.001) events.push({ atMs: 0, node: 'api', action: 'latency', value: Math.round(apiSlow * 100) / 100 });
+  // not incidents either: the attacker's traffic is simply expensive or heavy
+  if (intent.costSpike) {
+    const cfg = nodeOf(design, 'api')!.config!;
+    cfg.costPerHour = Math.round((cfg.costPerHour ?? 0) * intent.costSpike * 1000) / 1000;
+  }
+  if (intent.bandwidth) Object.assign(client, { responseKb: intent.bandwidth.responseKb, bandwidthMbps: intent.bandwidth.mbps });
+  const model = nodeOf(design, 'cache')?.config?.cache;
+  if (model) {
+    const opts = state.cache ?? {};
+    model.warm = (opts.placed ?? 0) < state.turn;
+    if (opts.swr) model.staleWhileRevalidate = true;
+    // a boss passive is not an incident: Hotfix does not cancel it
+    const bust = 1 - (1 - (hotfix ? 0 : (intent.cacheBust ?? 0))) * (1 - (passive?.cacheBust ?? 0));
+    model.zipf = Math.round(CACHE_ZIPF * (1 - bust / (opts.normalize ?? 1)) * 1000) / 1000;
+    if (!hotfix && intent.cacheTtlMs) model.ttlMs = intent.cacheTtlMs;
+  }
   const legitRps = legitRpsNow(content, state);
   return {
     intent,
@@ -416,6 +498,16 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
       },
     },
   };
+}
+
+/** API memory leak this turn: what built up, plus this turn's intent. */
+export function leakNow(state: BattleState, intent: Intent): number {
+  return Math.round(((state.enemy.leak ?? 0) + (intent.leak ?? 0)) * 100) / 100;
+}
+
+/** Whether the turn's intent has incidents Hotfix cancels. */
+export function hotfixable(intent: Intent): boolean {
+  return !!(intent.chaos || intent.clientRetries || intent.cacheBust || intent.cacheTtlMs || intent.squeeze);
 }
 
 /** Damage both sides take for a turn, from the engine's summary. Shared by the preview and `resolveTurn`. */
@@ -453,7 +545,8 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   if (absorbed) notes.push(`Headroom hấp thụ ${absorbed} sát thương`);
   if (capped) notes.push(`Sát thương tối đa ${b.maxDamagePerTurn}/lượt (bỏ qua ${capped})`);
   if (enemyDamage) notes.push(`Chặn ${Math.round(plan.botBlockedRps * sec).toLocaleString('vi-VN')} request bot`);
-  if (state.temp.hotfix && (plan.intent.chaos || plan.intent.clientRetries || plan.intent.cacheHitScale !== undefined)) notes.push('Hotfix đã chặn hiệu ứng sự cố');
+  if (state.temp.hotfix && hotfixable(plan.intent)) notes.push('Hotfix đã chặn hiệu ứng sự cố');
+  if (plan.intent.costSpike) notes.push(`${plan.intent.label}: chi phí API ×${plan.intent.costSpike}`);
 
   state.hp = Math.max(0, state.hp - total);
   const guarded = guardNow(content, state);
@@ -491,6 +584,14 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     notes.push(`${plan.intent.label}: WAF còn ${Math.round(state.waf * 100)}%`);
   }
   if (plan.intent.bypass) notes.push(`${Math.round(plan.intent.bypass * 100)}% bộ lọc bị lách`);
+  const leak = leakNow(state, plan.intent);
+  if (plan.intent.leakReset) {
+    if (leak) notes.push('Pod tự khởi động lại: hết rò rỉ bộ nhớ');
+    delete state.enemy.leak;
+  } else if (plan.intent.leak) {
+    state.enemy.leak = leak;
+    notes.push(`Rò rỉ bộ nhớ tích tụ: API chậm ×${(1 + leak).toFixed(1)} tới khi restart`);
+  }
 
   const report: TurnReport = {
     turn: state.turn,
@@ -547,6 +648,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   draw(state, b.handSize);
   state.phase = 'player';
   fireRelics(content, state, 'turnStart');
+  chooseVariant(content, state);
   if (state.enemy.hp <= 0) state.phase = 'won';
   return state;
 }

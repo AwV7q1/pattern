@@ -249,7 +249,7 @@ Lưu ý tất định: `scoreTurn` dùng chung cho ô **Dự kiến** và `resol
 
 ## 6. Lộ trình đề xuất
 
-**Giai đoạn 1: nội dung trên engine có sẵn** (S/M, không đụng Rust)
+**Giai đoạn 1: nội dung trên engine có sẵn** (S/M, không đụng Rust). Phần đã làm và kết quả đo: xem [mục 8](#8-giai-đoạn-1-đã-làm-gì-và-đo-được-gì).
 - `designTraits` + ý định có điều kiện `when`; thêm biến thể cho 6–8 địch hiện có.
 - Cache theo key (`CacheModel`) thay `hitRate`; thêm Singleflight, SWR, Chuẩn hoá key; ý định Deploy lỗi.
 - Sửa Slowloris, Rò Rỉ Bộ Nhớ, Khuếch Đại DNS dùng trường engine khớp chủ đề (bảng 1.4).

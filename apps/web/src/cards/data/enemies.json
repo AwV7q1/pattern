@@ -176,7 +176,20 @@
         "label": "Thăm dò",
         "icon": "probe",
         "text": "Bot ~600 rps để dò điểm yếu.",
-        "botRps": 600
+        "botRps": 600,
+        "variants": [
+          {
+            "when": {
+              "hasCache": true
+            },
+            "tag": "Phản ứng: bạn có cache",
+            "label": "Cache Buster",
+            "icon": "slow",
+            "botRps": 900,
+            "cacheBust": 0.5,
+            "text": "Thấy có Redis: bot ~900 rps gắn ?x=ngẫu_nhiên vào URL, phá cache 50%."
+          }
+        ]
       },
       {
         "id": "spike",
@@ -197,14 +210,14 @@
         "id": "heavy_query",
         "label": "Truy vấn nặng",
         "icon": "slow",
-        "text": "Bot ~900 rps gọi query đắt không cache được: DB chậm ×3, cache hit chỉ còn 30% so với bình thường.",
+        "text": "Bot ~900 rps gọi query đắt không cache được: DB chậm ×3, phá cache 40%.",
         "botRps": 900,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
         },
-        "cacheHitScale": 0.3
+        "cacheBust": 0.4
       },
       {
         "id": "big_spike",
@@ -247,7 +260,21 @@
         "icon": "retry",
         "text": "Bot ~900 rps, client retry 1 lần khi lỗi.",
         "botRps": 900,
-        "clientRetries": 1
+        "clientRetries": 1,
+        "variants": [
+          {
+            "when": {
+              "retriesAtLeast": 2,
+              "noRetryBudget": true
+            },
+            "tag": "Phản ứng: bạn retry mà không có budget",
+            "label": "Retry chồng retry",
+            "icon": "retry",
+            "botRps": 1100,
+            "clientRetries": 3,
+            "text": "API của bạn retry, client cũng retry: bot ~1100 rps, client retry 3 lần, mỗi tầng nhân traffic lên."
+          }
+        ]
       },
       {
         "id": "flaky_db",
@@ -305,15 +332,29 @@
         "label": "Gặm cỏ",
         "icon": "probe",
         "text": "Bot ~700 rps dò đường.",
-        "botRps": 700
+        "botRps": 700,
+        "variants": [
+          {
+            "when": {
+              "hasCache": true
+            },
+            "tag": "Phản ứng: bạn có cache",
+            "label": "Hết hạn đồng loạt",
+            "icon": "slow",
+            "botRps": 1000,
+            "cacheTtlMs": 1000,
+            "text": "Mọi key được set cùng lúc nên hết hạn cùng lúc: bot ~1000 rps, TTL chỉ còn 1s."
+          }
+        ]
       },
       {
         "id": "expire",
         "label": "Cache hết hạn",
         "icon": "slow",
-        "text": "Bot ~1500 rps, cache chỉ còn 10% hit rate so với bình thường: gần như mọi request đổ vào DB.",
+        "text": "Bot ~1500 rps, hàng loạt key hết hạn cùng lúc: TTL chỉ còn 0.5s, cache phải đi DB lấy lại liên tục.",
         "botRps": 1500,
-        "cacheHitScale": 0.1
+        "cacheBust": 0.2,
+        "cacheTtlMs": 500
       },
       {
         "id": "stampede",
@@ -327,18 +368,18 @@
         "id": "heavy",
         "label": "Query nặng + nợ",
         "icon": "debt",
-        "text": "Bot ~1000 rps, DB chậm ×3, cache hit còn 30%. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "text": "Bot ~1000 rps, DB chậm ×3, phá cache 40%. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
         "botRps": 1000,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
         },
-        "cacheHitScale": 0.3,
         "addCards": {
           "card": "tech_debt",
           "n": 1
-        }
+        },
+        "cacheBust": 0.4
       },
       {
         "id": "rush",
@@ -368,24 +409,37 @@
         "id": "crawl",
         "label": "Cào trang",
         "icon": "probe",
-        "text": "Bot ~700 rps cào trang lạ: cache hit chỉ còn 60%.",
+        "text": "Bot ~700 rps cào trang lạ: phá cache 15%.",
         "botRps": 700,
-        "cacheHitScale": 0.6
+        "cacheBust": 0.15
       },
       {
         "id": "deep_crawl",
         "label": "Cào sâu",
         "icon": "slow",
-        "text": "Bot ~1000 rps vào trang cũ không ai cache: cache hit chỉ còn 30%.",
+        "text": "Bot ~1000 rps vào trang cũ không ai cache: phá cache 40%.",
         "botRps": 1000,
-        "cacheHitScale": 0.3
+        "cacheBust": 0.4
       },
       {
         "id": "sitemap",
         "label": "Đọc sitemap",
         "icon": "spike",
         "text": "Bot ~2200 rps theo sitemap, cùng lúc.",
-        "botRps": 2200
+        "botRps": 2200,
+        "variants": [
+          {
+            "when": {
+              "hasCache": true
+            },
+            "tag": "Phản ứng: bạn có cache",
+            "label": "Cache Buster",
+            "icon": "slow",
+            "botRps": 1800,
+            "cacheBust": 0.5,
+            "text": "Thấy có Redis: bot ~1800 rps cào mọi biến thể URL, phá cache 50%."
+          }
+        ]
       },
       {
         "id": "recrawl",
@@ -421,25 +475,17 @@
         "id": "leak",
         "label": "Rò rỉ",
         "icon": "slow",
-        "text": "Bot ~900 rps, API chậm ×1.5 vì heap phình to.",
+        "text": "Bot ~900 rps, heap phình to: rò rỉ +0.4, API chậm dần tới khi restart.",
         "botRps": 900,
-        "chaos": {
-          "node": "api",
-          "action": "latency",
-          "value": 1.5
-        }
+        "leak": 0.4
       },
       {
         "id": "gc_pause",
         "label": "GC dừng hình",
         "icon": "slow",
-        "text": "Bot ~1200 rps, API chậm ×2.5: garbage collector dừng cả thế giới.",
+        "text": "Bot ~1200 rps, GC dừng hình ngày càng lâu: rò rỉ +0.6. Hotfix không chữa được, chỉ Rolling restart.",
         "botRps": 1200,
-        "chaos": {
-          "node": "api",
-          "action": "latency",
-          "value": 2.5
-        }
+        "leak": 0.6
       },
       {
         "id": "oom",
@@ -457,20 +503,22 @@
         "id": "swap",
         "label": "Dùng swap",
         "icon": "debt",
-        "text": "Bot ~1300 rps. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "text": "Bot ~1300 rps, rò rỉ +0.3. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
         "botRps": 1300,
         "addCards": {
           "card": "tech_debt",
           "n": 1
-        }
+        },
+        "leak": 0.3
       },
       {
         "id": "restart",
         "label": "Pod khởi động lại",
         "icon": "heal",
-        "text": "Bot ~400 rps, chỗ rò hồi 10 máu.",
+        "text": "Bot ~400 rps, pod tự khởi động lại: hết rò rỉ sau lượt này, chỗ rò hồi 10 máu.",
         "botRps": 400,
-        "heal": 10
+        "heal": 10,
+        "leakReset": true
       }
     ]
   },
@@ -497,7 +545,20 @@
         "label": "Sắp nửa đêm",
         "icon": "probe",
         "text": "Bot ~700 rps, job đang xếp hàng.",
-        "botRps": 700
+        "botRps": 700,
+        "variants": [
+          {
+            "when": {
+              "hasCache": true
+            },
+            "tag": "Phản ứng: bạn có cache",
+            "label": "Cache hết hạn lúc 00:00",
+            "icon": "slow",
+            "botRps": 900,
+            "cacheTtlMs": 1000,
+            "text": "Job làm mới cache chạy đúng nửa đêm: bot ~900 rps, TTL chỉ còn 1s."
+          }
+        ]
       },
       {
         "id": "midnight",
@@ -523,9 +584,9 @@
         "id": "report",
         "label": "Job báo cáo",
         "icon": "slow",
-        "text": "Bot ~1200 rps quét toàn bảng: cache hit chỉ còn 40%.",
+        "text": "Bot ~1200 rps quét toàn bảng: phá cache 35%.",
         "botRps": 1200,
-        "cacheHitScale": 0.4
+        "cacheBust": 0.35
       }
     ]
   },
@@ -542,15 +603,28 @@
         "icon": "probe",
         "text": "Bot ~900 rps. Xoay proxy: sau lượt này WAF mất 10%.",
         "botRps": 900,
-        "wafStrip": 0.1
+        "wafStrip": 0.1,
+        "variants": [
+          {
+            "when": {
+              "wafAtLeast": 0.25
+            },
+            "tag": "Phản ứng: WAF của bạn ≥ 25%",
+            "label": "Proxy dân cư",
+            "icon": "probe",
+            "botRps": 1200,
+            "bypass": 0.4,
+            "text": "Bị WAF chặn nên chuyển sang proxy dân cư: bot ~1200 rps, lách 40% bộ lọc. Sau lượt này WAF mất 10%."
+          }
+        ]
       },
       {
         "id": "full_scrape",
         "label": "Cào toàn bộ",
         "icon": "slow",
-        "text": "Bot ~1500 rps vào mọi trang sản phẩm: cache hit chỉ còn 40%.",
+        "text": "Bot ~1500 rps vào mọi trang sản phẩm: phá cache 35%.",
         "botRps": 1500,
-        "cacheHitScale": 0.4
+        "cacheBust": 0.35
       },
       {
         "id": "proxy_rotate",
@@ -627,7 +701,20 @@
         "icon": "heal",
         "text": "Bot ~400 rps, kẻ tấn công hồi 8 máu.",
         "botRps": 400,
-        "heal": 8
+        "heal": 8,
+        "variants": [
+          {
+            "when": {
+              "wafAtLeast": 0.25
+            },
+            "tag": "Phản ứng: WAF của bạn ≥ 25%",
+            "label": "Botnet dân cư",
+            "icon": "probe",
+            "botRps": 1100,
+            "bypass": 0.5,
+            "text": "Thuê botnet IP dân cư: bot ~1100 rps, lách 50% bộ lọc, kẻ tấn công hồi 8 máu."
+          }
+        ]
       }
     ]
   },
@@ -642,25 +729,23 @@
         "id": "trickle",
         "label": "Nhỏ giọt",
         "icon": "slow",
-        "text": "Bot ~500 rps giữ kết nối mở: API chậm ×2, lượt sau mất 1 Ops.",
+        "text": "Bot ~500 rps gửi header nhỏ giọt, giữ 40% slot API. Lượt sau mất 1 Ops.",
         "botRps": 500,
-        "chaos": {
+        "drainOps": 1,
+        "squeeze": {
           "node": "api",
-          "action": "latency",
-          "value": 2
-        },
-        "drainOps": 1
+          "concurrency": 0.6
+        }
       },
       {
         "id": "hold",
         "label": "Giữ kết nối",
         "icon": "slow",
-        "text": "Bot ~700 rps, API chậm ×2.5.",
+        "text": "Bot ~700 rps giữ kết nối mở: API chỉ còn 45% slot. Cache hay index không giúp được.",
         "botRps": 700,
-        "chaos": {
+        "squeeze": {
           "node": "api",
-          "action": "latency",
-          "value": 2.5
+          "concurrency": 0.45
         }
       },
       {
@@ -674,14 +759,13 @@
         "id": "starve",
         "label": "Cạn connection",
         "icon": "debt",
-        "text": "Bot ~900 rps, API lỗi 6%, lượt sau mất 1 Ops.",
+        "text": "Bot ~900 rps chiếm gần hết kết nối: API chỉ còn 50% slot, lượt sau mất 1 Ops.",
         "botRps": 900,
-        "chaos": {
+        "drainOps": 1,
+        "squeeze": {
           "node": "api",
-          "action": "errors",
-          "value": 0.06
-        },
-        "drainOps": 1
+          "concurrency": 0.5
+        }
       },
       {
         "id": "idle",
@@ -781,10 +865,10 @@
         "id": "ad_fraud",
         "label": "Gian lận quảng cáo",
         "icon": "slow",
-        "text": "Bot ~1500 rps vào trang đích: cache hit chỉ còn 50%.",
+        "text": "Bot ~1500 rps vào trang đích: phá cache 25%.",
         "botRps": 1500,
-        "cacheHitScale": 0.5,
-        "weight": 2
+        "weight": 2,
+        "cacheBust": 0.25
       },
       {
         "id": "fake_reviews",
@@ -829,22 +913,22 @@
         "id": "graphql",
         "label": "Query lồng nhau",
         "icon": "slow",
-        "text": "Bot ~1100 rps gửi query lồng 10 tầng: DB chậm ×3, cache hit chỉ còn 50%.",
+        "text": "Bot ~1100 rps gửi query lồng 10 tầng: DB chậm ×3, phá cache 25%.",
         "botRps": 1100,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
         },
-        "cacheHitScale": 0.5
+        "cacheBust": 0.25
       },
       {
         "id": "paginate",
         "label": "Lật trang vô tận",
         "icon": "probe",
-        "text": "Bot ~1300 rps gọi ?page=1..99999: cache hit chỉ còn 30%.",
+        "text": "Bot ~1300 rps gọi ?page=1..99999: phá cache 40%.",
         "botRps": 1300,
-        "cacheHitScale": 0.3
+        "cacheBust": 0.4
       },
       {
         "id": "burst",
@@ -884,7 +968,22 @@
         "label": "Thức dậy",
         "icon": "probe",
         "text": "Bot ~1000 rps.",
-        "botRps": 1000
+        "botRps": 1000,
+        "variants": [
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "botRps": 1600,
+            "costSpike": 3,
+            "text": "Gọi endpoint đắt nhất: bot ~1600 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "flood",
@@ -958,12 +1057,11 @@
         "id": "saturate",
         "label": "Nghẽn đường truyền",
         "icon": "slow",
-        "text": "Bot ~1400 rps, API lỗi 12% vì nghẽn băng thông.",
+        "text": "Bot ~1400 rps nhận phản hồi khuếch đại 60KB: đường truyền 600Mbps nghẽn. Lọc bot là cách duy nhất, scale không giúp.",
         "botRps": 1400,
-        "chaos": {
-          "node": "api",
-          "action": "errors",
-          "value": 0.12
+        "bandwidth": {
+          "responseKb": 60,
+          "mbps": 600
         }
       },
       {
@@ -1116,10 +1214,10 @@
         "id": "exfil",
         "label": "Rút dữ liệu",
         "icon": "slow",
-        "text": "Bot ~1800 rps tải dữ liệu lạ: cache hit chỉ còn 40%.",
+        "text": "Bot ~1800 rps tải dữ liệu lạ: phá cache 35%.",
         "botRps": 1800,
-        "cacheHitScale": 0.4,
-        "weight": 2
+        "weight": 2,
+        "cacheBust": 0.35
       },
       {
         "id": "strike",
@@ -1230,18 +1328,18 @@
     "pattern": "weighted",
     "passive": {
       "label": "Cache nhiễm độc",
-      "text": "Key rác tràn cache: tỉ lệ hit luôn chỉ còn 70%. Hotfix không gỡ được.",
-      "cacheHitScale": 0.7
+      "text": "Key rác tràn cache: luôn phá cache 10%. Hotfix không gỡ được.",
+      "cacheBust": 0.1
     },
     "intents": [
       {
         "id": "junk_keys",
         "label": "Key rác",
         "icon": "slow",
-        "text": "Bot ~1200 rps với key ngẫu nhiên: cache hit chỉ còn 50% lượt này.",
+        "text": "Bot ~1200 rps với key ngẫu nhiên: phá cache 25% lượt này.",
         "botRps": 1200,
-        "cacheHitScale": 0.5,
-        "weight": 2
+        "weight": 2,
+        "cacheBust": 0.25
       },
       {
         "id": "slow_db",
@@ -1290,10 +1388,10 @@
           "id": "poison_all",
           "label": "Đầu độc toàn bộ",
           "icon": "slow",
-          "text": "Bot ~2400 rps, cache hit chỉ còn 20% lượt này.",
+          "text": "Bot ~2400 rps, phá cache 50% lượt này.",
           "botRps": 2400,
-          "cacheHitScale": 0.2,
-          "weight": 2
+          "weight": 2,
+          "cacheBust": 0.5
         },
         {
           "id": "db_errors",
@@ -1439,7 +1537,22 @@
         "icon": "probe",
         "text": "Bot ~900 rps dò điểm yếu.",
         "botRps": 900,
-        "weight": 2
+        "weight": 2,
+        "variants": [
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "botRps": 1400,
+            "costSpike": 3,
+            "text": "Gọi endpoint đắt nhất: bot ~1400 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "spike",
@@ -1453,10 +1566,10 @@
         "id": "carpet",
         "label": "Rải thảm",
         "icon": "slow",
-        "text": "Bot ~2200 rps với URL ngẫu nhiên: cache hit chỉ còn 50%.",
+        "text": "Bot ~2200 rps với URL ngẫu nhiên: phá cache 25%.",
         "botRps": 2200,
-        "cacheHitScale": 0.5,
-        "weight": 2
+        "weight": 2,
+        "cacheBust": 0.25
       },
       {
         "id": "rent_more",

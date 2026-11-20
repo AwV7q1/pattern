@@ -4,6 +4,10 @@
 // --run: climb the whole tower (map paths, fights, rewards, rests, events) instead of the single first fight.
 // --by-enemy (with --run): also list win rate and HP lost per enemy.
 // --only=greedy: run just these policies (comma list).
+// --each: every normal and elite enemy, one by one, unscaled, at 80 HP (the "rut" policy uses its fixed deck).
+// Policies: idle, random, greedy (a reasonable human), rut (one fixed cache → scale → rate limit line, never
+// takes a card), cacheOnly and filterOnly (single-axis builds: if one of them clears the tower often, the
+// game has a dominant line again).
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -24,6 +28,7 @@ const verbose = process.argv.includes('--log');
 const runMode = process.argv.includes('--run');
 const byEnemy = process.argv.includes('--by-enemy');
 const only = process.argv.find((a) => a.startsWith('--only='))?.slice(7).split(',');
+const eachMode = process.argv.includes('--each');
 const run = (input) => JSON.parse(wasm.run_headless(JSON.stringify(input)));
 
 // Policies: which card to play next (uid) or null to end the turn.
@@ -33,25 +38,56 @@ const policies = {
     const playable = s.hand.filter((c) => rules.canPlay(content, s, c.uid));
     return playable.length ? playable[Math.floor(rnd() * playable.length)].uid : null;
   },
+};
+
+// Smart policies play the first card of their list that is playable and useful now.
+const SMART = {
   // A reasonable human: infra first, then defend on big intents, otherwise attack.
-  greedy: (s) => {
-    const intent = rules.currentIntent(content, s);
-    const big = intent.botRps >= 1000 || intent.chaos || intent.clientRetries;
-    const order = big
-      ? ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot']
-      : ['coffee', 'refactor', 'cache', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'honeypot', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'];
-    for (const id of order) {
-      const c = s.hand.find((h) => rules.baseId(h.id) === id && rules.canPlay(content, s, h.uid));
-      if (!c) continue;
-      if (id === 'hotfix' && !(intent.chaos || intent.clientRetries)) continue;
-      if (id === 'cache' && rules.nodeOf(s.design, 'cache')?.config.hitRate >= 0.95) continue;
-      if (id === 'refactor' && !s.hand.some((h) => h.id === 'tech_debt')) continue;
-      if (id === 'index' && rules.nodeOf(s.design, 'db').config.latencyP50Ms < 5) continue;
-      return c.uid;
-    }
-    return null;
+  greedy: {
+    big: ['coffee', 'refactor', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
+    calm: ['coffee', 'refactor', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'honeypot', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
+    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart'],
+  },
+  // The rut the research doc measured: the same seven cards in the same order, every fight.
+  rut: {
+    big: ['cache', 'scale_api', 'index', 'timeout', 'rate_limit', 'patch', 'buffer'],
+    want: [],
+    deck: [...content.battle.startingDeck, 'rate_limit', 'scale_api'],
+  },
+  // Single axis: make the system fast (cache, DB, scale) and nothing else.
+  cacheOnly: {
+    big: ['coffee', 'refactor', 'cache', 'cache_key', 'swr', 'index', 'scale_api', 'replica', 'vertical', 'bigger_queue', 'timeout', 'pool', 'stale', 'buffer', 'postmortem', 'runbook', 'patch', 'block_ip', 'honeypot'],
+    want: ['cache', 'index', 'replica', 'vertical', 'scale_api', 'swr', 'cache_key', 'pool', 'timeout', 'runbook', 'refactor'],
+  },
+  // Single axis: filter bots (WAF, rate limit, captcha) and hit the botnet.
+  filterOnly: {
+    big: ['coffee', 'refactor', 'waf', 'rate_limit', 'captcha', 'null_route', 'honeypot', 'block_ip', 'patch', 'stale', 'buffer', 'postmortem', 'runbook'],
+    want: ['waf', 'captcha', 'rate_limit', 'null_route', 'honeypot', 'block_ip', 'runbook', 'refactor'],
   },
 };
+
+function useless(id, s, intent) {
+  if (id === 'hotfix') return !rules.hotfixable(intent);
+  if (id === 'cache') return (rules.nodeOf(s.design, 'cache')?.config.cache?.capacity ?? 0) >= 4000;
+  if (id === 'cache_key') return !!s.cache?.normalize;
+  if (id === 'swr') return !!s.cache?.swr;
+  if (id === 'restart') return (s.enemy.leak ?? 0) < 0.6;
+  if (id === 'refactor') return !s.hand.some((h) => h.id === 'tech_debt');
+  if (id === 'index') return rules.nodeOf(s.design, 'db').config.latencyP50Ms < 5;
+  return false;
+}
+
+for (const [name, p] of Object.entries(SMART)) {
+  policies[name] = (s) => {
+    const intent = rules.currentIntent(content, s);
+    const big = intent.botRps >= 1000 || intent.chaos || intent.clientRetries;
+    for (const id of big || !p.calm ? p.big : p.calm) {
+      const c = s.hand.find((h) => rules.baseId(h.id) === id && rules.canPlay(content, s, h.uid));
+      if (c && !(name !== 'rut' && useless(id, s, intent))) return c.uid;
+    }
+    return null;
+  };
+}
 
 // Who attacks go to: greedy takes out guards and healers first, random picks anyone, idle never aims.
 function aim(policy, s, rnd) {
@@ -60,7 +96,7 @@ function aim(policy, s, rnd) {
     const i = Math.floor(rnd() * (minions.length + 1));
     return i < minions.length ? minions[i].uid : null;
   }
-  if (policy !== 'greedy') return null;
+  if (!SMART[policy]) return null;
   const support = minions.filter((m) => { const d = rules.minionDef(content, m.id); return d.guard || d.heal; });
   return support.length ? support.reduce((a, b) => (b.hp < a.hp ? b : a)).uid : null;
 }
@@ -96,14 +132,13 @@ function fight(policy, seed, setup) {
   return s;
 }
 
-// Reward picks for the run: what a player who read the cards would take.
-const WANT = ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip'];
+// Reward picks for the run: what a player who read the cards would take (per policy, `SMART[p].want`).
 
 // Path picks on the map: rest when hurt, otherwise fights (and events) over elites unless healthy.
 function pickNode(policy, run, rnd) {
   const map = runs.towerMap(content, run);
   const open = runs.reachable(content, run).map((id) => map.nodes.find((n) => n.id === id));
-  if (policy !== 'greedy') return open[Math.floor(rnd() * open.length)].id;
+  if (!SMART[policy]) return open[Math.floor(rnd() * open.length)].id;
   const hurt = run.hp / run.maxHp;
   const score = (n) => ({ rest: hurt < 0.5 ? 3 : 0, elite: hurt > 0.75 ? 2 : -1, event: 1, battle: 1, boss: 0 })[n.kind] + rnd() * 0.5;
   return open.reduce((a, b) => (score(b) > score(a) ? b : a)).id;
@@ -111,6 +146,8 @@ function pickNode(policy, run, rnd) {
 
 function playRun(policy, seed) {
   let run = runs.newRun(content, seed);
+  const WANT = SMART[policy]?.want ?? [];
+  if (SMART[policy]?.deck) run = { ...run, deck: SMART[policy].deck };
   let r = seed;
   const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
   while (run.phase !== 'won' && run.phase !== 'lost') {
@@ -124,7 +161,7 @@ function playRun(policy, seed) {
       const healthy = run.hp / run.maxHp > 0.7;
       const up = WANT.map((id) => run.deck.indexOf(id)).find((i) => i >= 0 && rules.canUpgrade(content, run.deck[i])) ?? run.deck.findIndex((id) => rules.canUpgrade(content, id));
       const choice =
-        policy !== 'greedy' ? { heal: true } : healthy && debt >= 0 ? { remove: debt } : healthy && up >= 0 ? { upgrade: up } : { heal: true };
+        !SMART[policy] ? { heal: true } : healthy && debt >= 0 ? { remove: debt } : healthy && up >= 0 ? { upgrade: up } : { heal: true };
       run = runs.rest(content, run, choice);
     } else if (run.phase === 'event') {
       const ev = runs.currentEvent(content, run);
@@ -132,7 +169,7 @@ function playRun(policy, seed) {
       run = runs.chooseEvent(content, run, i);
     } else if (run.phase === 'shop') {
       // greedy: relics first, then wanted cards, then a Tech Debt removal; random: one random affordable thing
-      if (policy === 'greedy') {
+      if (SMART[policy]) {
         let i;
         while ((i = run.shop.relics.findIndex((r) => !r.sold && r.price <= run.gold)) >= 0) run = runs.buy(content, run, { relic: i });
         for (const id of WANT) {
@@ -149,6 +186,25 @@ function playRun(policy, seed) {
     } else if (run.phase === 'cleared') run = runs.nextAct(content, run, policy === 'idle' ? null : (run.relicOffer[0] ?? null));
   }
   return run;
+}
+
+if (eachMode) {
+  const ids = [...new Set([...content.run.normal.flat(), ...content.run.elites.flat()])];
+  for (const policy of Object.keys(policies).filter((p) => p !== 'idle' && (!only || only.includes(p)))) {
+    const rows = ids.map((enemy) => {
+      let won = 0;
+      let lost = 0;
+      for (let seed = 1; seed <= fights; seed++) {
+        const s = fight(policy, seed, { enemy, maxHp: 80, deck: SMART[policy]?.deck });
+        if (s.phase === 'won') won++;
+        lost += 80 - s.hp;
+      }
+      return { enemy, won: won / fights, lost: lost / fights };
+    });
+    const avg = rows.reduce((a, r) => a + r.won, 0) / rows.length;
+    console.log(`${policy.padEnd(10)} thắng TB ${Math.round(avg * 100)}%  ` + rows.map((r) => `${r.enemy} ${Math.round(r.won * 100)}%/-${r.lost.toFixed(0)}`).join('  '));
+  }
+  process.exit(0);
 }
 
 if (runMode) {

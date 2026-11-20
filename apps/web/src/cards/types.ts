@@ -17,8 +17,14 @@ export type NodeRef = 'api' | 'db';
 export type Effect =
   /** Add instances to a node. `temp`: only for the turn it is played. */
   | { op: 'scale'; node: NodeRef; n: number; temp?: boolean }
-  /** Put a cache in front of the DB, or raise its hit rate if it exists. */
-  | { op: 'cache'; hitRate: number; step: number; max: number }
+  /** Put a key-level cache (LRU of `capacity` entries) in front of the DB, or grow it by `step` up to `max`.
+   *  The engine works out the hit rate; a cache placed this turn starts cold unless `warm`. */
+  | { op: 'cache'; capacity: number; step: number; max: number; warm?: boolean }
+  /** Cache settings for the whole fight, kept even before a cache exists.
+   *  `swr`: serve expired entries while refreshing. `normalize`: divide the attacker's cache busting by this. */
+  | { op: 'cacheOpt'; swr?: boolean; normalize?: number }
+  /** Rolling restart: clear the memory leak, but the API runs one instance short this turn. */
+  | { op: 'restart' }
   /** Patch the call that leaves the API (to the cache or the DB). Lasts the whole fight. */
   | { op: 'edge'; patch: Partial<EdgePolicy> }
   /** Filter this share of bot traffic for the current turn only. */
@@ -31,7 +37,7 @@ export type Effect =
   | { op: 'headroom'; n: number }
   | { op: 'draw'; n: number }
   | { op: 'ops'; n: number }
-  /** Cancel the attacker's chaos (slow DB, client retries) for this turn. */
+  /** Cancel the attacker's incidents (slow DB, client retries, cache busting, held connections) for this turn. */
   | { op: 'hotfix' }
   /** Multiply a node's settings for the whole fight (`latency` scales p50 and p99). */
   | { op: 'tune'; node: NodeRef; mul: TuneMul }
@@ -66,6 +72,19 @@ export interface CardDef {
   upgraded?: boolean;
 }
 
+/** Conditions on the player's build (read at the start of the turn, see `designTraits`). All set fields must hold. */
+export interface IntentWhen {
+  hasCache?: boolean;
+  instancesAtLeast?: Partial<Record<NodeRef, number>>;
+  wafAtLeast?: number;
+  /** Retries on the API's outgoing call. */
+  retriesAtLeast?: number;
+  noRetryBudget?: boolean;
+}
+
+/** What an intent turns into when the player's build matches `when`; `tag` tells the player why. */
+export type IntentVariant = Partial<Omit<Intent, 'id' | 'variants' | 'tag'>> & { when: IntentWhen; tag: string };
+
 export interface Intent {
   id: string;
   label: string;
@@ -77,8 +96,24 @@ export interface Intent {
   chaos?: { node: NodeRef; action: 'latency' | 'errors'; value: number };
   /** Clients (bots and users) retry failed requests this many times, no backoff. */
   clientRetries?: number;
-  /** Multiplies the cache hit rate this turn (queries the cache cannot answer). */
-  cacheHitScale?: number;
+  /** Cache busting (0..1): random keys flatten the key popularity (zipf × (1 − bust)), so the cache hits less. */
+  cacheBust?: number;
+  /** Cache entries expire after this long this turn (data that must stay fresh). */
+  cacheTtlMs?: number;
+  /** API instances cost this many times more this turn (expensive requests: denial of wallet). Hotfix does not stop it. */
+  costSpike?: number;
+  /** Slow clients hold slots open: the node's `concurrency` is multiplied by this this turn. */
+  squeeze?: { node: NodeRef; concurrency: number };
+  /** Big responses on the client link this turn: `responseKb` per request over `mbps`. Hotfix does not stop it. */
+  bandwidth?: { responseKb: number; mbps: number };
+  /** Memory leak added this turn: the API is (1 + total leak) times slower until a restart. Hotfix does not stop it. */
+  leak?: number;
+  /** The leak is cleared after this turn (the pod restarted on its own). */
+  leakReset?: boolean;
+  /** Versions of this intent that answer the player's build; the first match is used. */
+  variants?: IntentVariant[];
+  /** Set by `currentIntent` when a variant is in play. */
+  tag?: string;
   /** Curse cards shuffled into the discard pile after the turn. */
   addCards?: { card: string; n: number };
   heal?: number;
@@ -130,8 +165,8 @@ export interface EnemyDef {
     wafDecay?: number;
     /** Real users' traffic multiplier. */
     legitRpsMul?: number;
-    /** Cache hit rate multiplier, every turn (stacks with intents). */
-    cacheHitScale?: number;
+    /** Cache busting every turn (stacks with intents). */
+    cacheBust?: number;
     /** Share of the filtering bots always slip past (stacks with intents). */
     bypass?: number;
     /** HP the enemy regains at the end of every turn. */
@@ -429,7 +464,13 @@ export interface BattleState {
     recent?: number[];
     /** HP multiplier for minions summoned in this fight (default 1). */
     minionHp?: number;
+    /** Index in the intent's `variants` chosen at the start of this turn. */
+    variant?: number;
+    /** Memory leak built up so far (see `Intent.leak`). */
+    leak?: number;
   };
+  /** Cache settings (`cacheOpt`) and the turn the cache was placed (0: warm from the start). */
+  cache?: { placed?: number; swr?: boolean; normalize?: number };
   /** Minions alive, in the order they came. */
   minions?: MinionState[];
   /** uid of the minion attacks go to (absent: the enemy itself). */

@@ -17,6 +17,7 @@ import {
   Unplug,
   Database,
   Heart,
+  Hourglass,
   HeartPulse,
   Info,
   LibraryBig,
@@ -50,6 +51,8 @@ import {
   cardDef,
   currentIntent,
   guardNow,
+  hotfixable,
+  leakNow,
   intentsNow,
   legitRpsNow,
   minionDef,
@@ -260,10 +263,16 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           hits.push({ el: nodes[e.node], label: `+${e.n} instance${e.temp ? ' (lượt này)' : ''}` });
           break;
         case 'cache': {
-          const rate = nodeOf(next.design, 'cache')?.config?.hitRate ?? e.hitRate;
-          hits.push({ el: nodes.cache, label: `cache hit ${Math.round(rate * 100)}%` });
+          const cap = nodeOf(next.design, 'cache')?.config?.cache?.capacity ?? e.capacity;
+          hits.push({ el: nodes.cache, label: `cache ${keysK(cap)} key` });
           break;
         }
+        case 'cacheOpt':
+          hits.push({ el: nodes.cache ?? nodes.policy, label: e.swr ? 'stale-while-revalidate' : 'chuẩn hoá key' });
+          break;
+        case 'restart':
+          hits.push({ el: nodes.api, label: 'restart: hết rò rỉ' });
+          break;
         case 'edge': {
           const p = e.patch;
           const label = p.timeoutMs ? `timeout ${p.timeoutMs}ms` : p.retries ? `retry ×${p.retries} + backoff` : p.circuitBreaker ? 'circuit breaker' : 'policy';
@@ -1046,7 +1055,10 @@ function OpsPips({ ops, max }: { ops: number; max: number }) {
 /** `lasting`: not an incident, so Hotfix does not cancel it. */
 type IntentEffect = { icon: typeof Zap; text: string; tone: 'bad' | 'warn' | 'heal'; lasting?: boolean };
 
-function intentEffects(intent: Intent): IntentEffect[] {
+/** 1000 → "1k". */
+const keysK = (n: number) => (n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+
+function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
   const out: IntentEffect[] = [];
   const node = (n: string) => (n === 'db' ? 'DB' : 'API');
   if (intent.chaos)
@@ -1056,7 +1068,16 @@ function intentEffects(intent: Intent): IntentEffect[] {
         : { icon: TriangleAlert, text: `${node(intent.chaos.node)} lỗi ${Math.round(intent.chaos.value * 100)}%`, tone: 'bad' },
     );
   if (intent.clientRetries) out.push({ icon: Repeat, text: `retry ×${intent.clientRetries}`, tone: 'bad' });
-  if (intent.cacheHitScale !== undefined) out.push({ icon: ZapOff, text: `cache hit ×${intent.cacheHitScale}`, tone: 'warn' });
+  if (intent.cacheBust) out.push({ icon: ZapOff, text: `phá cache ${Math.round(intent.cacheBust * 100)}%`, tone: 'warn' });
+  if (intent.cacheTtlMs) out.push({ icon: Hourglass, text: `cache TTL ${intent.cacheTtlMs / 1000}s`, tone: 'warn' });
+  if (intent.squeeze) out.push({ icon: Unplug, text: `${node(intent.squeeze.node)} chỉ còn ${Math.round(intent.squeeze.concurrency * 100)}% slot`, tone: 'bad' });
+  if (intent.leak) {
+    const total = state ? leakNow(state, intent) : intent.leak;
+    out.push({ icon: Turtle, text: `rò rỉ +${intent.leak}: API chậm ×${(1 + total).toFixed(1)}`, tone: 'bad', lasting: true });
+  }
+  if (intent.leakReset) out.push({ icon: RotateCcw, text: 'pod tự restart: hết rò rỉ', tone: 'heal' });
+  if (intent.costSpike) out.push({ icon: Wallet, text: `chi phí API ×${intent.costSpike}`, tone: 'bad', lasting: true });
+  if (intent.bandwidth) out.push({ icon: Network, text: `phản hồi ${intent.bandwidth.responseKb}KB, đường truyền ${intent.bandwidth.mbps}Mbps`, tone: 'bad', lasting: true });
   if (intent.addCards) out.push({ icon: Bug, text: `+${intent.addCards.n} thẻ nợ`, tone: 'warn', lasting: true });
   if (intent.bypass) out.push({ icon: EyeOff, text: `lách ${Math.round(intent.bypass * 100)}% bộ lọc`, tone: 'bad', lasting: true });
   if (intent.wafStrip) out.push({ icon: ShieldOff, text: `WAF −${Math.round(intent.wafStrip * 100)}%`, tone: 'warn', lasting: true });
@@ -1162,7 +1183,8 @@ function BotSide({
   const hasMinions = minionsOf(state).length > 0;
   const aimed = hasMinions && !targetOf(state);
   const cut = botCutNow(state, bypassNow(CONTENT, state));
-  const effects = intentEffects(intent);
+  const effects = intentEffects(intent, state);
+  const leakLeft = state.enemy.leak && !intent.leak ? leakNow(state, intent) : 0;
   const hotfixed = (e: IntentEffect) => state.temp.hotfix && e.tone !== 'heal' && !e.lasting;
   const tone = (e: IntentEffect) =>
     hotfixed(e)
@@ -1202,7 +1224,9 @@ function BotSide({
           <div className="mb-1 flex items-center gap-1.5 text-sm font-semibold">
             <Icon className="size-4 text-amber-300" /> {intent.label}
           </div>
+          {intent.tag && <p className="mb-1 font-semibold text-rose-300">{intent.tag}</p>}
           <p className="mb-2 text-muted-foreground">{intent.text}</p>
+          {leakLeft > 0 && <p className="mb-2 text-rose-300">Rò rỉ đã tích tụ: API chậm ×{(1 + leakLeft).toFixed(1)} tới khi Rolling restart.</p>}
           <div className="space-y-1.5 font-mono">
             <Row lg icon={<Bot className="text-rose-400" />} label="Bot dự kiến" value={`${n0(raw)} rps`} />
             {fromMinions > 0 && <Row icon={<Users className="text-orange-300" />} label="… trong đó từ lính" value={`${n0(fromMinions)} rps`} />}
@@ -1222,7 +1246,7 @@ function BotSide({
               ))}
             </div>
           )}
-          {state.temp.hotfix && (intent.chaos || intent.clientRetries || intent.cacheHitScale !== undefined) && (
+          {state.temp.hotfix && hotfixable(intent) && (
             <div className="pt-2 text-emerald-300">Hotfix: hiệu ứng sự cố bị huỷ</div>
           )}
         </div>
@@ -1388,7 +1412,7 @@ function InfraLine({
         {cache && (
           <>
             <Pipe />
-            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`hit ${Math.round((cache.config?.hitRate ?? 0) * 100)}%`} accent="red" load={loads?.cache} />
+            <InfraNode nodeRef={set('cache')} icon={<Zap />} title="Redis" sub={`${keysK(cache.config?.cache?.capacity ?? 0)} key${(state.cache?.placed ?? 0) >= state.turn ? ' · nguội' : ''}`} accent="red" load={loads?.cache} />
           </>
         )}
         <Pipe policy={policies.length > 0} pipeRef={set('policy')} />
