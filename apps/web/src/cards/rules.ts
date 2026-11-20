@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, RelicDef, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, RelicDef, StatusDef, StatusMods, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -174,9 +174,60 @@ export function currentIntent(content: Content, state: BattleState): Intent {
   return { ...merged, botRps: Math.round(merged.botRps * (1 + def.escalation * loop) * (state.enemy.rps ?? 1)) };
 }
 
-/** Real users' traffic this fight (a boss passive can raise it). */
+/** Real users' traffic this fight (higher floors and a boss passive raise it). */
 export function legitRpsNow(content: Content, state: BattleState): number {
-  return Math.round(content.battle.legitRps * (enemyDef(content, state).passive?.legitRpsMul ?? 1));
+  return Math.round(content.battle.legitRps * (state.legitMul ?? 1) * (enemyDef(content, state).passive?.legitRpsMul ?? 1));
+}
+
+// ---------------------------------------------------------------- statuses
+
+export function statusDef(content: Content, id: string): StatusDef {
+  const def = content.statuses.find((x) => x.id === id);
+  if (!def) throw new Error(`unknown status ${id}`);
+  return def;
+}
+
+/** Gain a status, or more of it: `refresh` only extends it, `add` also piles up stacks (up to `maxStacks`). */
+export function addStatus(content: Content, state: BattleState, id: string, turns: number, stacks = 1) {
+  const def = statusDef(content, id);
+  const list = (state.statuses ??= []);
+  const cur = list.find((x) => x.id === id);
+  const cap = def.maxStacks ?? Infinity;
+  if (!cur) list.push({ id, turns, stacks: def.stack === 'add' ? Math.min(cap, stacks) : 1 });
+  else {
+    cur.turns = Math.max(cur.turns, turns);
+    if (def.stack === 'add') cur.stacks = Math.min(cap, cur.stacks + stacks);
+  }
+}
+
+export type Mods = Required<StatusMods>;
+const NO_MODS: Mods = { apiLatency: 1, dbLatency: 1, cost: 1, botRps: 1, blockedDamage: 1, apiInstances: 0, dbInstances: 0, botCut: 0, bypass: 0, opsPerTurn: 0 };
+
+/** Everything the statuses in play change, combined. The only place the rules read statuses from. */
+export function statusMods(content: Content, state: BattleState): Mods {
+  const m = { ...NO_MODS };
+  for (const inst of state.statuses ?? []) {
+    const d = statusDef(content, inst.id).mods;
+    const k = inst.stacks;
+    for (const key of ['apiLatency', 'dbLatency', 'cost', 'botRps', 'blockedDamage'] as const) if (d[key] !== undefined) m[key] *= d[key] ** k;
+    for (const key of ['apiInstances', 'dbInstances', 'opsPerTurn'] as const) if (d[key] !== undefined) m[key] += d[key] * k;
+    for (const key of ['botCut', 'bypass'] as const) if (d[key] !== undefined) m[key] = 1 - (1 - m[key]) * (1 - d[key]) ** k;
+  }
+  return m;
+}
+
+/** End of a turn: every status loses a turn, and those run out go. */
+function tickStatuses(state: BattleState) {
+  if (!state.statuses) return;
+  for (const x of state.statuses) x.turns--;
+  state.statuses = state.statuses.filter((x) => x.turns > 0);
+  if (!state.statuses.length) delete state.statuses;
+}
+
+/** Whether this turn's filtering is heavy enough for the bots to adapt (see `battle.adapt`). */
+export function adaptsNow(content: Content, plan: Pick<TurnPlan, 'botRps' | 'botBlockedRps'>): boolean {
+  const a = content.battle.adapt;
+  return !!a && plan.botRps > 0 && plan.botBlockedRps / plan.botRps >= a.at;
 }
 
 /** Start of a turn, once the hand and relics are in: pick the variant of the intent that answers the player's build. */
@@ -204,19 +255,21 @@ function pickIntent(content: Content, state: BattleState) {
 /** A weaker botnet sends less traffic: 60% at 0 HP, 100% at full HP. Minions add theirs on top. */
 export function botRpsNow(content: Content, state: BattleState): number {
   const ratio = state.enemy.hp / state.enemy.maxHp;
-  return Math.round(currentIntent(content, state).botRps * (0.6 + 0.4 * ratio)) + minionRpsNow(content, state);
+  const rps = Math.round(currentIntent(content, state).botRps * (0.6 + 0.4 * ratio)) + minionRpsNow(content, state);
+  return Math.round(rps * statusMods(content, state).botRps);
 }
 
-/** Share of the filtering the bots slip past this turn (intent and passive stack multiplicatively). */
+/** Share of the filtering the bots slip past this turn (intent, passive and statuses stack multiplicatively). */
 export function bypassNow(content: Content, state: BattleState): number {
   const a = currentIntent(content, state).bypass ?? 0;
   const b = enemyDef(content, state).passive?.bypass ?? 0;
-  return 1 - (1 - a) * (1 - b);
+  const c = statusMods(content, state).bypass;
+  return 1 - (1 - a) * (1 - b) * (1 - c);
 }
 
-/** Share of bot traffic filtered this turn (WAF and rate limit stack multiplicatively; `bypass` slips past part of it). */
-export function botCutNow(state: BattleState, bypass = 0): number {
-  return (1 - (1 - state.waf) * (1 - state.temp.botCut)) * (1 - bypass);
+/** Share of bot traffic filtered this turn (WAF, rate limit and statuses stack multiplicatively; `bypass` slips past part of it). */
+export function botCutNow(content: Content, state: BattleState, bypass = 0): number {
+  return (1 - (1 - state.waf) * (1 - state.temp.botCut) * (1 - statusMods(content, state).botCut)) * (1 - bypass);
 }
 
 export function canPlay(content: Content, state: BattleState, uid: number): boolean {
@@ -305,6 +358,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     relics: (setup.relics ?? []).filter((id) => content.relics.some((r) => r.id === id)),
     relicCount: {},
     relicFired: [],
+    ...(setup.legitScale && setup.legitScale !== 1 && { legitMul: setup.legitScale }),
   };
   for (const id of enemy.minions ?? []) summon(content, state, id, 1);
   const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));
@@ -409,6 +463,16 @@ function apply(content: Content, state: BattleState, effect: Effect) {
       if (effect.draw) draw(state, curses.length);
       break;
     }
+    case 'status':
+      addStatus(content, state, effect.status, effect.turns, effect.stacks);
+      break;
+    case 'cleanse': {
+      const debuffs = (state.statuses ?? []).filter((x) => statusDef(content, x.id).kind === 'debuff');
+      const gone = new Set(debuffs.slice(effect.n === undefined ? 0 : Math.max(0, debuffs.length - effect.n)));
+      state.statuses = (state.statuses ?? []).filter((x) => !gone.has(x));
+      if (!state.statuses.length) delete state.statuses;
+      break;
+    }
   }
 }
 
@@ -440,22 +504,27 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   const b = content.battle;
   const intent = currentIntent(content, state);
   const raw = botRpsNow(content, state);
-  const cut = botCutNow(state, bypassNow(content, state));
+  const cut = botCutNow(content, state, bypassNow(content, state));
   const botPassed = Math.round(raw * (1 - cut));
+  const mods = statusMods(content, state);
 
   const design = clone(state.design);
   for (const node of ['api', 'db'] as const) {
     const cfg = nodeOf(design, node)!.config!;
-    cfg.instances = Math.max(1, (cfg.instances ?? 1) + state.temp[node]);
+    cfg.instances = Math.max(1, (cfg.instances ?? 1) + state.temp[node] + mods[`${node}Instances`]);
+    // statuses are not incidents: Hotfix does not cancel them
+    if (mods.cost !== 1) cfg.costPerHour = Math.round((cfg.costPerHour ?? 0) * mods.cost * 1000) / 1000;
   }
   const hotfix = state.temp.hotfix;
   const passive = enemyDef(content, state).passive;
   const events: object[] = [];
   const client = design.edges.find((e) => e.source === 'client')!;
   // the leak is state, not an incident: Hotfix does not cancel it, a restart does
-  let apiSlow = 1 + leakNow(state, intent);
+  let apiSlow = (1 + leakNow(state, intent)) * mods.apiLatency;
+  let dbSlow = mods.dbLatency;
   if (!hotfix) {
-    if (intent.chaos?.node === 'api' && intent.chaos.action === 'latency') apiSlow *= intent.chaos.value;
+    if (intent.chaos?.action === 'latency' && intent.chaos.node === 'api') apiSlow *= intent.chaos.value;
+    else if (intent.chaos?.action === 'latency' && intent.chaos.node === 'db') dbSlow *= intent.chaos.value;
     else if (intent.chaos) events.push({ atMs: 0, node: intent.chaos.node, action: intent.chaos.action, value: intent.chaos.value });
     if (intent.clientRetries) Object.assign(client, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
     if (intent.squeeze) {
@@ -464,6 +533,7 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
     }
   }
   if (apiSlow > 1.001) events.push({ atMs: 0, node: 'api', action: 'latency', value: Math.round(apiSlow * 100) / 100 });
+  if (dbSlow > 1.001) events.push({ atMs: 0, node: 'db', action: 'latency', value: Math.round(dbSlow * 100) / 100 });
   // not incidents either: the attacker's traffic is simply expensive or heavy
   if (intent.costSpike) {
     const cfg = nodeOf(design, 'api')!.config!;
@@ -523,7 +593,7 @@ export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, 
   const absorbed = Math.min(state.headroom, raw);
   const total = Math.min(b.maxDamagePerTurn, raw - absorbed);
   const capped = raw - absorbed - total;
-  const enemyDamage = Math.floor((plan.botBlockedRps * sec) / b.blockedPerDamage);
+  const enemyDamage = Math.floor(((plan.botBlockedRps * sec) / b.blockedPerDamage) * statusMods(content, state).blockedDamage);
   return { legitFailed, damage: { failed, latency, budget, absorbed, capped, total }, enemyDamage };
 }
 
@@ -592,6 +662,18 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     state.enemy.leak = leak;
     notes.push(`Rò rỉ bộ nhớ tích tụ: API chậm ×${(1 + leak).toFixed(1)} tới khi restart`);
   }
+  // statuses: the turn's ones lose a turn, then the attacker's new ones start (they count from next turn)
+  tickStatuses(state);
+  for (const x of plan.intent.inflict ?? []) {
+    addStatus(content, state, x.status, x.turns, x.stacks);
+    notes.push(`${statusDef(content, x.status).name}: ${x.turns} lượt tới`);
+  }
+  const adapt = b.adapt;
+  if (adapt && adaptsNow(content, plan)) {
+    addStatus(content, state, adapt.status, adapt.turns);
+    const n = state.statuses!.find((x) => x.id === adapt.status)!.stacks;
+    notes.push(`Bị chặn ${Math.round((plan.botBlockedRps / plan.botRps) * 100)}%, bot thích nghi: ${statusDef(content, adapt.status).name} ${n} tầng`);
+  }
 
   const report: TurnReport = {
     turn: state.turn,
@@ -643,8 +725,8 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     report.notes.push(`${def.passive.label}: WAF còn ${Math.round(state.waf * 100)}%`);
   }
   pickIntent(content, state);
-  state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0));
-  if (plan.intent.drainOps) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
+  state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0) + statusMods(content, state).opsPerTurn);
+  if (state.ops < b.opsPerTurn) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
   draw(state, b.handSize);
   state.phase = 'player';
   fireRelics(content, state, 'turnStart');

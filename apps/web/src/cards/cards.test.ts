@@ -13,7 +13,7 @@ import type { Summary } from '@/types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -25,6 +25,9 @@ function withCard(s: BattleState, id: string): [BattleState, number] {
   next.ops = 10;
   return [next, uid];
 }
+
+/** A new run past the starting infrastructure pick (Redis), standing on the map. */
+const fresh = (seed: number) => runs.pickReward(content, runs.newRun(content, seed), 'cache');
 
 const endTurn = (s: BattleState, sum = summary()) => rules.resolveTurn(content, s, rules.planTurn(content, s), sum);
 
@@ -241,11 +244,11 @@ function climbTo(run: RunState, kind: string): RunState {
   throw new Error(`no ${kind} reached`);
 }
 
-test('run: starts on the map; only reachable nodes can be chosen', () => {
-  const run = runs.newRun(content, 11);
+test('run: after the starting pick, the map; only reachable nodes can be chosen', () => {
+  const run = fresh(11);
   assert.equal(run.phase, 'map');
   assert.equal(run.act, 1);
-  assert.deepEqual(run.deck, content.battle.startingDeck);
+  assert.deepEqual(run.deck, [...content.battle.startingDeck, 'cache']);
   const open = runs.reachable(content, run);
   assert.ok(open.length >= 2);
   const map = runs.towerMap(content, run);
@@ -261,7 +264,7 @@ test('run: starts on the map; only reachable nodes can be chosen', () => {
 });
 
 test('run: fight, reward, back to the map with the hp carried over', () => {
-  let run = runs.chooseNode(content, runs.newRun(content, 11), runs.reachable(content, runs.newRun(content, 11))[0]);
+  let run = runs.chooseNode(content, fresh(11), runs.reachable(content, fresh(11))[0]);
   const setup = runs.battleSetup(content, run);
   assert.ok(content.run.warmup.includes(setup.enemy!), 'the first fight is a warmup');
   assert.notEqual(setup.enemy, runs.bossOf(content, 1), 'the boss is not met before the top');
@@ -281,7 +284,7 @@ test('run: fight, reward, back to the map with the hp carried over', () => {
 });
 
 test('run: elites and higher floors scale the enemy', () => {
-  let run = climbTo(runs.newRun(content, 21), 'elite');
+  let run = climbTo(fresh(21), 'elite');
   assert.equal(run.phase, 'battle');
   const setup = runs.battleSetup(content, run);
   assert.ok(runs.poolOf(content, run.act, 'elite').includes(setup.enemy!), 'elites have their own pool');
@@ -301,15 +304,21 @@ test('run: elites and higher floors scale the enemy', () => {
   assert.equal(run.hp, 40 + content.run.elite.maxHp);
   assert.equal(run.reward.length, content.run.rewardChoices + 1);
 
-  const third = { ...runs.newRun(content, 21), act: 3 };
+  const third = { ...fresh(21), act: 3 };
   const node = runs.towerMap(content, third).nodes.find((n) => n.row === 0)!;
   const high = runs.battleSetup(content, { ...third, node: node.id, phase: 'battle' });
   const f = content.run.fight;
   assert.deepEqual(high.enemyScale, { hp: f.hp * (1 + 2 * content.run.actScale.hp), rps: f.rps * (1 + 2 * content.run.actScale.rps) });
+  // real users grow floor by floor too
+  const legit = 1 + 2 * (content.run.actScale.legit ?? 0);
+  assert.equal(high.legitScale, legit === 1 ? undefined : legit);
+  const b = rules.newBattle(content, 1, high);
+  assert.equal(rules.legitRpsNow(content, b), Math.round(content.battle.legitRps * legit));
+  assert.equal(rules.planTurn(content, b).legitRps, rules.legitRpsNow(content, b));
 });
 
 test('run: boss clears the floor, the last boss wins the tower', () => {
-  let run = climbTo(runs.newRun(content, 31), 'boss');
+  let run = climbTo(fresh(31), 'boss');
   assert.equal(runs.battleSetup(content, run).enemy, runs.bossOf(content, 1));
   run = runs.finishBattle(content, run, win(run, 20));
   assert.equal(run.phase, 'cleared');
@@ -335,7 +344,7 @@ test('run: boss clears the floor, the last boss wins the tower', () => {
 });
 
 test('run: losing a fight ends the run', () => {
-  let run = runs.newRun(content, 4);
+  let run = fresh(4);
   run = runs.chooseNode(content, run, runs.reachable(content, run)[0]);
   run = runs.finishBattle(content, run, lose(run));
   assert.equal(run.phase, 'lost');
@@ -344,7 +353,7 @@ test('run: losing a fight ends the run', () => {
 });
 
 test('run: rest stops and events', () => {
-  const base = { ...runs.newRun(content, 8), hp: 30 };
+  const base = { ...fresh(8), hp: 30 };
   const map = runs.towerMap(content, base);
   const restNode = map.nodes.find((n) => n.kind === 'rest')!;
   const atRest = { ...base, node: restNode.id, phase: 'rest' as const };
@@ -381,8 +390,8 @@ test('run: rest stops and events', () => {
 });
 
 test('run: same seed, same run; saved runs are validated', () => {
-  const a = runs.finishBattle(content, climbTo(runs.newRun(content, 99), 'battle'), win(climbTo(runs.newRun(content, 99), 'battle'), 40));
-  const b = runs.finishBattle(content, climbTo(runs.newRun(content, 99), 'battle'), win(climbTo(runs.newRun(content, 99), 'battle'), 40));
+  const a = runs.finishBattle(content, climbTo(fresh(99), 'battle'), win(climbTo(fresh(99), 'battle'), 40));
+  const b = runs.finishBattle(content, climbTo(fresh(99), 'battle'), win(climbTo(fresh(99), 'battle'), 40));
   assert.deepEqual(a, b);
   assert.notEqual(runs.battleSeed(a), runs.battleSeed({ ...a, climbed: a.climbed + 1 }));
 
@@ -427,7 +436,7 @@ test('upgrades: "+" copies use the upgrade, rest stops upgrade a card once', () 
   const [s, uid] = withCard(rules.newBattle(content, 3), 'patch+');
   assert.equal(rules.playCard(content, s, uid).enemy.hp, s.enemy.hp - 8);
 
-  const base = runs.newRun(content, 8);
+  const base = fresh(8);
   const restNode = runs.towerMap(content, base).nodes.find((n) => n.kind === 'rest')!;
   const atRest = { ...base, node: restNode.id, phase: 'rest' as const };
   const i = base.deck.indexOf('cache');
@@ -463,12 +472,12 @@ test('relics: fire at battle start, turn start and on every n-th card', () => {
 });
 
 test('relics: elites drop one, bosses offer a pick, pickups apply once', () => {
-  let run = climbTo(runs.newRun(content, 21), 'elite');
+  let run = climbTo(fresh(21), 'elite');
   run = runs.finishBattle(content, run, win(run, run.hp));
   assert.equal(run.relics.length, 1);
   assert.equal(run.history.at(-1)!.relic, run.relics[0]);
 
-  let boss = climbTo(runs.newRun(content, 31), 'boss');
+  let boss = climbTo(fresh(31), 'boss');
   boss = runs.finishBattle(content, boss, win(boss, 20));
   assert.equal(boss.relicOffer.length, content.run.bossRelicChoices);
   assert.equal(new Set(boss.relicOffer).size, boss.relicOffer.length);
@@ -482,7 +491,7 @@ test('relics: elites drop one, bosses offer a pick, pickups apply once', () => {
 });
 
 test('gold and shops: fights pay, shops sell cards, relics and one removal', () => {
-  let run = climbTo(runs.newRun(content, 11), 'battle');
+  let run = climbTo(fresh(11), 'battle');
   assert.equal(run.gold, content.run.startGold);
   run = runs.finishBattle(content, run, win(run, run.hp));
   const won = run.gold - content.run.startGold;
@@ -491,7 +500,7 @@ test('gold and shops: fights pay, shops sell cards, relics and one removal', () 
 
   // every floor has a shop
   for (let act = 1; act <= content.run.acts; act++) assert.ok(generateMap(content, 11, act).nodes.some((n) => n.kind === 'shop'), `act ${act}`);
-  let shop = climbTo({ ...runs.newRun(content, 11), gold: 500 }, 'shop');
+  let shop = climbTo({ ...fresh(11), gold: 500 }, 'shop');
   assert.equal(shop.phase, 'shop');
   assert.equal(shop.shop!.cards.length, content.run.shop.cards);
   assert.ok(runs.isValidRun(content, shop));
@@ -570,7 +579,7 @@ test('run: every floor has its own normal and elite enemies', () => {
   // a floor's fights land on that floor's pool (past floor 1's warmup fights)
   const warm = Array.from({ length: content.run.warmupFights }, () => ({ act: 1, kind: 'battle' as const, enemy: 'script_kiddie', won: true, turns: 3, hpLost: 0 }));
   for (const act of [1, 2, 3]) {
-    const run = { ...runs.newRun(content, 5), act, history: warm };
+    const run = { ...fresh(5), act, history: warm };
     const node = runs.towerMap(content, run).nodes.find((n) => n.row === 0)!;
     const setup = runs.battleSetup(content, { ...run, node: node.id, phase: 'battle' });
     assert.ok(runs.poolOf(content, act, 'battle').includes(setup.enemy!), `floor ${act}: ${setup.enemy}`);
@@ -608,7 +617,7 @@ test('enemies: bypass, wafStrip, drainOps and regen', () => {
 });
 
 test('run: the first normal fights of floor 1 are warmups, then the floor pool takes over', () => {
-  let run = runs.newRun(content, 21);
+  let run = fresh(21);
   const met: string[] = [];
   while (met.length < content.run.warmupFights + 2) {
     const map = runs.towerMap(content, run);
@@ -813,4 +822,83 @@ test('memory leak builds up across turns, Hotfix does not help, a restart (card 
   let r = facing('memory_leak', 'restart');
   r = { ...r, enemy: { ...r.enemy, leak: 1 } };
   assert.equal(nextTurn(r).enemy.leak, undefined);
+});
+
+test('run: starts with the infrastructure pick, then the map', () => {
+  const run = runs.newRun(content, 3);
+  assert.equal(run.phase, 'reward');
+  assert.deepEqual(run.reward, content.run.startPick);
+  for (const id of ['cache', 'index']) assert.ok(!run.deck.includes(id), `${id} is not given for free`);
+  const picked = runs.pickReward(content, run, 'index');
+  assert.equal(picked.phase, 'map');
+  assert.equal(picked.deck.filter((id) => id === 'index').length, 1);
+  assert.equal(runs.pickReward(content, run, null).deck.length, content.battle.startingDeck.length);
+});
+
+test('statuses: refresh extends, add piles up to maxStacks; cleanse removes debuffs only', () => {
+  const s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  rules.addStatus(content, s, 'cpu_credit', 2);
+  rules.addStatus(content, s, 'cpu_credit', 3);
+  assert.deepEqual(s.statuses, [{ id: 'cpu_credit', turns: 3, stacks: 1 }]);
+  for (let i = 0; i < 5; i++) rules.addStatus(content, s, 'adapted', 2);
+  assert.equal(s.statuses!.find((x) => x.id === 'adapted')!.stacks, rules.statusDef(content, 'adapted').maxStacks, 'capped');
+  rules.addStatus(content, s, 'tarpit', 2);
+  const [r, ru] = withCard(s, 'rollback');
+  const after = rules.playCard(content, r, ru);
+  assert.deepEqual(after.statuses, [{ id: 'tarpit', turns: 2, stacks: 1 }], 'buffs stay');
+  const [h, hu] = withCard(s, 'hotfix+');
+  assert.equal(rules.playCard(content, h, hu).statuses!.length, 2, 'Hotfix+ removes one debuff, the newest');
+});
+
+test('statuses: a card status works this turn; an intent status starts next turn and lasts N turns', () => {
+  const [s, uid] = withCard(rules.newBattle(content, 5, { enemy: 'swarm' }), 'tarpit');
+  const played = rules.playCard(content, s, uid);
+  const blocked = { ...rules.planTurn(content, played), botBlockedRps: 1600 };
+  const base = { ...rules.planTurn(content, s), botBlockedRps: 1600 };
+  assert.equal(rules.scoreTurn(content, played, blocked, summary()).enemyDamage, Math.floor(rules.scoreTurn(content, s, base, summary()).enemyDamage * 1.5));
+  const t2 = endTurn(played);
+  assert.equal(t2.statuses![0].turns, 1, 'tarpit: 2 turns, this one counted');
+  assert.equal(endTurn(t2).statuses?.some((x) => x.id === 'tarpit') ?? false, false);
+
+  // Credential Stuffer's bcrypt (2nd intent) leaves the API without CPU credit for the next 2 turns
+  let c = rules.newBattle(content, 5, { enemy: 'cred_stuffer' });
+  c = endTurn(c);
+  assert.equal(rules.currentIntent(content, c).id, 'bcrypt');
+  c = endTurn(c);
+  assert.deepEqual(c.statuses, [{ id: 'cpu_credit', turns: 2, stacks: 1 }]);
+  const slow = (rules.planTurn(content, c).input.scenario as { events: unknown[] }).events as { node: string; action: string; value: number }[];
+  assert.ok(slow.some((e) => e.node === 'api' && e.action === 'latency' && Math.abs(e.value - 1.4) < 1e-9));
+  const [hf, hu] = withCard(c, 'hotfix');
+  assert.ok(((rules.planTurn(content, rules.playCard(content, hf, hu)).input.scenario as { events: unknown[] }).events as { node: string }[]).some((e) => e.node === 'api'), 'Hotfix does not cancel it');
+  c = endTurn(endTurn(c));
+  assert.equal(c.statuses, undefined, 'gone after 2 turns');
+});
+
+test('statuses: instances, cost, bot traffic and Ops follow the mods', () => {
+  const s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const api = (st: BattleState) => rules.nodeOf(rules.planTurn(content, st).input.design, 'api')!.config!;
+  const before = api(s);
+  const t = structuredClone(s);
+  rules.addStatus(content, t, 'noisy_neighbor', 2);
+  rules.addStatus(content, t, 'bill_shock', 2);
+  rules.addStatus(content, t, 'geo_blocked', 2);
+  rules.addStatus(content, t, 'pager_fatigue', 2);
+  assert.equal(api(t).instances, Math.max(1, before.instances! - 1));
+  assert.equal(api(t).costPerHour, Math.round(before.costPerHour! * 1.5 * 1000) / 1000);
+  assert.equal(rules.botRpsNow(content, t), Math.round(rules.botRpsNow(content, s) * 0.7));
+  assert.equal(endTurn(t).ops, content.battle.opsPerTurn - 1);
+});
+
+test('adaptation: heavy filtering adds a stack, two calm turns clear it, and the forecast matches', () => {
+  const s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const plan = { ...rules.planTurn(content, s), botRps: 1000, botBlockedRps: 600 };
+  assert.ok(rules.adaptsNow(content, plan));
+  const t2 = rules.resolveTurn(content, s, plan, summary());
+  assert.deepEqual(t2.statuses, [{ id: 'adapted', turns: 2, stacks: 1 }]);
+  assert.ok(rules.bypassNow(content, t2) >= 0.12 - 1e-9);
+  const sum = summary({ errorRate: 0.05 });
+  const p2 = rules.planTurn(content, t2);
+  assert.deepEqual(rules.scoreTurn(content, t2, p2, sum).damage, rules.resolveTurn(content, t2, p2, sum).reports.at(-1)!.damage);
+  const calm = (st: BattleState) => rules.resolveTurn(content, st, { ...rules.planTurn(content, st), botBlockedRps: 0 }, summary());
+  assert.equal(calm(calm(t2)).statuses, undefined);
 });

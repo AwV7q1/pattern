@@ -3,6 +3,11 @@
   "acts": 3,
   "hp": 80,
   "rewardChoices": 3,
+  "startPick": [
+    "cache",
+    "index",
+    "replica"
+  ],
   "restHeal": 0.5,
   "actHeal": 0.6,
   "map": {
@@ -73,12 +78,13 @@
     "maxHp": 5
   },
   "boss": {
-    "hp": 1.0,
-    "rps": 1.0
+    "hp": 1,
+    "rps": 1
   },
   "actScale": {
     "hp": 0.35,
-    "rps": 0.22
+    "rps": 0.22,
+    "legit": 0.25
   },
   "rarityWeights": {
     "battle": {

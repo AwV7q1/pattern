@@ -32,11 +32,12 @@ export function newRun(content: Content, seed: number): RunState {
     node: null,
     path: [],
     climbed: 0,
-    phase: 'map',
+    // the starting infrastructure is a choice, not a given
+    phase: content.run.startPick?.length ? 'reward' : 'map',
     hp: content.run.hp,
     maxHp: content.run.hp,
     deck: [...content.battle.startingDeck],
-    reward: [],
+    reward: [...(content.run.startPick ?? [])],
     event: null,
     gold: content.run.startGold,
     removals: 0,
@@ -174,7 +175,8 @@ function scaleOf(content: Content, run: RunState, node: MapNode): Scale {
 export function battleSetup(content: Content, run: RunState): BattleSetup {
   const node = currentNode(content, run);
   if (!node || (node.kind !== 'battle' && node.kind !== 'elite' && node.kind !== 'boss')) throw new Error(`node ${run.node} is not a fight`);
-  return { enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics };
+  const legitScale = isWarmup(content, run, node.kind) ? 1 : 1 + (content.run.actScale.legit ?? 0) * (run.act - 1);
+  return { enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
 }
 
 /** Title of the current fight, e.g. "Tinh anh: Bão Retry". */

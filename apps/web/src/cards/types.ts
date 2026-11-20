@@ -42,7 +42,52 @@ export type Effect =
   /** Multiply a node's settings for the whole fight (`latency` scales p50 and p99). */
   | { op: 'tune'; node: NodeRef; mul: TuneMul }
   /** Exhaust every unplayable card (curse) in hand; `draw`: draw one per card removed. */
-  | { op: 'purge'; draw?: boolean };
+  | { op: 'purge'; draw?: boolean }
+  /** Gain a status (`statuses.json`) for `turns` turns, counting this one. */
+  | { op: 'status'; status: string; turns: number; stacks?: number }
+  /** Remove `n` debuffs (all when absent), newest first. */
+  | { op: 'cleanse'; n?: number };
+
+/** What a status changes while it lasts. Multipliers apply once per stack (×v^stacks), additions add once per stack. */
+export interface StatusMods {
+  apiLatency?: number;
+  dbLatency?: number;
+  /** Cost of every API and DB instance. */
+  cost?: number;
+  /** Bot traffic. */
+  botRps?: number;
+  /** Damage dealt to the attacker by filtered traffic. */
+  blockedDamage?: number;
+  apiInstances?: number;
+  dbInstances?: number;
+  /** Extra share of bot traffic filtered (stacks multiplicatively with WAF and rate limit). */
+  botCut?: number;
+  /** Extra share of the filtering bots slip past (stacks multiplicatively). */
+  bypass?: number;
+  /** Ops at the start of each turn. */
+  opsPerTurn?: number;
+}
+
+/** A timed effect on the player's system: buffs come from cards, debuffs from the attacker. */
+export interface StatusDef {
+  id: string;
+  name: string;
+  /** Key in `STATUS_ICON` (cardArt.ts). */
+  icon: string;
+  kind: 'buff' | 'debuff';
+  text: string;
+  /** refresh: gaining it again only extends it. add: stacks pile up (up to `maxStacks`). */
+  stack: 'refresh' | 'add';
+  maxStacks?: number;
+  mods: StatusMods;
+}
+
+/** A status in play. `turns` counts the turns left, this one included. */
+export interface StatusInst {
+  id: string;
+  turns: number;
+  stacks: number;
+}
 
 export interface TuneMul {
   latency?: number;
@@ -127,6 +172,8 @@ export interface Intent {
   summon?: { minion: string; n: number };
   /** weighted enemies: odds of this intent (default 1). */
   weight?: number;
+  /** Statuses put on the player after this turn, for the next `turns` turns. Hotfix does not stop them. */
+  inflict?: { status: string; turns: number; stacks?: number }[];
 }
 
 /** A small bot fighting next to an enemy. It has its own HP and can be targeted; it flees when its master falls. */
@@ -195,6 +242,8 @@ export interface BattleConfig {
   overBudgetDamage: number;
   /** Bot requests filtered per point of damage to the attacker. */
   blockedPerDamage: number;
+  /** Bots adapt: a turn that filters at least `at` of them adds a stack of `status` for `turns` turns. */
+  adapt?: { at: number; status: string; turns: number };
   startingDeck: string[];
   design: Design;
 }
@@ -229,6 +278,7 @@ export interface Content {
   battle: BattleConfig;
   run: RunConfig;
   events: RunEvent[];
+  statuses: StatusDef[];
 }
 
 /** What a fight starts from when it is part of a run (defaults: `battle.json`). */
@@ -240,6 +290,8 @@ export interface BattleSetup {
   /** Enemy HP and traffic multipliers (elites, bosses, higher floors). */
   enemyScale?: Scale;
   relics?: string[];
+  /** Real users' traffic multiplier (higher floors). */
+  legitScale?: number;
 }
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
@@ -314,7 +366,9 @@ export interface RunConfig {
   elite: Scale & { maxHp: number };
   boss: Scale;
   /** Extra enemy HP / traffic per floor climbed (×(1 + k·(act−1))). */
-  actScale: Scale;
+  actScale: Scale & { legit?: number };
+  /** Cards offered before the first fight (the starting infrastructure pick). */
+  startPick?: string[];
 }
 
 export type EventEffect =
@@ -469,6 +523,10 @@ export interface BattleState {
     /** Memory leak built up so far (see `Intent.leak`). */
     leak?: number;
   };
+  /** Timed effects in play (see `StatusDef`). */
+  statuses?: StatusInst[];
+  /** Real users' traffic multiplier for this fight (default 1). */
+  legitMul?: number;
   /** Cache settings (`cacheOpt`) and the turn the cache was placed (0: warm from the start). */
   cache?: { placed?: number; swr?: boolean; normalize?: number };
   /** Minions alive, in the order they came. */

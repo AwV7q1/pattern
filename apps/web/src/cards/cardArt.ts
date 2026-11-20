@@ -3,6 +3,15 @@
 
 import {
   Archive,
+  BellRing,
+  Cpu,
+  DatabaseZap,
+  Dna,
+  Globe,
+  Receipt,
+  Snail,
+  Undo2,
+  Volume2,
   Ban,
   BookOpen,
   Bug,
@@ -69,7 +78,24 @@ const CARD_ICON: Record<string, LucideIcon> = {
   refactor: Recycle,
   postmortem: FileSearch,
   null_route: CircleSlash,
+  rollback: Undo2,
+  geo_block: Globe,
+  tarpit: Snail,
   tech_debt: Bug,
 };
+
+/** One icon per status (`statuses.json`). */
+export const STATUS_ICON: Record<string, LucideIcon> = {
+  adapted: Dna,
+  noisy_neighbor: Volume2,
+  cpu_credit: Cpu,
+  replica_lag: DatabaseZap,
+  bill_shock: Receipt,
+  pager_fatigue: BellRing,
+  geo_blocked: Globe,
+  tarpit: Snail,
+};
+
+export const statusIcon = (id: string): LucideIcon => STATUS_ICON[id] ?? Bug;
 
 export const cardIcon = (def: CardDef): LucideIcon => CARD_ICON[def.id.replace(/\+$/, '')] ?? TYPE_ICON[def.type];

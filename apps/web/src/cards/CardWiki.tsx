@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { ArrowLeft, BookOpen, Bot, Crown, Flame, Gem, HeartPulse, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Users, Zap } from 'lucide-react';
+import { ArrowLeft, BookOpen, Bot, Crown, Timer, Flame, Gem, HeartPulse, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Users, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { CONTENT } from './content';
@@ -9,7 +9,7 @@ import { BotAvatar, MinionAvatar, type BotRank, type BotStance } from './BotAvat
 import { botHit, botJab, botStrike, botSummon, minionDieClass, minionHit, minionStrike, type BotTier } from './botMotion';
 import { INTENT_ICON } from './CardBattle';
 import { CardFace, RARITY_STYLE, TYPE_STYLE } from './Hand';
-import { TYPE_ICON } from './cardArt';
+import { TYPE_ICON, statusIcon } from './cardArt';
 import { RelicTile } from './Relics';
 import { cardDef } from './rules';
 
@@ -88,13 +88,14 @@ const minionById = (id: string) => CONTENT.minions.find((m) => m.id === id);
 
 // ---------------------------------------------------------------- page
 
-type Tab = 'bots' | 'minions' | 'cards' | 'relics';
+type Tab = 'bots' | 'minions' | 'cards' | 'relics' | 'effects';
 
 const TABS: { id: Tab; label: string; icon: typeof Bot; count: number }[] = [
   { id: 'bots', label: 'Bot', icon: Bot, count: CONTENT.enemies.length },
   { id: 'minions', label: 'Lính', icon: Users, count: CONTENT.minions.length },
   { id: 'cards', label: 'Thẻ bài', icon: Layers, count: CONTENT.cards.length },
   { id: 'relics', label: 'Bảo vật', icon: Gem, count: CONTENT.relics.length },
+  { id: 'effects', label: 'Hiệu ứng', icon: Timer, count: CONTENT.statuses.length },
 ];
 
 /** Read-only encyclopedia of the card game: enemies, minions (with their animations), cards and relics. */
@@ -138,6 +139,7 @@ export function CardWiki() {
         {tab === 'minions' && <MinionsTab id={id && minionById(id) ? id : CONTENT.minions[0].id} onPick={(x) => go('minions', x)} onEnemy={(x) => go('bots', x)} />}
         {tab === 'cards' && <CardsTab onCard={(x) => go('cards', x)} selected={id} />}
         {tab === 'relics' && <RelicsTab />}
+        {tab === 'effects' && <EffectsTab onEnemy={(x) => go('bots', x)} onCard={(x) => go('cards', x)} />}
       </div>
     </div>
   );
@@ -241,6 +243,7 @@ const extras = (it: Partial<Intent>): string[] => {
   if (it.drainOps) out.push(`-${it.drainOps} Ops lượt sau`);
   if (it.wafStrip) out.push(`WAF -${pct(it.wafStrip)}`);
   if (it.addCards) out.push(`+${it.addCards.n} ${cardDef(CONTENT, it.addCards.card).name}`);
+  for (const x of it.inflict ?? []) out.push(`${CONTENT.statuses.find((d) => d.id === x.status)?.name ?? x.status} ${x.turns} lượt`);
   if (it.weight !== undefined) out.push(`tỉ trọng ${it.weight}`);
   return out;
 };
@@ -672,6 +675,67 @@ function RelicsTab() {
         {relics.map((r) => (
           <RelicTile key={r.id} relic={r} />
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- effects (statuses)
+
+/** Who gives each status: enemy intents (and their variants) and cards. */
+function sourcesOf(id: string) {
+  const enemies = CONTENT.enemies.filter((e) =>
+    [...e.intents, ...(e.phase2?.intents ?? [])].some((i) => i.inflict?.some((x) => x.status === id) || i.variants?.some((v) => v.inflict?.some((x) => x.status === id))),
+  );
+  const cards = CONTENT.cards.filter((c) => c.effects.some((e) => e.op === 'status' && e.status === id));
+  return { enemies, cards };
+}
+
+function EffectsTab({ onEnemy, onCard }: { onEnemy: (id: string) => void; onCard: (id: string) => void }) {
+  const adapt = CONTENT.battle.adapt;
+  const list = [...CONTENT.statuses].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'debuff' ? -1 : 1));
+  return (
+    <div className="h-full overflow-y-auto px-4 py-6 sm:px-6">
+      <div className="mx-auto flex max-w-4xl flex-col gap-4">
+        <p className="text-sm text-muted-foreground">
+          Hiệu ứng kéo dài vài lượt. Lá bài cho buff có hiệu lực ngay lượt đánh; đòn của địch gây debuff từ lượt sau. Hotfix chỉ huỷ sự cố trong lượt, không gỡ được debuff:
+          cần Rollback (hoặc Hotfix nâng cấp, gỡ 1).
+          {adapt && ` Bot thích nghi là luật chung: lượt nào bạn chặn từ ${pct(adapt.at)} bot trở lên thì chúng cộng 1 tầng.`}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {list.map((d) => {
+            const Icon = statusIcon(d.id);
+            const { enemies, cards } = sourcesOf(d.id);
+            const buff = d.kind === 'buff';
+            return (
+              <div key={d.id} className={cn('rounded-xl border p-3 text-sm', buff ? 'border-emerald-400/40 bg-emerald-500/5' : 'border-rose-400/40 bg-rose-500/5')}>
+                <div className="mb-1 flex items-center gap-2 font-semibold">
+                  <Icon className={cn('size-4', buff ? 'text-emerald-300' : 'text-rose-300')} /> {d.name}
+                  <span className="ml-auto text-[11px] font-normal text-muted-foreground">
+                    {buff ? 'buff' : 'debuff'}
+                    {d.stack === 'add' ? ` · cộng dồn tối đa ${d.maxStacks ?? '∞'} tầng` : ''}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">{d.text}</p>
+                {(enemies.length > 0 || cards.length > 0 || d.id === adapt?.status) && (
+                  <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                    {d.id === adapt?.status && <span className="rounded-full border px-2 py-0.5 text-muted-foreground">luật chung của trận</span>}
+                    {enemies.map((e) => (
+                      <button key={e.id} type="button" onClick={() => onEnemy(e.id)} className="rounded-full border border-rose-400/40 px-2 py-0.5 text-rose-200 hover:bg-rose-500/15">
+                        {e.name}
+                      </button>
+                    ))}
+                    {cards.map((c) => (
+                      <button key={c.id} type="button" onClick={() => onCard(c.id)} className="rounded-full border border-emerald-400/40 px-2 py-0.5 text-emerald-200 hover:bg-emerald-500/15">
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

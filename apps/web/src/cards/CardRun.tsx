@@ -185,17 +185,18 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
   const [chosen, setChosen] = useState<string | null>(null);
   const last = run.history.at(-1);
   const fromEvent = last?.kind === 'event';
+  const start = !last;
   const enemy = CONTENT.enemies.find((e) => e.id === last?.enemy);
   return (
     <div className="mx-auto flex max-w-4xl flex-col items-center gap-6">
       <div className="text-center">
         <div className="mb-1 flex items-center justify-center gap-2 text-2xl font-bold">
-          <Trophy className="size-6 text-amber-300" /> {fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
+          <Trophy className="size-6 text-amber-300" /> {start ? 'Chọn hạ tầng ban đầu' : fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
         </div>
         <p className="text-sm text-muted-foreground">
           {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget${last.gold ? `, +${last.gold} vàng` : ''}. ` : ''}
           {last?.kind === 'elite' ? `+${CONTENT.run.elite.maxHp} Error Budget tối đa. ` : ''}
-          Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.
+          {start ? 'Bộ bài khởi đầu chưa có hạ tầng tối ưu: chọn 1 hướng để bắt đầu. Không có đủ cả ba, nên trục còn lại phải tìm dọc đường.' : 'Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.'}
         </p>
       </div>
       {last?.relic && !fromEvent && (() => {

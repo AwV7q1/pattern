@@ -294,11 +294,15 @@
           "op": "hotfix"
         },
         {
+          "op": "cleanse",
+          "n": 1
+        },
+        {
           "op": "draw",
-          "n": 2
+          "n": 1
         }
       ],
-      "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Rút 2 lá."
+      "text": "Huỷ hiệu ứng sự cố của địch lượt này (DB chậm, retry flood). Gỡ 1 debuff. Rút 1 lá."
     }
   },
   {
@@ -780,6 +784,88 @@
         }
       ],
       "text": "Xoá rò rỉ bộ nhớ đã tích tụ. Lượt này API thiếu 1 instance. +4 Headroom lượt này."
+    }
+  },
+  {
+    "id": "rollback",
+    "name": "Rollback",
+    "type": "action",
+    "cost": 1,
+    "rarity": "uncommon",
+    "text": "Gỡ mọi debuff đang có (Bot thích nghi, Hết CPU credit, Hoá đơn tăng vọt...). Rút 1 lá.",
+    "lesson": "Khi không rõ cái gì hỏng, quay về phiên bản tốt gần nhất rồi điều tra sau: khôi phục trước, tìm nguyên nhân sau.",
+    "effects": [
+      {
+        "op": "cleanse"
+      },
+      {
+        "op": "draw",
+        "n": 1
+      }
+    ],
+    "upgrade": {
+      "cost": 0,
+      "text": "Gỡ mọi debuff đang có. Rút 1 lá."
+    }
+  },
+  {
+    "id": "geo_block",
+    "name": "Geo-block",
+    "type": "attack",
+    "cost": 1,
+    "rarity": "common",
+    "text": "Gây 3 sát thương. Chặn theo vùng 2 lượt: lưu lượng bot ×0.7.",
+    "lesson": "Chặn cả dải IP hay quốc gia bot đang dùng: rẻ và nhanh, nhưng chỉ tạm thời vì bot sẽ chuyển sang proxy ở nơi khác.",
+    "effects": [
+      {
+        "op": "attack",
+        "dmg": 3
+      },
+      {
+        "op": "status",
+        "status": "geo_blocked",
+        "turns": 2
+      }
+    ],
+    "upgrade": {
+      "text": "Gây 3 sát thương. Chặn theo vùng 3 lượt: lưu lượng bot ×0.7.",
+      "effects": [
+        {
+          "op": "attack",
+          "dmg": 3
+        },
+        {
+          "op": "status",
+          "status": "geo_blocked",
+          "turns": 3
+        }
+      ]
+    }
+  },
+  {
+    "id": "tarpit",
+    "name": "Tarpit",
+    "type": "policy",
+    "cost": 1,
+    "rarity": "uncommon",
+    "text": "Tarpit 2 lượt: request bot bị chặn gây sát thương ×1.5.",
+    "lesson": "Thay vì từ chối ngay, giữ kết nối của bot thật lâu: mỗi kết nối bị giữ là một con bot không đi tấn công chỗ khác được.",
+    "effects": [
+      {
+        "op": "status",
+        "status": "tarpit",
+        "turns": 2
+      }
+    ],
+    "upgrade": {
+      "text": "Tarpit 3 lượt: request bot bị chặn gây sát thương ×1.5.",
+      "effects": [
+        {
+          "op": "status",
+          "status": "tarpit",
+          "turns": 3
+        }
+      ]
     }
   },
   {

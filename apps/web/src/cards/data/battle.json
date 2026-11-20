@@ -12,6 +12,11 @@
   "latencyDamage": 3,
   "overBudgetDamage": 10,
   "blockedPerDamage": 800,
+  "adapt": {
+    "at": 0.5,
+    "status": "adapted",
+    "turns": 2
+  },
   "startingDeck": [
     "patch",
     "patch",
@@ -23,9 +28,7 @@
     "buffer",
     "scale_api",
     "rate_limit",
-    "cache",
-    "timeout",
-    "index"
+    "timeout"
   ],
   "design": {
     "nodes": [

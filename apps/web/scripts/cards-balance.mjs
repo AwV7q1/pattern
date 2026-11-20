@@ -21,7 +21,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json') };
 
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
@@ -44,25 +44,32 @@ const policies = {
 const SMART = {
   // A reasonable human: infra first, then defend on big intents, otherwise attack.
   greedy: {
-    big: ['coffee', 'refactor', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
-    calm: ['coffee', 'refactor', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'honeypot', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
-    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart'],
+    big: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'geo_block', 'tarpit', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
+    calm: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'tarpit', 'honeypot', 'geo_block', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
+    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart', 'rollback', 'geo_block', 'tarpit'],
   },
   // The rut the research doc measured: the same seven cards in the same order, every fight.
   rut: {
     big: ['cache', 'scale_api', 'index', 'timeout', 'rate_limit', 'patch', 'buffer'],
     want: [],
-    deck: [...content.battle.startingDeck, 'rate_limit', 'scale_api'],
+    // the old starting deck (it held cache and index) plus one more rate limit and scale: the line measured in phase 1
+    deck: ['patch', 'patch', 'patch', 'patch', 'buffer', 'buffer', 'buffer', 'buffer', 'scale_api', 'rate_limit', 'cache', 'timeout', 'index', 'rate_limit', 'scale_api'],
+  },
+  // The same line from today's starting deck: take Redis at the start, then never another card.
+  thin: {
+    big: ['cache', 'scale_api', 'index', 'timeout', 'rate_limit', 'patch', 'buffer'],
+    want: [],
+    deck: [...content.battle.startingDeck, 'cache'],
   },
   // Single axis: make the system fast (cache, DB, scale) and nothing else.
   cacheOnly: {
-    big: ['coffee', 'refactor', 'cache', 'cache_key', 'swr', 'index', 'scale_api', 'replica', 'vertical', 'bigger_queue', 'timeout', 'pool', 'stale', 'buffer', 'postmortem', 'runbook', 'patch', 'block_ip', 'honeypot'],
-    want: ['cache', 'index', 'replica', 'vertical', 'scale_api', 'swr', 'cache_key', 'pool', 'timeout', 'runbook', 'refactor'],
+    big: ['coffee', 'refactor', 'rollback', 'cache', 'cache_key', 'swr', 'index', 'scale_api', 'replica', 'vertical', 'bigger_queue', 'timeout', 'pool', 'stale', 'buffer', 'postmortem', 'runbook', 'patch', 'block_ip', 'honeypot'],
+    want: ['cache', 'index', 'replica', 'vertical', 'scale_api', 'swr', 'cache_key', 'pool', 'timeout', 'runbook', 'refactor', 'rollback'],
   },
   // Single axis: filter bots (WAF, rate limit, captcha) and hit the botnet.
   filterOnly: {
-    big: ['coffee', 'refactor', 'waf', 'rate_limit', 'captcha', 'null_route', 'honeypot', 'block_ip', 'patch', 'stale', 'buffer', 'postmortem', 'runbook'],
-    want: ['waf', 'captcha', 'rate_limit', 'null_route', 'honeypot', 'block_ip', 'runbook', 'refactor'],
+    big: ['coffee', 'refactor', 'rollback', 'tarpit', 'waf', 'rate_limit', 'captcha', 'null_route', 'geo_block', 'honeypot', 'block_ip', 'patch', 'stale', 'buffer', 'postmortem', 'runbook'],
+    want: ['waf', 'captcha', 'rate_limit', 'null_route', 'geo_block', 'tarpit', 'honeypot', 'block_ip', 'runbook', 'refactor', 'rollback'],
   },
 };
 
@@ -73,6 +80,11 @@ function useless(id, s, intent) {
   if (id === 'swr') return !!s.cache?.swr;
   if (id === 'restart') return (s.enemy.leak ?? 0) < 0.6;
   if (id === 'refactor') return !s.hand.some((h) => h.id === 'tech_debt');
+  if (id === 'rollback') {
+    const bad = (s.statuses ?? []).filter((x) => rules.statusDef(content, x.id).kind === 'debuff');
+    return !bad.length || (bad.length === 1 && bad[0].id === 'adapted' && bad[0].stacks < 2);
+  }
+  if (id === 'tarpit' || id === 'geo_block') return (s.statuses ?? []).some((x) => x.id === (id === 'tarpit' ? 'tarpit' : 'geo_blocked') && x.turns > 1) && id === 'tarpit';
   if (id === 'index') return rules.nodeOf(s.design, 'db').config.latencyP50Ms < 5;
   return false;
 }
@@ -83,7 +95,7 @@ for (const [name, p] of Object.entries(SMART)) {
     const big = intent.botRps >= 1000 || intent.chaos || intent.clientRetries;
     for (const id of big || !p.calm ? p.big : p.calm) {
       const c = s.hand.find((h) => rules.baseId(h.id) === id && rules.canPlay(content, s, h.uid));
-      if (c && !(name !== 'rut' && useless(id, s, intent))) return c.uid;
+      if (c && !((name === 'rut' || name === 'thin') ? false : useless(id, s, intent))) return c.uid;
     }
     return null;
   };

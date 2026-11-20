@@ -1,0 +1,91 @@
+[
+  {
+    "id": "adapted",
+    "name": "Bot thích nghi",
+    "icon": "adapted",
+    "kind": "debuff",
+    "text": "Bot đổi chữ ký, đổi nhịp gửi để lách bộ lọc đã chặn chúng: mỗi tầng lách thêm 15% bộ lọc. Lượt nào bạn chặn từ một nửa số bot trở lên thì cộng 1 tầng (tối đa 4); ngừng lọc mạnh 2 lượt thì hết.",
+    "stack": "add",
+    "maxStacks": 4,
+    "mods": {
+      "bypass": 0.15
+    }
+  },
+  {
+    "id": "noisy_neighbor",
+    "name": "Hàng xóm ồn ào",
+    "icon": "noisy_neighbor",
+    "kind": "debuff",
+    "text": "Bot chiếm hết CPU của máy chủ dùng chung: API chạy thiếu 1 instance.",
+    "stack": "refresh",
+    "mods": {
+      "apiInstances": -1
+    }
+  },
+  {
+    "id": "cpu_credit",
+    "name": "Hết CPU credit",
+    "icon": "cpu_credit",
+    "kind": "debuff",
+    "text": "Instance loại burstable đã tiêu hết credit, bị hạ xuống tốc độ nền: API chậm ×1.4.",
+    "stack": "refresh",
+    "mods": {
+      "apiLatency": 1.4
+    }
+  },
+  {
+    "id": "replica_lag",
+    "name": "DB nghẽn kéo dài",
+    "icon": "replica_lag",
+    "kind": "debuff",
+    "text": "Bảng bị khoá, vacuum chạy dở, replica tụt lại: DB chậm ×1.5.",
+    "stack": "refresh",
+    "mods": {
+      "dbLatency": 1.5
+    }
+  },
+  {
+    "id": "bill_shock",
+    "name": "Hoá đơn tăng vọt",
+    "icon": "bill_shock",
+    "kind": "debuff",
+    "text": "Egress, log và request đắt tiền dồn lại: mọi instance API và DB đắt ×1.5.",
+    "stack": "refresh",
+    "mods": {
+      "cost": 1.5
+    }
+  },
+  {
+    "id": "pager_fatigue",
+    "name": "Kiệt sức on-call",
+    "icon": "pager_fatigue",
+    "kind": "debuff",
+    "text": "Pager kêu suốt đêm, đội trực mệt rã rời: mỗi lượt bớt 1 Ops (còn tối thiểu 1).",
+    "stack": "refresh",
+    "mods": {
+      "opsPerTurn": -1
+    }
+  },
+  {
+    "id": "geo_blocked",
+    "name": "Chặn theo vùng",
+    "icon": "geo_blocked",
+    "kind": "buff",
+    "text": "Chặn các dải IP và quốc gia bot đang dùng: lưu lượng bot ×0.7. Lưu lượng bị chặn ở đây không gây sát thương cho địch.",
+    "stack": "refresh",
+    "mods": {
+      "botRps": 0.7
+    }
+  },
+  {
+    "id": "tarpit",
+    "name": "Tarpit",
+    "icon": "tarpit",
+    "kind": "buff",
+    "text": "Request bot bị giữ lại trả lời thật chậm, tốn tài nguyên của chính botnet: request bot bị chặn gây sát thương ×1.5.",
+    "stack": "refresh",
+    "mods": {
+      "blockedDamage": 1.5
+    }
+  }
+]

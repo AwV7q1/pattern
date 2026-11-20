@@ -368,7 +368,7 @@
         "id": "heavy",
         "label": "Query nặng + nợ",
         "icon": "debt",
-        "text": "Bot ~1000 rps, DB chậm ×3, phá cache 40%. Sau lượt này nhét 1 Tech Debt vào bộ bài.",
+        "text": "Bot ~1000 rps, DB chậm ×3, phá cache 40%. Sau lượt này nhét 1 Tech Debt vào bộ bài. Gây DB nghẽn kéo dài 2 lượt.",
         "botRps": 1000,
         "chaos": {
           "node": "db",
@@ -379,7 +379,13 @@
           "card": "tech_debt",
           "n": 1
         },
-        "cacheBust": 0.4
+        "cacheBust": 0.4,
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "rush",
@@ -564,13 +570,19 @@
         "id": "midnight",
         "label": "00:00",
         "icon": "spike",
-        "text": "Bot ~3800 rps cùng lúc, DB chậm ×2: mọi job chạy một lượt.",
+        "text": "Bot ~3800 rps cùng lúc, DB chậm ×2: mọi job chạy một lượt. Gây Kiệt sức on-call 2 lượt.",
         "botRps": 3800,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 2
-        }
+        },
+        "inflict": [
+          {
+            "status": "pager_fatigue",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "backfill",
@@ -671,13 +683,19 @@
         "id": "bcrypt",
         "label": "Băm mật khẩu",
         "icon": "slow",
-        "text": "Bot ~1100 rps vào /login: API chậm ×2 vì bcrypt.",
+        "text": "Bot ~1100 rps vào /login: API chậm ×2 vì bcrypt. Gây Hết CPU credit 2 lượt.",
         "botRps": 1100,
         "chaos": {
           "node": "api",
           "action": "latency",
           "value": 2
-        }
+        },
+        "inflict": [
+          {
+            "status": "cpu_credit",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "stuff",
@@ -759,13 +777,18 @@
         "id": "starve",
         "label": "Cạn connection",
         "icon": "debt",
-        "text": "Bot ~900 rps chiếm gần hết kết nối: API chỉ còn 50% slot, lượt sau mất 1 Ops.",
+        "text": "Bot ~900 rps chiếm gần hết kết nối: API chỉ còn 50% slot. Gây Kiệt sức on-call 2 lượt.",
         "botRps": 900,
-        "drainOps": 1,
         "squeeze": {
           "node": "api",
           "concurrency": 0.5
-        }
+        },
+        "inflict": [
+          {
+            "status": "pager_fatigue",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "idle",
@@ -802,13 +825,19 @@
         "id": "cart_hold",
         "label": "Giữ giỏ hàng",
         "icon": "slow",
-        "text": "Bot ~1400 rps giữ hàng trong giỏ: DB chậm ×2 vì khoá tồn kho.",
+        "text": "Bot ~1400 rps giữ hàng trong giỏ: DB chậm ×2 vì khoá tồn kho. Gây DB nghẽn kéo dài 2 lượt.",
         "botRps": 1400,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 2
-        }
+        },
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "checkout",
@@ -913,14 +942,20 @@
         "id": "graphql",
         "label": "Query lồng nhau",
         "icon": "slow",
-        "text": "Bot ~1100 rps gửi query lồng 10 tầng: DB chậm ×3, phá cache 25%.",
+        "text": "Bot ~1100 rps gửi query lồng 10 tầng: DB chậm ×3, phá cache 25%. Gây DB nghẽn kéo dài 2 lượt.",
         "botRps": 1100,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
         },
-        "cacheBust": 0.25
+        "cacheBust": 0.25,
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "paginate",
@@ -981,7 +1016,13 @@
             "icon": "debt",
             "botRps": 1600,
             "costSpike": 3,
-            "text": "Gọi endpoint đắt nhất: bot ~1600 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách."
+            "text": "Gọi endpoint đắt nhất: bot ~1600 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách. Gây Hoá đơn tăng vọt 2 lượt.",
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ]
           }
         ]
       },
@@ -1004,13 +1045,19 @@
         "id": "syn",
         "label": "SYN flood",
         "icon": "slow",
-        "text": "Bot ~1600 rps nửa kết nối: API chậm ×2.",
+        "text": "Bot ~1600 rps nửa kết nối: API chậm ×2. Gây Hàng xóm ồn ào 2 lượt.",
         "botRps": 1600,
         "chaos": {
           "node": "api",
           "action": "latency",
           "value": 2
-        }
+        },
+        "inflict": [
+          {
+            "status": "noisy_neighbor",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "recruit",
@@ -1041,9 +1088,15 @@
         "id": "amplify",
         "label": "Khuếch đại",
         "icon": "retry",
-        "text": "Bot ~1800 rps, mọi client retry 4 lần ngay khi lỗi.",
+        "text": "Bot ~1800 rps, mọi client retry 4 lần ngay khi lỗi. Gây Hoá đơn tăng vọt 2 lượt.",
         "botRps": 1800,
-        "clientRetries": 4
+        "clientRetries": 4,
+        "inflict": [
+          {
+            "status": "bill_shock",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "reflect",
@@ -1101,14 +1154,20 @@
         "id": "exploit",
         "label": "Khai thác",
         "icon": "slow",
-        "text": "Bot ~1300 rps, DB lỗi 12%, client retry 1 lần.",
+        "text": "Bot ~1300 rps, DB lỗi 12%, client retry 1 lần. Gây Hàng xóm ồn ào 2 lượt.",
         "botRps": 1300,
         "chaos": {
           "node": "db",
           "action": "errors",
           "value": 0.12
         },
-        "clientRetries": 1
+        "clientRetries": 1,
+        "inflict": [
+          {
+            "status": "noisy_neighbor",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "burst",
@@ -1155,21 +1214,32 @@
         "id": "encrypt",
         "label": "Mã hoá",
         "icon": "slow",
-        "text": "Bot ~1200 rps, DB chậm ×3 vì ổ đĩa bị mã hoá.",
+        "text": "Bot ~1200 rps, DB chậm ×3 vì ổ đĩa bị mã hoá. Gây DB nghẽn kéo dài 3 lượt.",
         "botRps": 1200,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
-        }
+        },
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 3
+          }
+        ]
       },
       {
         "id": "extort",
         "label": "Đòi tiền chuộc",
         "icon": "debt",
-        "text": "Bot ~1500 rps. Họp khẩn: lượt sau mất 1 Ops.",
+        "text": "Bot ~1500 rps. Họp khẩn liên tục. Gây Kiệt sức on-call 2 lượt.",
         "botRps": 1500,
-        "drainOps": 1
+        "inflict": [
+          {
+            "status": "pager_fatigue",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "ddos",
@@ -1231,14 +1301,19 @@
         "id": "backdoor",
         "label": "Cửa hậu",
         "icon": "debt",
-        "text": "Bot ~1800 rps. Nhét 1 Tech Debt, lượt sau mất 1 Ops.",
+        "text": "Bot ~1800 rps. Nhét 1 Tech Debt. Gây Kiệt sức on-call 3 lượt.",
         "botRps": 1800,
         "addCards": {
           "card": "tech_debt",
           "n": 1
         },
-        "drainOps": 1,
-        "weight": 1
+        "weight": 1,
+        "inflict": [
+          {
+            "status": "pager_fatigue",
+            "turns": 3
+          }
+        ]
       },
       {
         "id": "persist",
@@ -1293,13 +1368,19 @@
         "id": "venom",
         "label": "Nọc độc",
         "icon": "slow",
-        "text": "Bot ~1600 rps, DB chậm ×3.",
+        "text": "Bot ~1600 rps, DB chậm ×3. Gây DB nghẽn kéo dài 2 lượt.",
         "botRps": 1600,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
-        }
+        },
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "regrow",
@@ -1345,14 +1426,20 @@
         "id": "slow_db",
         "label": "DB nghẹt",
         "icon": "slow",
-        "text": "Bot ~1000 rps, DB chậm ×3.",
+        "text": "Bot ~1000 rps, DB chậm ×3. Gây DB nghẽn kéo dài 2 lượt.",
         "botRps": 1000,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 3
         },
-        "weight": 2
+        "weight": 2,
+        "inflict": [
+          {
+            "status": "replica_lag",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "spike",
@@ -1448,14 +1535,20 @@
         "id": "flash_sale",
         "label": "Flash sale",
         "icon": "slow",
-        "text": "Bot ~2000 rps, DB chậm ×2 vì khoá tồn kho.",
+        "text": "Bot ~2000 rps, DB chậm ×2 vì khoá tồn kho. Gây Hoá đơn tăng vọt 2 lượt.",
         "botRps": 2000,
         "chaos": {
           "node": "db",
           "action": "latency",
           "value": 2
         },
-        "weight": 2
+        "weight": 2,
+        "inflict": [
+          {
+            "status": "bill_shock",
+            "turns": 2
+          }
+        ]
       },
       {
         "id": "cart_retry",
@@ -1550,7 +1643,13 @@
             "icon": "debt",
             "botRps": 1400,
             "costSpike": 3,
-            "text": "Gọi endpoint đắt nhất: bot ~1400 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách."
+            "text": "Gọi endpoint đắt nhất: bot ~1400 rps, mỗi instance API tốn ×3 lượt này. Scale càng nhiều càng cháy ngân sách. Gây Hoá đơn tăng vọt 2 lượt.",
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ]
           }
         ]
       },

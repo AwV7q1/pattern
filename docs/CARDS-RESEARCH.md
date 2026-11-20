@@ -395,3 +395,36 @@ Theo thứ tự tác động dự kiến lên `rut`:
 1. **B3/B4, chi phí theo trận**: mỗi instance hạ tầng tốn ngân sách cả trận, hoặc có upkeep Ops; thêm lá Decommission. Scale vĩnh viễn sẽ không còn miễn phí.
 2. **E3, giảm lợi nhuận của lọc**: `blockedPerDamage` tăng sau mỗi lượt lọc trên 50% liên tiếp.
 3. **Mở rộng Denial of Wallet**: đưa xuống tầng 1–2 với ngưỡng theo tổng `$/h`, thay vì chỉ theo số instance.
+
+## 9. Giai đoạn 2a: hiệu ứng theo lượt, bộ khởi đầu, tải theo tầng
+
+### Đã làm
+
+- **Hiệu ứng theo lượt** (`statuses.json`, `statusMods`):
+  - 5 debuff do địch gây (15 ý định), mỗi cái kéo dài 2–3 lượt. Hotfix không gỡ được.
+  - 2 buff từ lá mới: Geo-block, Tarpit.
+  - Lá **Rollback** gỡ mọi debuff. Hotfix nâng cấp gỡ 1.
+- **Bot thích nghi**: lượt nào chặn từ 50% bot trở lên thì cộng 1 tầng, mỗi tầng lách thêm 15% bộ lọc, tối đa 4 tầng. Ngừng lọc mạnh 2 lượt thì hết.
+- **Bộ khởi đầu** bỏ Redis và Index. Đầu run chọn 1 trong 3: Redis, Index, Replica.
+- **Tải người dùng thật theo tầng**: +25% mỗi tầng, nên tầng 3 là 450 rps. Ngân sách giữ nguyên.
+- **Chiến thuật đo mới** `thin`: bộ khởi đầu hiện tại cộng Redis, không nhận thêm lá nào. Đây là lối mòn mà người chơi thật có thể đi. `rut` vẫn giữ bộ bài cũ (có sẵn Redis và Index, thêm 2 Scale API và 2 Rate limit) làm mốc khó nhất.
+
+### Đo từng bước (`--run`, vượt cả tháp)
+
+| Chiến thuật | Trước (GĐ1) | + status | + bộ khởi đầu | + tải ×0.5/tầng | Chốt: tải ×0.25, thích nghi 15%×4 |
+|---|---|---|---|---|---|
+| random | 0% | 0% | 0% | 0% | 0% |
+| greedy | 20% | 10% | 10% | 0% | 0% (T1 40%, T2 10%) |
+| rut (bộ cũ) | 100% | 95% | — | 80% | 95% |
+| thin (bộ mới) | — | — | — | — | 25% (T1 78%, T2 57%) |
+| cacheOnly | 5% | 5% | 5% | 0% | 0% |
+| filterOnly | 30% | 15% | 35% | 0% | 8% (T1 93%, T2 43%) |
+
+Hai cột đầu chạy 20 run, các cột sau chạy 40 run. Sai số khoảng ±10 điểm.
+
+### Nhận xét
+
+- **Bộ khởi đầu làm `filterOnly` mạnh lên**: bỏ Redis và Index thì bộ bài của nó bớt lá chết. Lọc bot là trục áp đảo thật sự, và luật thích nghi cần mạnh hơn mức ban đầu (12% × 3 tầng) mới kìm được.
+- **`rut` vẫn thắng 95%**. Bộ bài này không còn có sẵn từ đầu, nhưng vẫn ghép được dọc đường. Hệ thống của nó (Redis, Index, 4 instance API, Timeout) đủ khoẻ cho mọi địch, và các debuff 2–3 lượt không đủ để đánh sập. Thời lượng chỉ gây áp lực; muốn hết lối mòn thì địch phải phạt chính hạ tầng đã xây (mặt trái từng module, đợt 2c) và việc xếp chồng phải có giới hạn (slot, đợt 2b).
+- **`greedy` tụt xuống 0%**, thấp hơn `thin` (25%). Bot `greedy` nhận gần như mọi lá trong danh sách muốn, nên bộ bài bị loãng; điểm chết là trùm tầng 1 (Kẻ Đầu Độc Cache, thắng 48%). Đây một phần là hạn chế của bot đo, nhưng cũng cho thấy trùm tầng 1 đang là bức tường. Sẽ chỉnh lại sau đợt 2c.
+- Trận thường vẫn khoảng 97–99% với mọi chiến thuật, trừ vài địch tầng 3 (Sâu Zero-day 33% với `greedy`).

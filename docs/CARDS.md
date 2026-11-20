@@ -47,11 +47,20 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
 - Slowloris giữ slot API (`squeeze`), nên cache và index không giúp gì; cần thêm instance, Burst hoặc Hotfix.
 - Rò Rỉ Bộ Nhớ tích tụ qua các lượt (`leak`): API chậm dần cho tới khi pod tự restart hoặc bạn đánh **Rolling restart** (lượt đó thiếu 1 instance). Hotfix không chữa được.
 - Khuếch Đại DNS làm nghẽn đường truyền bằng phản hồi lớn (`bandwidth`); scale không giúp, chỉ lọc bot mới giảm được tải.
+- **Hiệu ứng theo lượt** (status, `data/statuses.json`). Mỗi status có `turns` (số lượt còn lại), `stack: refresh | add`, và `mods`. `statusMods(content, state)` gộp mọi status đang có; đây là chỗ duy nhất luật chơi đọc status, nên ô Dự kiến vẫn đúng.
+  - Lá bài cho buff (`op: status`) có hiệu lực ngay lượt đánh, và lượt đó tính là 1.
+  - Ý định địch gây debuff (`inflict`) có hiệu lực từ lượt sau, đủ N lượt.
+  - Hotfix chỉ huỷ sự cố trong lượt, không gỡ debuff. **Rollback** (`op: cleanse`) gỡ mọi debuff; Hotfix nâng cấp gỡ 1.
+  - Debuff: Hàng xóm ồn ào (API −1 instance), Hết CPU credit (API chậm ×1.4), DB nghẽn kéo dài (DB chậm ×1.5), Hoá đơn tăng vọt (chi phí ×1.5), Kiệt sức on-call (−1 Ops mỗi lượt).
+  - Buff: Chặn theo vùng (lá Geo-block, bot ×0.7), Tarpit (request bot bị chặn gây sát thương ×1.5).
+- **Bot thích nghi** (`battle.adapt`): lượt nào chặn từ `at` bot trở lên thì cộng 1 tầng `adapted` (lách thêm bộ lọc mỗi tầng, tối đa `maxStacks`). Ngừng lọc mạnh `turns` lượt thì hết. Luật này để lọc bot không còn vừa là phòng thủ vừa là sát thương miễn phí mãi.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.
 - Retry flood khuếch đại lỗi.
 
 ## Tháp: xây bộ bài
+
+Bộ khởi đầu không có hạ tầng tối ưu (Redis, Index). Trước trận đầu, người chơi chọn 1 trong `run.startPick` (Redis, Index, Replica), nên có một trục hạ tầng nhưng phải chọn trục nào. Người dùng thật tăng theo tầng (`run.actScale.legit`: tầng 2 ×1.5, tầng 3 ×2; trận khởi động giữ ×1), ngân sách giữ nguyên: hạ tầng đủ ở tầng 1 sẽ thiếu ở tầng 3.
 
 | Cơ chế | Chi tiết |
 |---|---|

@@ -65,10 +65,12 @@ import {
   resolveTurn,
   scoreTurn,
   setTarget,
+  statusDef,
   targetOf,
 } from './rules';
 import type { BattleSetup, BattleState, CardDef, Intent, TurnPlan, TurnReport, TurnScore } from './types';
 import { CONTENT } from './content';
+import { statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
@@ -293,6 +295,12 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           break;
         case 'hotfix':
           hits.push({ el: nodes.api, label: 'hotfix' }, { el: nodes.db });
+          break;
+        case 'status':
+          hits.push({ el: infraRef.current, label: `${statusDef(CONTENT, e.status).name} ${e.turns} lượt` });
+          break;
+        case 'cleanse':
+          hits.push({ el: infraRef.current, label: e.n ? `gỡ ${e.n} debuff` : 'gỡ mọi debuff' });
           break;
         case 'draw':
           hits.push({ el: deckRef.current, label: `+${e.n} lá` });
@@ -682,6 +690,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                   pop={flash?.player ?? 0}
                   barClass="from-rose-600 to-rose-400"
                 />
+                <StatusRow state={state} />
             </div>
           </div>
 
@@ -1084,7 +1093,37 @@ function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
   if (intent.drainOps) out.push({ icon: Unplug, text: `lượt sau −${intent.drainOps} Ops`, tone: 'warn', lasting: true });
   if (intent.summon) out.push({ icon: UserPlus, text: `gọi ${intent.summon.n} ${minionDef(CONTENT, intent.summon.minion).name}`, tone: 'warn', lasting: true });
   if (intent.heal) out.push({ icon: HeartPulse, text: `hồi ${intent.heal} máu`, tone: 'heal' });
+  for (const x of intent.inflict ?? []) out.push({ icon: statusIcon(x.status), text: `${statusDef(CONTENT, x.status).name} ${x.turns} lượt tới`, tone: 'bad', lasting: true });
   return out;
+}
+
+/** Timed effects in play: buffs green, debuffs red, turns left on each (stacks when more than one). */
+function StatusRow({ state }: { state: BattleState }) {
+  const list = state.statuses ?? [];
+  if (!list.length) return null;
+  return (
+    <div className="flex flex-wrap justify-center gap-1.5 text-[11px]" aria-label="Hiệu ứng theo lượt">
+      {list.map((x) => {
+        const def = statusDef(CONTENT, x.id);
+        const Icon = statusIcon(x.id);
+        const buff = def.kind === 'buff';
+        return (
+          <span
+            key={x.id}
+            title={`${def.name}${x.stacks > 1 ? ` ×${x.stacks}` : ''}: ${def.text} Còn ${x.turns} lượt${buff ? '' : ' (Rollback gỡ được)'}.`}
+            className={cn(
+              'flex items-center gap-1 rounded-full border px-2 py-0.5',
+              buff ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-200' : 'border-rose-400/50 bg-rose-500/15 text-rose-200',
+            )}
+          >
+            <Icon className="size-3" /> {def.name}
+            {x.stacks > 1 && <span className="font-mono font-bold">×{x.stacks}</span>}
+            <span className="rounded-full bg-black/30 px-1 font-mono">{x.turns}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 /** The botnet's intent cycle: done (dim), now (lit), coming (outlined). Weighted enemies: the pool, this turn's lit. */
@@ -1182,8 +1221,11 @@ function BotSide({
   const fromMinions = minionRpsNow(CONTENT, state);
   const hasMinions = minionsOf(state).length > 0;
   const aimed = hasMinions && !targetOf(state);
-  const cut = botCutNow(state, bypassNow(CONTENT, state));
+  const cut = botCutNow(CONTENT, state, bypassNow(CONTENT, state));
   const effects = intentEffects(intent, state);
+  const adapt = CONTENT.battle.adapt;
+  if (adapt && raw > 0 && cut >= adapt.at)
+    effects.push({ icon: statusIcon(adapt.status), text: `chặn ${Math.round(cut * 100)}% bot: bot sẽ thích nghi (+1 tầng ${statusDef(CONTENT, adapt.status).name})`, tone: 'warn', lasting: true });
   const leakLeft = state.enemy.leak && !intent.leak ? leakNow(state, intent) : 0;
   const hotfixed = (e: IntentEffect) => state.temp.hotfix && e.tone !== 'heal' && !e.lasting;
   const tone = (e: IntentEffect) =>
@@ -1664,7 +1706,9 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
   const items = useMemo(
     () => [
       ['Mỗi lượt', `Rút ${CONTENT.battle.handSize} lá, có ${CONTENT.battle.opsPerTurn} Ops. Đánh bài rồi bấm Kết thúc lượt.`],
-      ['Engine quyết định', `Hệ thống chạy ${CONTENT.battle.turnMs / 1000}s mô phỏng thật: ${CONTENT.battle.legitRps} người dùng/s cộng với bot lọt qua bộ lọc.`],
+      ['Engine quyết định', `Hệ thống chạy ${CONTENT.battle.turnMs / 1000}s mô phỏng thật: ${CONTENT.battle.legitRps} người dùng/s ở tầng 1${CONTENT.run.actScale.legit ? ` (mỗi tầng sau đông hơn ${Math.round(CONTENT.run.actScale.legit * 100)}%)` : ''} cộng với bot lọt qua bộ lọc.`],
+      ['Hiệu ứng theo lượt', 'Một số lá và đòn của địch để lại hiệu ứng kéo dài vài lượt (số trên chip là số lượt còn lại). Hotfix không gỡ được debuff, Rollback thì gỡ được.'],
+      ['Bot thích nghi', CONTENT.battle.adapt ? `Lượt nào bạn chặn từ ${Math.round(CONTENT.battle.adapt.at * 100)}% bot trở lên, bot cộng 1 tầng thích nghi và lách bộ lọc nhiều hơn. Ngừng lọc mạnh ${CONTENT.battle.adapt.turns} lượt thì hết.` : 'Tắt.'],
       ['Bạn mất máu', `1 máu cho mỗi ${CONTENT.battle.failedPerDamage} request người dùng lỗi, ${CONTENT.battle.latencyDamage} máu nếu p99 > ${CONTENT.battle.sloP99Ms}ms, và khi chi phí vượt $${CONTENT.battle.budgetPerHour}/h.`],
       ['Địch mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Địch yếu thì gửi ít traffic hơn.`],
       ['Leo tháp', `${CONTENT.run.title} có ${CONTENT.run.acts} tầng. Mỗi tầng là một bản đồ rẽ nhánh: tự chọn đường qua trận thường, tinh anh (khó hơn, thưởng nhiều hơn), sự cố và chỗ nghỉ, rồi đánh trùm ở đỉnh. Máu và bộ bài giữ nguyên suốt ca; tầng càng cao địch càng mạnh.`],
