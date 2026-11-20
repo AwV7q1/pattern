@@ -228,6 +228,7 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
   run.hp = battle.hp;
   if (!won) {
     run.phase = 'lost';
+    run.lastFight = { enemy: battle.enemy.id, chassis: battle.chassis, reports: battle.reports };
     return run;
   }
   const gold = Math.max(0, content.run.gold[node.kind as 'battle' | 'elite' | 'boss'] + Math.floor((nextRandom(run) * 2 - 1) * (content.run.goldJitter + 1)));

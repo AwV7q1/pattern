@@ -1162,3 +1162,40 @@ test('the attacker reads the chassis', () => {
   assert.equal(at('monolith', 'swarm', 'heavy_query').label, 'Truy vấn nặng');
   assert.equal(at('read_heavy', 'sneaker_bot', 'cart_hold').label, 'Ghi né cache');
 });
+
+// ---------------------------------------------------------------- postmortem
+
+test('hotNodes: the most loaded nodes of a turn, down first, client left out', () => {
+  const s = rules.newBattle(content, 1);
+  const design = rules.planTurn(content, s).input.design;
+  const ids = design.nodes.map((n) => n.id);
+  const win = (util: Record<string, number>, down: string[] = []) => ({
+    nodes: ids.map((id) => ({ utilization: util[id] ?? 0, down: down.includes(id), rejected: 0 })),
+  });
+  const hot = rules.hotNodes(design, [win({ client: 5, api: 0.5, db: 0.7 }), win({ api: 0.6, db: 0.99 }, ['ext'])]);
+  assert.deepEqual(hot.map((h) => h.node), ['ext', 'db', 'api']);
+  assert.equal(hot[1].util, 0.99);
+});
+
+test('postmortem: an overloaded DB is the main cause, and the deck\'s cache is advised first', async () => {
+  const { postmortem } = await import('./postmortem.ts');
+  let s = rules.newBattle(content, 1);
+  const design = rules.planTurn(content, s).input.design;
+  const db = design.nodes.find((n) => n.id === 'db')!;
+  const plan = rules.planTurn(content, s);
+  s = rules.resolveTurn(content, s, { ...plan, botBlockedRps: plan.botRps }, summary({ errorRate: 0.3, p99Ms: 900 }), [
+    { node: 'db', kind: db.kind, label: db.label ?? 'db', util: 1, down: false, rejected: 800 },
+  ]);
+  const pm = postmortem(content, s, ['cache', 'patch']);
+  assert.equal(pm.causes[0].kind, 'db');
+  assert.deepEqual(pm.causes[0].advice[0], { card: 'cache', inDeck: true });
+  assert.ok(pm.causes.some((c) => c.kind === 'latency'));
+  assert.equal(pm.worst?.turn, 1);
+  assert.ok(pm.lesson?.text);
+});
+
+test('postmortem: a clean fight has no causes', async () => {
+  const { postmortem } = await import('./postmortem.ts');
+  const s = endTurn(rules.newBattle(content, 1));
+  assert.equal(postmortem(content, s).causes.length, 0);
+});

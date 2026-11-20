@@ -304,6 +304,17 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
 | Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
+## Postmortem
+
+Thua một trận (hoặc mở tab Postmortem ở màn kết thúc trận) sẽ thấy vì sao hệ thống sập:
+
+- Ba biểu đồ nhỏ theo lượt: p99 (vạch SLO), tỉ lệ lỗi, chi phí (vạch ngân sách). Lượt tệ nhất được đánh dấu.
+- Tối đa 3 nguyên nhân, xếp theo Error Budget đã mất: DB/service/đối tác quá tải, node sập, bot lọt, vượt SLO, vượt ngân sách.
+- Mỗi nguyên nhân kèm lá nên đánh: viền xanh là lá có trong bộ bài, viền đứt là lá chưa có.
+- Một dòng bài học, lấy từ `lesson` của lá trả lời nguyên nhân chính.
+
+Mỗi `TurnReport` giữ `hot`: 3 node căng nhất của lượt (đỉnh utilization, có sập không, số request bị từ chối), tính từ các cửa sổ của engine bằng `hotNodes`. `postmortem()` trong `postmortem.ts` là hàm thuần chỉ đọc report, nên chạy được cả trên trận đã lưu: `RunState.lastFight` giữ report của trận thua để màn kết thúc ca cũng hiện postmortem.
+
 ## Cấu trúc code
 
 | File | Vai trò |

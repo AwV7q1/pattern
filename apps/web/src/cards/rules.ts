@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, ChassisDef, CardInst, ComboDef, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, SocketDef, SocketKind, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, ChassisDef, CardInst, ComboDef, Content, Effect, EnemyDef, HotNode, Intent, IntentWhen, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, SocketDef, SocketKind, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -906,7 +906,28 @@ export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, 
 }
 
 /** Apply the engine's verdict for the turn, run the attacker's side effects and start the next turn. */
-export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary): BattleState {
+/** The turn's most loaded nodes, from the engine's per-second windows (node order = the design's). */
+export function hotNodes(design: Design, windows: { nodes: { utilization: number; down: boolean; rejected: number }[] }[], n = 3): HotNode[] {
+  const out = design.nodes.map((node, k) => {
+    let util = 0;
+    let down = false;
+    let rejected = 0;
+    for (const w of windows) {
+      const x = w.nodes[k];
+      if (!x) continue;
+      util = Math.max(util, x.utilization);
+      down ||= x.down;
+      rejected += x.rejected;
+    }
+    return { node: node.id, kind: node.kind, label: node.label ?? node.id, util: Math.round(util * 100) / 100, down, rejected };
+  });
+  return out
+    .filter((h) => h.kind !== 'client' && (h.util > 0 || h.down || h.rejected > 0))
+    .sort((a, b) => Number(b.down) - Number(a.down) || b.rejected - a.rejected || b.util - a.util)
+    .slice(0, n);
+}
+
+export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary, hot?: HotNode[]): BattleState {
   const b = content.battle;
   const state = clone(prev);
   state.relicFired = [];
@@ -1000,6 +1021,7 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     damage: score.damage,
     enemyDamage,
     notes,
+    ...(hot?.length && { hot }),
   };
   state.reports.push(report);
 

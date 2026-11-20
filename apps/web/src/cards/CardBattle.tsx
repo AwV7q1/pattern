@@ -55,6 +55,7 @@ import {
   alias,
   guardNow,
   hotfixable,
+  hotNodes,
   leakNow,
   intentsNow,
   legitRpsNow,
@@ -77,6 +78,7 @@ import { statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
 import { RelicBar } from './Relics';
 import { CardLibrary } from './CardLibrary';
+import { PostmortemPanel } from './Postmortem';
 import { BotAvatar, MinionAvatar, tierOf, type BotRank } from './BotAvatar';
 import { botDieMs, MINION_EXIT_MS, minionDieClass, botHit, botJab, botStrike, botSummon, minionHit, minionStrike } from './botMotion';
 import { CARD_SIZE, CardFace, Hand, Pile, discardDuration, type DropTarget } from './Hand';
@@ -703,7 +705,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       engine.catch(() => undefined); // awaited below; avoid an unhandled rejection meanwhile
       await attackPhase(plan, () => done);
       const { summary, windows } = await engine;
-      const next = resolveTurn(CONTENT, state, plan, summary);
+      const next = resolveTurn(CONTENT, state, plan, summary, hotNodes(plan.input.design, windows));
       const r = next.reports.at(-1)!;
       await replayPhase(plan, windows, r, state, next);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: Math.max(0, state.enemy.hp - next.enemy.hp) });
@@ -918,7 +920,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
 
       {showLibrary && <CardLibrary cards={CONTENT.cards} deck={deck} onClose={() => setShowLibrary(false)} />}
 
-      {over && (state.phase === 'lost' || endReady) && <EndScreen state={state} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
+      {over && (state.phase === 'lost' || endReady) && <EndScreen state={state} deck={deck} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
     </div>
   );
 }
@@ -1698,6 +1700,7 @@ function LogDrawer({ open, reports, onClose }: { open: boolean; reports: TurnRep
 
 function EndScreen({
   state,
+  deck,
   enemyName,
   seed,
   continueLabel,
@@ -1705,6 +1708,7 @@ function EndScreen({
   onContinue,
 }: {
   state: BattleState;
+  deck: string[];
   enemyName: string;
   seed: number;
   continueLabel: string;
@@ -1715,9 +1719,11 @@ function EndScreen({
   const failed = state.reports.reduce((s, r) => s + r.legitFailed, 0);
   const blocked = state.reports.reduce((s, r) => s + r.botBlockedRps * (CONTENT.battle.turnMs / 1000), 0);
   const peakCost = Math.max(0, ...state.reports.map((r) => r.costPerHour));
+  // a loss opens on the postmortem: that is when the player wants to know why
+  const [tab, setTab] = useState<'sum' | 'pm'>(won ? 'sum' : 'pm');
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70 backdrop-blur-sm">
-      <div className="w-[420px] rounded-xl border bg-card p-6 shadow-2xl">
+      <div className={cn('max-h-[90vh] overflow-y-auto rounded-xl border bg-card p-6 shadow-2xl', tab === 'pm' ? 'w-[560px]' : 'w-[420px]')}>
         <div className="mb-2 flex items-center gap-2 text-2xl font-bold">
           {won ? <Trophy className="size-7 text-amber-300" /> : <Skull className="size-7 text-rose-400" />}
           {won ? `${enemyName} đã rút lui` : 'Hết Error Budget'}
@@ -1725,13 +1731,31 @@ function EndScreen({
         <p className="mb-4 text-sm text-muted-foreground">
           {won
             ? `Bạn giữ hệ thống sống qua ${state.turn} lượt và còn ${state.hp}/${state.maxHp} Error Budget.`
-            : `Hệ thống không đạt SLO quá nhiều lần ở lượt ${state.turn}. Mở Nhật ký để biết lượt nào mất máu nhiều nhất.`}
+            : `Hệ thống không đạt SLO quá nhiều lần ở lượt ${state.turn}. Postmortem bên dưới chỉ ra vì sao.`}
         </p>
-        <div className="mb-5 grid grid-cols-2 gap-2">
-          <Stat label="Request người dùng lỗi" value={n0(failed)} bad={failed > 0} />
-          <Stat label="Request bot bị chặn" value={n0(blocked)} />
-          <Stat label="Chi phí cao nhất" value={`$${peakCost.toFixed(2)}/h`} />
-          <Stat label="Seed" value={String(seed)} />
+        <div role="tablist" className="mb-3 flex gap-1 rounded-lg bg-muted/40 p-1 text-sm">
+          {(
+            [
+              ['sum', 'Tổng kết'],
+              ['pm', 'Postmortem'],
+            ] as const
+          ).map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)} className={cn('flex-1 rounded-md px-2 py-1', tab === k ? 'bg-background font-medium shadow' : 'text-muted-foreground')}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="mb-5">
+          {tab === 'sum' ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="Request người dùng lỗi" value={n0(failed)} bad={failed > 0} />
+              <Stat label="Request bot bị chặn" value={n0(blocked)} />
+              <Stat label="Chi phí cao nhất" value={`$${peakCost.toFixed(2)}/h`} />
+              <Stat label="Seed" value={String(seed)} />
+            </div>
+          ) : (
+            <PostmortemPanel reports={state.reports} chassis={state.chassis} deck={deck} />
+          )}
         </div>
         <div className="flex gap-2">
           <Button className="flex-1" onClick={onContinue}>

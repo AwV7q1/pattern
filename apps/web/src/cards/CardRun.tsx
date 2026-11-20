@@ -31,6 +31,7 @@ import {
 } from './run';
 import { canUpgrade, cardDef } from './rules';
 import { layoutOf, SOCKET_KIND_LABEL } from './Infra';
+import { PostmortemPanel } from './Postmortem';
 import type { ChassisDef, FloorResult, RestChoice, RunState, SocketKind } from './types';
 import { CardBattle } from './CardBattle';
 import { CardFace } from './Hand';
@@ -730,7 +731,7 @@ function RunEnd({ run, best, record, onNew }: { run: RunState; best: Best; recor
   const node = currentNode(CONTENT, run);
   const acts = [...new Set(run.history.map((h) => h.act))];
   return (
-    <div className="mx-auto w-full max-w-lg rounded-xl border bg-card p-6 shadow-2xl">
+    <div className="mx-auto w-full max-w-xl rounded-xl border bg-card p-6 shadow-2xl">
       <div className="mb-2 flex items-center gap-2 text-2xl font-bold">
         {won ? <Trophy className="size-7 text-amber-300" /> : <Skull className="size-7 text-rose-400" />}
         {won ? `Chinh phục ${CONTENT.run.title}` : 'Ca trực thất bại'}
@@ -747,6 +748,12 @@ function RunEnd({ run, best, record, onNew }: { run: RunState; best: Best; recor
         <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">Xa nhất: {best.bestClimbed} bậc</span>
         {record && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-300">Kỷ lục mới!</span>}
       </div>
+      {!won && run.lastFight && run.lastFight.reports.length > 0 && (
+        <div className="mb-4 rounded-lg border border-rose-400/30 p-3">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-rose-300">Postmortem trận cuối</div>
+          <PostmortemPanel reports={run.lastFight.reports} chassis={run.lastFight.chassis} deck={run.deck} />
+        </div>
+      )}
       <div className="mb-5 max-h-[40vh] space-y-3 overflow-y-auto pr-1">
         {acts.map((a) => (
           <div key={a}>

@@ -539,6 +539,8 @@ export interface RunState {
   /** Boss relics offered in the `cleared` phase (pick one when climbing). */
   relicOffer: string[];
   history: FloorResult[];
+  /** The fight that ended the run (a loss), for its postmortem. */
+  lastFight?: { enemy: string; chassis: string; reports: TurnReport[] };
 }
 
 export interface CardInst {
@@ -561,6 +563,21 @@ export interface TurnReport {
   damage: { failed: number; latency: number; budget: number; absorbed: number; capped: number; total: number };
   enemyDamage: number;
   notes: string[];
+  /** The most loaded nodes of the turn (from the engine's windows), most loaded first. */
+  hot?: HotNode[];
+}
+
+/** One node's worst moment in a turn, for the postmortem. */
+export interface HotNode {
+  node: string;
+  kind: string;
+  label: string;
+  /** Peak utilization (0..1+). */
+  util: number;
+  /** Down in at least one window. */
+  down: boolean;
+  /** Requests it turned away over the turn. */
+  rejected: number;
 }
 
 /** Damage of one turn, as `scoreTurn` computes it. */
