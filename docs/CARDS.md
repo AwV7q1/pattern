@@ -289,6 +289,8 @@ Mỗi trận chạy khoảng 0.15s nên có thể sweep tham số thoải mái.
 
 Cả ba điểm này nằm trong kế hoạch mở rộng engine: request class, node rate limiter/WAF, `apply_patch` khi đang chạy.
 
+Phân tích vì sao thẻ Hạ tầng dễ thắng và lặp lại (cache, rate limit, Redis), cùng đề xuất cơ chế mới: xem [CARDS-RESEARCH.md](CARDS-RESEARCH.md).
+
 ## Hướng tới Godot, Steam và console
 
 Prototype được viết để chuyển sang client khác mà không phải thiết kế lại:
