@@ -82,13 +82,14 @@ test('effects: cache, edge, tune, waf, purge', () => {
   let uid: number;
   [s, uid] = withCard(s, 'cache');
   s = rules.playCard(content, s, uid);
-  assert.ok(rules.nodeOf(s.design, 'cache'), 'cache node added');
-  assert.equal(rules.apiOut(s.design)?.target, 'cache');
+  const d = (st: BattleState) => rules.designOf(content, st);
+  assert.ok(rules.nodeOf(d(s), 'cache'), 'cache node added');
+  assert.equal(rules.apiOut(d(s))?.target, 'cache');
 
-  const p50 = rules.nodeOf(s.design, 'db')!.config!.latencyP50Ms!;
+  const p50 = rules.nodeOf(d(s), 'db')!.config!.latencyP50Ms!;
   [s, uid] = withCard(s, 'index');
   s = rules.playCard(content, s, uid);
-  assert.ok(rules.nodeOf(s.design, 'db')!.config!.latencyP50Ms! < p50);
+  assert.ok(rules.nodeOf(d(s), 'db')!.config!.latencyP50Ms! < p50);
 
   [s, uid] = withCard(s, 'waf');
   s = rules.playCard(content, s, uid);
@@ -723,7 +724,7 @@ test('variants: the intent answers the build read at the start of the turn, and 
   assert.deepEqual(rules.scoreTurn(content, s, plan, sum).damage, rules.resolveTurn(content, s, plan, sum).reports.at(-1)!.damage);
 
   // other conditions: instance count, WAF, retries without a budget
-  const traits = rules.designTraits;
+  const traits = (st: BattleState) => rules.designTraits(content, st);
   const base = rules.newBattle(content, 1);
   assert.ok(rules.matchesWhen({ instancesAtLeast: { api: 2 } }, traits(base)));
   assert.ok(!rules.matchesWhen({ instancesAtLeast: { api: 4 } }, traits(base)));
@@ -901,4 +902,86 @@ test('adaptation: heavy filtering adds a stack, two calm turns clear it, and the
   assert.deepEqual(rules.scoreTurn(content, t2, p2, sum).damage, rules.resolveTurn(content, t2, p2, sum).reports.at(-1)!.damage);
   const calm = (st: BattleState) => rules.resolveTurn(content, st, { ...rules.planTurn(content, st), botBlockedRps: 0 }, summary());
   assert.equal(calm(calm(t2)).statuses, undefined);
+});
+
+test('modules: a full slot group needs a replacement, which undoes the old module; replaying levels up', () => {
+  let s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const play = (st: BattleState, id: string, replace?: number) => {
+    const [h, uid] = withCard(st, id);
+    return rules.playCard(content, h, uid, { replace });
+  };
+  for (const id of ['timeout', 'backoff', 'breaker']) s = play(s, id);
+  assert.equal(rules.modulesIn(content, s, 'api').length, content.battle.slots.api);
+  assert.equal(rules.apiOut(rules.designOf(content, s))!.timeoutMs, 250);
+
+  const [h, uid] = withCard(s, 'pool');
+  assert.equal(rules.needsReplace(content, h, uid), 'api');
+  assert.equal(rules.playCard(content, h, uid), h, 'no free slot, no replacement: not played');
+  const timeout = rules.moduleOf(s, 'timeout')!.uid;
+  const swapped = rules.playCard(content, h, uid, { replace: timeout });
+  assert.ok(!rules.moduleOf(swapped, 'timeout') && rules.moduleOf(swapped, 'pool'));
+  const out = rules.apiOut(rules.designOf(content, swapped))!;
+  assert.equal(out.timeoutMs, undefined, 'the timeout is gone with its module');
+  assert.equal(out.poolSize, 8);
+
+  // the same card again: a level, not a slot (a cache grows by its step)
+  s = play(s, 'cache');
+  s = play(s, 'cache');
+  assert.equal(rules.moduleOf(s, 'cache')!.level, 2);
+  assert.equal(rules.nodeOf(rules.designOf(content, s), 'cache')!.config!.cache!.capacity, 2000);
+  assert.equal(rules.modulesIn(content, s, 'data').length, 1);
+  // scale and WAF never take a slot
+  s = play(play(s, 'scale_api'), 'waf');
+  assert.equal(rules.modulesOf(s).length, 4);
+});
+
+test('modules: removing the cache and building it again starts it cold', () => {
+  let s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const play = (st: BattleState, id: string, replace?: number) => {
+    const [h, uid] = withCard(st, id);
+    return rules.playCard(content, h, uid, { replace });
+  };
+  s = endTurn(play(play(s, 'cache'), 'index'));
+  const warm = (st: BattleState) => rules.planTurn(content, st).input.design.nodes.find((n) => n.id === 'cache')?.config?.cache?.warm;
+  assert.equal(warm(s), true);
+  s = play(s, 'replica', rules.moduleOf(s, 'cache')!.uid);
+  assert.equal(rules.nodeOf(rules.designOf(content, s), 'cache'), undefined);
+  assert.equal(rules.nodeOf(rules.designOf(content, s), 'db')!.config!.instances, 2);
+  s = endTurn(s);
+  s = play(s, 'cache', rules.moduleOf(s, 'replica')!.uid);
+  assert.equal(warm(s), false, 'cold again the turn it is rebuilt');
+});
+
+test('queue: the API answers at once, the partner is called through a queue; lost async work hurts', () => {
+  const s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const base = rules.designOf(content, s);
+  assert.ok(base.edges.some((e) => e.source === 'api' && e.target === 'ext'), 'the partner is called in line');
+  const [h, uid] = withCard(s, 'queue');
+  const q = rules.playCard(content, h, uid);
+  const d = rules.planTurn(content, q).input.design;
+  assert.ok(d.edges.some((e) => e.source === 'api' && e.target === 'queue'));
+  assert.ok(d.edges.some((e) => e.source === 'queue' && e.target === 'ext'));
+  assert.ok(!d.edges.some((e) => e.source === 'api' && e.target === 'ext'));
+  assert.equal(rules.apiOut(d)!.target, 'db', 'call policies stay on the data call');
+
+  const plan = rules.planTurn(content, q);
+  const sent = plan.legitRps + plan.botRps - plan.botBlockedRps;
+  const lost = rules.scoreTurn(content, q, plan, summary({ asyncErr: 600, backlog: 400 })).legitFailed;
+  assert.equal(lost, Math.round((1000 * plan.legitRps) / sent));
+});
+
+test('autoscaler: HPA on the API from this turn’s count, with its headroom', () => {
+  const s = rules.newBattle(content, 5, { enemy: 'swarm' });
+  const [h, uid] = withCard(s, 'autoscaler');
+  let a = rules.playCard(content, h, uid);
+  const api = (st: BattleState) => rules.nodeOf(rules.planTurn(content, st).input.design, 'api')!.config!;
+  const auto = api(a).autoscale as unknown as { min: number; max: number; podStartMs: number };
+  assert.equal(auto.min, api(a).instances);
+  assert.equal(auto.max - auto.min, 4);
+  assert.equal(auto.podStartMs, 3000);
+  const [b, bu] = withCard(a, 'burst');
+  a = rules.playCard(content, b, bu);
+  const burst = api(a).autoscale as unknown as { min: number; max: number };
+  assert.equal(burst.min, api(a).instances, 'starts from the burst count');
+  assert.equal(burst.max - burst.min, 4);
 });

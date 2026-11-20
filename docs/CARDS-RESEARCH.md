@@ -428,3 +428,34 @@ Hai cột đầu chạy 20 run, các cột sau chạy 40 run. Sai số khoảng 
 - **`rut` vẫn thắng 95%**. Bộ bài này không còn có sẵn từ đầu, nhưng vẫn ghép được dọc đường. Hệ thống của nó (Redis, Index, 4 instance API, Timeout) đủ khoẻ cho mọi địch, và các debuff 2–3 lượt không đủ để đánh sập. Thời lượng chỉ gây áp lực; muốn hết lối mòn thì địch phải phạt chính hạ tầng đã xây (mặt trái từng module, đợt 2c) và việc xếp chồng phải có giới hạn (slot, đợt 2b).
 - **`greedy` tụt xuống 0%**, thấp hơn `thin` (25%). Bot `greedy` nhận gần như mọi lá trong danh sách muốn, nên bộ bài bị loãng; điểm chết là trùm tầng 1 (Kẻ Đầu Độc Cache, thắng 48%). Đây một phần là hạn chế của bot đo, nhưng cũng cho thấy trùm tầng 1 đang là bức tường. Sẽ chỉnh lại sau đợt 2c.
 - Trận thường vẫn khoảng 97–99% với mọi chiến thuật, trừ vài địch tầng 3 (Sâu Zero-day 33% với `greedy`).
+
+## 10. Giai đoạn 2b: slot, đối tác, Queue, Autoscaler
+
+### Đã làm
+
+- **Hạ tầng thành module có slot**: nhóm API có 3 slot, nhóm data có 2 slot. `designOf` dựng lại design từ module. Nhóm đầy thì phải gỡ một module; đánh lại lá đã lắp thì module lên cấp.
+- **Đối tác đồng bộ** (thanh toán, email) trong design gốc. Thử trên engine với API→DB rồi API→đối tác (p50 4ms):
+
+  | Tình huống | Không có đối tác | Đối tác đồng bộ | Có Queue |
+  |---|---|---|---|
+  | 1300 rps | 30.6% lỗi | 35.4% | 30.4% |
+  | 1300 rps, đối tác chậm ×8 | — | 62.5% | 30.8%, tồn 2.114 việc |
+
+  Đối tác lúc bình thường chỉ thêm khoảng 5 điểm lỗi. Khi đối tác chậm, nó giữ slot API và làm cả hệ thống sập; Queue tách phần đó ra, đổi lại việc dồn lại.
+- **5 ý định** làm đối tác chậm: Bot Spam Form, Bot Săn Sneaker, Black Friday, Kẻ Lạm Dụng API, Credential Stuffer.
+- **Lá mới**: Message Queue (slot data), Autoscaler HPA (slot API, pod mất 3s mới nhận tải, chỉ tính tiền lúc chạy).
+- **Bot đo** biết chọn module để gỡ: gỡ module nó ít ưu tiên nhất, nếu module đó ít giá trị hơn lá mới.
+
+### Đo (`--run`, 40 run, vượt cả tháp)
+
+| Chiến thuật | Sau 2a | Sau 2b | Vượt T1 / T2 |
+|---|---|---|---|
+| random | 0% | 0% | 20% / 0% |
+| greedy | 0% | 0% | 30% / 3% |
+| rut (bộ cũ) | 95% | **63%** | 95% / 90% |
+| thin | 25% | 5% | 70% / 23% |
+| cacheOnly | 0% | 0% | 8% / 0% |
+| filterOnly | 8% | 3% | 83% / 20% |
+
+- `rut` lần đầu xuống quanh ngưỡng 60%. Bộ bài này chỉ có Timeout ở nhóm API, còn nhóm data bị Redis và Index chiếm hết; nó vẫn chết chủ yếu ở trùm tầng 3.
+- Đối tác đồng bộ làm hệ thống gốc yếu đi, nên mọi chiến thuật khác đều tụt. Độ khó tổng thể giờ quá cao. Việc chỉnh độ khó để lại sau đợt 2c, khi đã có đủ cơ chế.

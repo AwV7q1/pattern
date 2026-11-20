@@ -78,6 +78,7 @@
     "name": "Read Replica",
     "type": "infra",
     "cost": 2,
+    "slot": "data",
     "rarity": "uncommon",
     "text": "+1 instance DB cho cả trận. Đắt: $0.50/h.",
     "lesson": "Database là phần đắt nhất và khó scale nhất.",
@@ -98,6 +99,7 @@
     "name": "Redis Cache",
     "type": "infra",
     "cost": 2,
+    "slot": "data",
     "rarity": "uncommon",
     "text": "Đặt Redis giữ 1k key trước DB (hit ~67% khi nóng; lượt đặt cache còn nguội). Đánh lại: +1k key, tối đa 4k.",
     "lesson": "Cache-aside: phần lớn request đọc không chạm tới DB, nhưng hit rate phụ thuộc phân bố key và dung lượng, không phải con số cố định.",
@@ -119,6 +121,7 @@
     "name": "Timeout 250ms",
     "type": "policy",
     "cost": 0,
+    "slot": "api",
     "rarity": "common",
     "text": "Lời gọi từ API xuống bỏ cuộc sau 250ms, nhả slot ngay.",
     "lesson": "Không timeout thì slot bị giữ khi DB chậm, lỗi lan ngược lên trên.",
@@ -151,6 +154,7 @@
     "name": "Retry + Backoff",
     "type": "policy",
     "cost": 1,
+    "slot": "api",
     "rarity": "common",
     "text": "API thử lại 2 lần khi lỗi, có backoff và jitter.",
     "lesson": "Retry cứu lỗi thoáng qua, nhưng khi quá tải thì nhân tải lên.",
@@ -174,6 +178,7 @@
     "name": "Circuit Breaker",
     "type": "policy",
     "cost": 1,
+    "slot": "api",
     "rarity": "uncommon",
     "text": "Ngắt mạch khi ≥ 50% lời gọi từ API lỗi: trả lỗi nhanh 3 giây. Cẩn thận: khi mạch mở, mọi request đều lỗi.",
     "lesson": "Fail fast để downstream có thời gian hồi phục.",
@@ -442,6 +447,7 @@
     "name": "Đánh Index",
     "type": "infra",
     "cost": 1,
+    "slot": "data",
     "rarity": "uncommon",
     "text": "Query DB nhanh gấp đôi cho cả trận (latency ×0.5).",
     "lesson": "Query chậm thường do thiếu index: sửa rẻ hơn nhiều so với mua thêm máy.",
@@ -464,6 +470,7 @@
     "name": "Scale dọc DB",
     "type": "infra",
     "cost": 2,
+    "slot": "data",
     "rarity": "rare",
     "text": "Máy DB to hơn: +50% kết nối đồng thời, giá ×1.6 cho cả trận.",
     "lesson": "Scale dọc đơn giản nhưng có trần, và giá tăng nhanh hơn sức mạnh.",
@@ -487,6 +494,7 @@
     "name": "Tăng hàng đợi",
     "type": "infra",
     "cost": 0,
+    "slot": "api",
     "rarity": "common",
     "text": "Hàng đợi API ×2 cho cả trận: ít request bị từ chối hơn, nhưng chờ lâu hơn.",
     "lesson": "Queue lớn che được spike ngắn, nhưng khi quá tải kéo dài nó chỉ làm p99 tăng vọt.",
@@ -521,6 +529,7 @@
     "name": "Load Shedding",
     "type": "policy",
     "cost": 1,
+    "slot": "api",
     "rarity": "uncommon",
     "text": "Hàng đợi API còn 30% cho cả trận: từ chối sớm thay vì để request chờ quá hạn.",
     "lesson": "Từ chối nhanh một phần để giữ p99 thấp cho phần còn lại tốt hơn là làm chậm tất cả.",
@@ -543,6 +552,7 @@
     "name": "Connection Pool",
     "type": "policy",
     "cost": 1,
+    "slot": "api",
     "rarity": "uncommon",
     "text": "Mỗi instance API giữ tối đa 8 kết nối tới tầng dưới, chờ pool tối đa 100ms.",
     "lesson": "Giới hạn số kết nối để DB không bị bóp nghẹt khi API scale ra nhiều máy.",
@@ -565,6 +575,7 @@
     "name": "Retry Budget",
     "type": "policy",
     "cost": 0,
+    "slot": "api",
     "rarity": "rare",
     "text": "API chỉ retry khi số retry dưới 10% traffic. Đi kèm Retry + Backoff.",
     "lesson": "Không giới hạn retry thì lúc sự cố, chính hệ thống của bạn tự DDoS tầng dưới.",
@@ -866,6 +877,56 @@
           "turns": 3
         }
       ]
+    }
+  },
+  {
+    "id": "autoscaler",
+    "name": "Autoscaler (HPA)",
+    "type": "infra",
+    "cost": 1,
+    "slot": "api",
+    "rarity": "uncommon",
+    "text": "Khi API bận, tự bật thêm tối đa 4 pod; mỗi pod mất 3s mới nhận tải. Pod chỉ tính tiền lúc chạy.",
+    "lesson": "Autoscaling rẻ hơn giữ máy chờ sẵn, nhưng luôn chậm một nhịp: spike ngắn đã qua trước khi pod mới kịp khởi động.",
+    "effects": [
+      {
+        "op": "autoscale",
+        "extra": 4,
+        "podStartMs": 3000,
+        "target": 0.7
+      }
+    ],
+    "upgrade": {
+      "text": "Khi API bận, tự bật thêm tối đa 5 pod; mỗi pod chỉ mất 1.5s để nhận tải. Pod chỉ tính tiền lúc chạy.",
+      "effects": [
+        {
+          "op": "autoscale",
+          "extra": 5,
+          "podStartMs": 1500,
+          "target": 0.7
+        }
+      ]
+    }
+  },
+  {
+    "id": "queue",
+    "name": "Message Queue",
+    "type": "infra",
+    "cost": 2,
+    "slot": "data",
+    "rarity": "uncommon",
+    "text": "API trả lời ngay rồi đẩy việc gọi đối tác (thanh toán, email) vào hàng đợi; 30 worker xử lý sau. Việc còn tồn hoặc lỗi cuối lượt tính là request lỗi.",
+    "lesson": "Hàng đợi tách người dùng khỏi phần chậm phía sau, nhưng không làm phần đó nhanh hơn: nếu worker không theo kịp, việc dồn lại và cuối cùng vẫn mất.",
+    "effects": [
+      {
+        "op": "queue",
+        "consumers": 30,
+        "queueSize": 20000
+      }
+    ],
+    "upgrade": {
+      "cost": 1,
+      "text": "API trả lời ngay rồi đẩy việc gọi đối tác vào hàng đợi; 30 worker xử lý sau. Việc còn tồn hoặc lỗi cuối lượt tính là request lỗi."
     }
   },
   {

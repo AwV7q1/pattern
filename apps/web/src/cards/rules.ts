@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, MinionDef, MinionState, RelicDef, StatusDef, StatusMods, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, Layer, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -140,11 +140,12 @@ function baseIntent(content: Content, state: BattleState): Intent {
 }
 
 /** What the attacker can read of the player's build. */
-export function designTraits(state: BattleState) {
-  const inst = (id: string) => nodeOf(state.design, id)?.config?.instances ?? 1;
-  const out = apiOut(state.design);
+export function designTraits(content: Content, state: BattleState) {
+  const design = designOf(content, state);
+  const inst = (id: string) => nodeOf(design, id)?.config?.instances ?? 1;
+  const out = apiOut(design);
   return {
-    hasCache: !!nodeOf(state.design, 'cache'),
+    hasCache: !!nodeOf(design, 'cache'),
     instances: { api: inst('api'), db: inst('db') },
     waf: state.waf,
     retries: out?.retries ?? 0,
@@ -232,7 +233,7 @@ export function adaptsNow(content: Content, plan: Pick<TurnPlan, 'botRps' | 'bot
 
 /** Start of a turn, once the hand and relics are in: pick the variant of the intent that answers the player's build. */
 function chooseVariant(content: Content, state: BattleState) {
-  const t = designTraits(state);
+  const t = designTraits(content, state);
   const i = baseIntent(content, state).variants?.findIndex((v) => matchesWhen(v.when, t)) ?? -1;
   if (i >= 0) state.enemy.variant = i;
   else delete state.enemy.variant;
@@ -283,7 +284,109 @@ export function canPlay(content: Content, state: BattleState, uid: number): bool
 // ---------------------------------------------------------------- design helpers
 
 export const nodeOf = (design: Design, id: string) => design.nodes.find((n) => n.id === id);
-export const apiOut = (design: Design) => design.edges.find((e) => e.source === 'api');
+/** The API's call to its data (cache or DB): where the call policies (timeout, retry, breaker, pool) live. */
+export const apiOut = (design: Design) => design.edges.find((e) => e.source === 'api' && e.target !== 'ext' && e.target !== 'queue');
+
+// ---------------------------------------------------------------- modules (slotted infrastructure)
+
+/** Effects that change the topology: from a slotted card they live in its module, so removing it undoes them. */
+const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue']);
+
+export const modulesOf = (state: BattleState): ModuleInst[] => state.modules ?? [];
+export const layerOf = (content: Content, m: ModuleInst): Layer => cardDef(content, m.card).slot!;
+export const modulesIn = (content: Content, state: BattleState, layer: Layer) => modulesOf(state).filter((m) => layerOf(content, m) === layer);
+/** The installed module of a card (either copy, upgraded or not). */
+export const moduleOf = (state: BattleState, card: string) => modulesOf(state).find((m) => baseId(m.card) === baseId(card));
+
+/** The slot group a card in hand would need a free slot in, when that group is full (null: it can just be played). */
+export function needsReplace(content: Content, state: BattleState, uid: number): Layer | null {
+  const inst = state.hand.find((c) => c.uid === uid);
+  const def = inst && cardDef(content, inst.id);
+  if (!def?.slot || moduleOf(state, def.id)) return null;
+  return modulesIn(content, state, def.slot).length >= content.battle.slots[def.slot] ? def.slot : null;
+}
+
+/** The fight's topology: the base design (with permanent scaling and relics) plus every module, in the order installed. */
+export function designOf(content: Content, state: BattleState): Design {
+  const design = clone(state.design);
+  for (const m of modulesOf(state)) for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level);
+  return design;
+}
+
+/** One module effect on a design, `level` times (a cache grows by `step` per extra level instead). */
+function applyDesign(design: Design, e: Effect, level: number) {
+  switch (e.op) {
+    case 'scale': {
+      const cfg = nodeOf(design, e.node)!.config!;
+      cfg.instances = (cfg.instances ?? 1) + e.n * level;
+      break;
+    }
+    case 'cache': {
+      const model = nodeOf(design, 'cache')?.config?.cache;
+      if (model) model.capacity = Math.min(e.max, model.capacity + e.step * level);
+      else addCache(design, Math.min(e.max, e.capacity + e.step * (level - 1)));
+      break;
+    }
+    case 'edge':
+      Object.assign(apiOut(design)!, clone(e.patch));
+      break;
+    case 'tune':
+      for (let i = 0; i < level; i++) tuneNode(design, e.node, e.mul);
+      break;
+    case 'autoscale': {
+      const cfg = nodeOf(design, 'api')!.config!;
+      const n = cfg.instances ?? 1;
+      cfg.autoscale = { min: n, max: n + e.extra, targetUtilization: e.target, evalEveryMs: 1000, stabilizationMs: 5000, podStartMs: e.podStartMs, metric: 'utilization' } as never;
+      break;
+    }
+    case 'queue': {
+      const toExt = design.edges.find((x) => x.source === 'api' && x.target === 'ext');
+      if (!toExt) break;
+      toExt.target = 'queue';
+      design.nodes.push({
+        id: 'queue',
+        kind: 'queue',
+        label: 'Queue',
+        position: { x: 0, y: 0 },
+        config: { instances: 1, concurrency: e.consumers, queueSize: e.queueSize, latencyP50Ms: 0.2, latencyP99Ms: 1, costPerHour: 0.05 },
+      } as DesignNode);
+      design.edges.push({ source: 'queue', target: 'ext', latencyMs: 1 } as DesignEdge);
+      break;
+    }
+  }
+}
+
+function tuneNode(design: Design, node: NodeRef, m: TuneMul) {
+  const cfg = nodeOf(design, node)!.config!;
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  if (m.latency !== undefined) {
+    cfg.latencyP50Ms = round2((cfg.latencyP50Ms ?? 1) * m.latency);
+    cfg.latencyP99Ms = round2((cfg.latencyP99Ms ?? 1) * m.latency);
+  }
+  if (m.concurrency !== undefined) cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * m.concurrency));
+  if (m.queueSize !== undefined) cfg.queueSize = Math.max(0, Math.round((cfg.queueSize ?? 0) * m.queueSize));
+  if (m.cost !== undefined) cfg.costPerHour = round2((cfg.costPerHour ?? 0) * m.cost);
+}
+
+/** Install a slotted card's module, or level it up when that card's module is already in. */
+function installModule(content: Content, state: BattleState, def: CardDef) {
+  const cur = moduleOf(state, def.id);
+  if (cur) {
+    cur.level++;
+    if (def.upgraded) cur.card = def.id;
+    return;
+  }
+  const hadCache = !!nodeOf(designOf(content, state), 'cache');
+  (state.modules ??= []).push({ uid: state.nextUid++, card: def.id, level: 1 });
+  if (!hadCache && nodeOf(designOf(content, state), 'cache')) state.cache = { ...state.cache, placed: state.turn };
+}
+
+function removeModule(content: Content, state: BattleState, uid: number) {
+  state.modules = modulesOf(state).filter((m) => m.uid !== uid);
+  if (!state.modules.length) delete state.modules;
+  // a cache built again later starts cold
+  if (!nodeOf(designOf(content, state), 'cache') && state.cache) delete state.cache.placed;
+}
 
 /** Key space of the battle's traffic: 10k keys with web-like popularity (zipf 1). */
 export const CACHE_KEYS = 10_000;
@@ -442,19 +545,14 @@ function apply(content: Content, state: BattleState, effect: Effect) {
     case 'hotfix':
       state.temp.hotfix = true;
       break;
-    case 'tune': {
-      const cfg = nodeOf(state.design, effect.node)!.config!;
-      const m = effect.mul;
-      const round2 = (v: number) => Math.round(v * 100) / 100;
-      if (m.latency !== undefined) {
-        cfg.latencyP50Ms = round2((cfg.latencyP50Ms ?? 1) * m.latency);
-        cfg.latencyP99Ms = round2((cfg.latencyP99Ms ?? 1) * m.latency);
-      }
-      if (m.concurrency !== undefined) cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * m.concurrency));
-      if (m.queueSize !== undefined) cfg.queueSize = Math.max(0, Math.round((cfg.queueSize ?? 0) * m.queueSize));
-      if (m.cost !== undefined) cfg.costPerHour = round2((cfg.costPerHour ?? 0) * m.cost);
+    case 'tune':
+      tuneNode(state.design, effect.node, effect.mul);
       break;
-    }
+    case 'autoscale':
+    case 'queue':
+      // relics and other unslotted sources: straight into the base design
+      applyDesign(state.design, effect, 1);
+      break;
     case 'purge': {
       const curses = state.hand.filter((c) => cardDef(content, c.id).unplayable);
       if (!curses.length) break;
@@ -476,8 +574,11 @@ function apply(content: Content, state: BattleState, effect: Effect) {
   }
 }
 
-export function playCard(content: Content, prev: BattleState, uid: number): BattleState {
+/** Play a card from hand. A slotted card whose group is full needs `replace`: the uid of a module of that group to take out. */
+export function playCard(content: Content, prev: BattleState, uid: number, opts: { replace?: number } = {}): BattleState {
   if (!canPlay(content, prev, uid)) return prev;
+  const layer = needsReplace(content, prev, uid);
+  if (layer && !modulesIn(content, prev, layer).some((m) => m.uid === opts.replace)) return prev;
   const state = clone(prev);
   state.relicFired = [];
   const idx = state.hand.findIndex((c) => c.uid === uid);
@@ -487,7 +588,11 @@ export function playCard(content: Content, prev: BattleState, uid: number): Batt
   state.played.push(def.id);
   // the card leaves the hand before its effects, so "draw" cannot redraw it
   (def.exhaust ? state.exhausted : state.discard).push(inst);
-  for (const effect of def.effects) apply(content, state, effect);
+  if (def.slot) {
+    if (layer) removeModule(content, state, opts.replace!);
+    installModule(content, state, def);
+  }
+  for (const effect of def.effects) if (!(def.slot && DESIGN_OPS.has(effect.op))) apply(content, state, effect);
   fireRelics(content, state, 'cardPlayed', def.type);
   if (state.enemy.hp <= 0) {
     state.phase = 'won';
@@ -508,10 +613,14 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
   const botPassed = Math.round(raw * (1 - cut));
   const mods = statusMods(content, state);
 
-  const design = clone(state.design);
+  const design = designOf(content, state);
   for (const node of ['api', 'db'] as const) {
     const cfg = nodeOf(design, node)!.config!;
-    cfg.instances = Math.max(1, (cfg.instances ?? 1) + state.temp[node] + mods[`${node}Instances`]);
+    const before = cfg.instances ?? 1;
+    cfg.instances = Math.max(1, before + state.temp[node] + mods[`${node}Instances`]);
+    // the autoscaler starts from this turn's count and keeps its headroom
+    const auto = cfg.autoscale as { min: number; max: number } | undefined;
+    if (auto) Object.assign(auto, { min: cfg.instances, max: cfg.instances + auto.max - auto.min });
     // statuses are not incidents: Hotfix does not cancel them
     if (mods.cost !== 1) cfg.costPerHour = Math.round((cfg.costPerHour ?? 0) * mods.cost * 1000) / 1000;
   }
@@ -584,7 +693,10 @@ export function hotfixable(intent: Intent): boolean {
 export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, summary: Summary): TurnScore {
   const b = content.battle;
   const sec = b.turnMs / 1000;
-  const legitFailed = Math.round(summary.errorRate * plan.legitRps * sec);
+  // async work a queue accepted but lost (failed, or still waiting when the turn ends), for the real users' share
+  const sent = plan.legitRps + plan.botRps - plan.botBlockedRps;
+  const lostAsync = (summary.asyncErr ?? 0) + (summary.backlog ?? 0);
+  const legitFailed = Math.round(summary.errorRate * plan.legitRps * sec + (sent > 0 ? (lostAsync * plan.legitRps) / sent : 0));
   const failed = Math.round(legitFailed / b.failedPerDamage);
   const latency = summary.p99Ms > b.sloP99Ms ? b.latencyDamage : 0;
   const over = summary.costPerHour - b.budgetPerHour;
@@ -614,6 +726,8 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
   if (budget) notes.push(`Vượt ngân sách: $${summary.costPerHour.toFixed(2)}/h > $${b.budgetPerHour.toFixed(2)}/h`);
   if (absorbed) notes.push(`Headroom hấp thụ ${absorbed} sát thương`);
   if (capped) notes.push(`Sát thương tối đa ${b.maxDamagePerTurn}/lượt (bỏ qua ${capped})`);
+  const lostAsync = (summary.asyncErr ?? 0) + (summary.backlog ?? 0);
+  if (lostAsync > 0) notes.push(`Hàng đợi: ${lostAsync.toLocaleString('vi-VN')} việc lỗi hoặc còn tồn cuối lượt`);
   if (enemyDamage) notes.push(`Chặn ${Math.round(plan.botBlockedRps * sec).toLocaleString('vi-VN')} request bot`);
   if (state.temp.hotfix && hotfixable(plan.intent)) notes.push('Hotfix đã chặn hiệu ứng sự cố');
   if (plan.intent.costSpike) notes.push(`${plan.intent.label}: chi phí API ×${plan.intent.costSpike}`);

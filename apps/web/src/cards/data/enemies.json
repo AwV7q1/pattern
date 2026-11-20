@@ -97,11 +97,16 @@
         "id": "signup",
         "label": "Đăng ký ảo",
         "icon": "retry",
-        "text": "Bot ~600 rps. Gọi thêm 1 Tin Rác.",
+        "text": "Bot ~600 rps. Gọi thêm 1 Tin Rác. Mỗi đăng ký gửi email xác nhận: dịch vụ email chậm ×4.",
         "botRps": 600,
         "summon": {
           "minion": "spam_msg",
           "n": 1
+        },
+        "chaos": {
+          "node": "ext",
+          "action": "latency",
+          "value": 4
         }
       },
       {
@@ -709,9 +714,14 @@
         "id": "lockout",
         "label": "Khoá tài khoản",
         "icon": "retry",
-        "text": "Bot ~1200 rps, tài khoản bị khoá, người dùng thật bấm lại 3 lần.",
+        "text": "Bot ~1200 rps, tài khoản bị khoá, người dùng thật bấm lại 3 lần. Mỗi tài khoản bị khoá gửi một email: dịch vụ email chậm ×5.",
         "botRps": 1200,
-        "clientRetries": 3
+        "clientRetries": 3,
+        "chaos": {
+          "node": "ext",
+          "action": "latency",
+          "value": 5
+        }
       },
       {
         "id": "new_list",
@@ -843,9 +853,14 @@
         "id": "checkout",
         "label": "Thanh toán dồn",
         "icon": "retry",
-        "text": "Bot ~1800 rps, retry 3 lần ngay khi lỗi.",
+        "text": "Bot ~1800 rps, retry 3 lần ngay khi lỗi. Cổng thanh toán nghẽn: đối tác chậm ×6.",
         "botRps": 1800,
-        "clientRetries": 3
+        "clientRetries": 3,
+        "chaos": {
+          "node": "ext",
+          "action": "latency",
+          "value": 6
+        }
       },
       {
         "id": "resell",
@@ -976,9 +991,14 @@
         "id": "batch",
         "label": "Batch retry",
         "icon": "retry",
-        "text": "Bot ~1600 rps, SDK retry 2 lần khi lỗi.",
+        "text": "Bot ~1600 rps, SDK retry 2 lần khi lỗi. Mỗi batch bắn webhook: đối tác chậm ×5.",
         "botRps": 1600,
-        "clientRetries": 2
+        "clientRetries": 2,
+        "chaos": {
+          "node": "ext",
+          "action": "latency",
+          "value": 5
+        }
       },
       {
         "id": "new_key",
@@ -1554,10 +1574,15 @@
         "id": "cart_retry",
         "label": "F5 giỏ hàng",
         "icon": "retry",
-        "text": "Bot ~1400 rps, mọi client retry 2 lần ngay khi lỗi.",
+        "text": "Bot ~1400 rps, mọi client retry 2 lần ngay khi lỗi. Cổng thanh toán quá tải: đối tác chậm ×6.",
         "botRps": 1400,
         "clientRetries": 2,
-        "weight": 2
+        "weight": 2,
+        "chaos": {
+          "node": "ext",
+          "action": "latency",
+          "value": 6
+        }
       },
       {
         "id": "lull",

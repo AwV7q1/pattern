@@ -229,7 +229,7 @@ function BotsTab({ id, onPick, onMinion }: { id: string; onPick: (id: string) =>
 
 const extras = (it: Partial<Intent>): string[] => {
   const out: string[] = [];
-  if (it.chaos) out.push(`${it.chaos.node.toUpperCase()} ${it.chaos.action === 'latency' ? `chậm ×${it.chaos.value}` : `lỗi ${pct(it.chaos.value)}`}`);
+  if (it.chaos) out.push(`${it.chaos.node === 'ext' ? 'Đối tác' : it.chaos.node.toUpperCase()} ${it.chaos.action === 'latency' ? `chậm ×${it.chaos.value}` : `lỗi ${pct(it.chaos.value)}`}`);
   if (it.clientRetries) out.push(`retry ×${it.clientRetries}`);
   if (it.cacheBust) out.push(`phá cache ${pct(it.cacheBust)}`);
   if (it.cacheTtlMs) out.push(`cache TTL ${it.cacheTtlMs / 1000}s`);

@@ -53,6 +53,15 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
   - Hotfix chỉ huỷ sự cố trong lượt, không gỡ debuff. **Rollback** (`op: cleanse`) gỡ mọi debuff; Hotfix nâng cấp gỡ 1.
   - Debuff: Hàng xóm ồn ào (API −1 instance), Hết CPU credit (API chậm ×1.4), DB nghẽn kéo dài (DB chậm ×1.5), Hoá đơn tăng vọt (chi phí ×1.5), Kiệt sức on-call (−1 Ops mỗi lượt).
   - Buff: Chặn theo vùng (lá Geo-block, bot ×0.7), Tarpit (request bot bị chặn gây sát thương ×1.5).
+- **Slot hạ tầng** (`battle.slots`, `CardDef.slot`). Lá có `slot` lắp một module (`state.modules`) thay vì sửa thẳng design. `designOf(content, state)` dựng design của trận từ design gốc (scale vĩnh viễn và relic sửa thẳng vào đây) cộng mọi module theo thứ tự lắp, nên gỡ module là hiệu ứng của nó mất sạch.
+  - Nhóm `api` (3 slot): timeout, backoff, breaker, pool, retry budget, bigger queue, load shed, Autoscaler.
+  - Nhóm `data` (2 slot): Redis, Index, Replica, Vertical, Message Queue.
+  - Đánh lại lá đã lắp thì module lên cấp, không tốn slot (Redis +1k key mỗi cấp; tune áp thêm một lần).
+  - Nhóm đầy: `playCard(..., { replace })` bắt buộc chỉ ra module bị gỡ; `needsReplace` cho UI biết khi nào phải hỏi.
+  - Scale API, WAF và các lá Hành động không tốn slot.
+- **Đối tác** (`ext`): mỗi request, sau khi đọc dữ liệu, API còn gọi đồng bộ một dịch vụ đối tác (thanh toán, email). Một số địch làm đối tác chậm (`chaos.node: 'ext'`), giữ slot API.
+  - **Message Queue** đặt hàng đợi giữa API và đối tác: API trả lời ngay, worker gọi đối tác sau. Việc lỗi (`asyncErr`) hoặc còn tồn (`backlog`) cuối lượt tính là request lỗi theo phần của người dùng thật.
+  - **Autoscaler (HPA)** gắn `autoscale` của engine vào API: thêm tối đa 4 pod khi bận, mỗi pod mất 3s mới nhận tải, chỉ tính tiền lúc chạy.
 - **Bot thích nghi** (`battle.adapt`): lượt nào chặn từ `at` bot trở lên thì cộng 1 tầng `adapted` (lách thêm bộ lọc mỗi tầng, tối đa `maxStacks`). Ngừng lọc mạnh `turns` lượt thì hết. Luật này để lọc bot không còn vừa là phòng thủ vừa là sát thương miễn phí mãi.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.

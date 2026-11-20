@@ -13,6 +13,8 @@ export type RarityWeights = Record<Exclude<Rarity, 'basic'>, number>;
 export type CardType = 'infra' | 'policy' | 'action' | 'attack' | 'curse';
 /** Node a card targets. The battle topology is client → lb → api → [cache] → db. */
 export type NodeRef = 'api' | 'db';
+/** Slot groups of the system: a card with `slot` installs a module there, and a full group means replacing one. */
+export type Layer = 'api' | 'data';
 
 export type Effect =
   /** Add instances to a node. `temp`: only for the turn it is played. */
@@ -43,6 +45,10 @@ export type Effect =
   | { op: 'tune'; node: NodeRef; mul: TuneMul }
   /** Exhaust every unplayable card (curse) in hand; `draw`: draw one per card removed. */
   | { op: 'purge'; draw?: boolean }
+  /** HPA on the API: up to `extra` more pods when busy, each `podStartMs` to start; pods cost only while they run. */
+  | { op: 'autoscale'; extra: number; podStartMs: number; target: number }
+  /** Put a queue between the API and the partner service: the API answers at once, `consumers` workers call the partner later. */
+  | { op: 'queue'; consumers: number; queueSize: number }
   /** Gain a status (`statuses.json`) for `turns` turns, counting this one. */
   | { op: 'status'; status: string; turns: number; stacks?: number }
   /** Remove `n` debuffs (all when absent), newest first. */
@@ -82,6 +88,13 @@ export interface StatusDef {
   mods: StatusMods;
 }
 
+export interface ModuleInst {
+  uid: number;
+  card: string;
+  /** Times the card was played: each extra play levels the module up. */
+  level: number;
+}
+
 /** A status in play. `turns` counts the turns left, this one included. */
 export interface StatusInst {
   id: string;
@@ -109,6 +122,8 @@ export interface CardDef {
   effects: Effect[];
   /** Removed from the fight after playing. */
   exhaust?: boolean;
+  /** Installs a module in this slot group (see `Layer`); playing it again levels the module up instead. */
+  slot?: Layer;
   /** Curses: cannot be played, just clog the hand. */
   unplayable?: boolean;
   /** What the upgraded copy (id `<id>+`, from a rest stop) changes. */
@@ -137,8 +152,8 @@ export interface Intent {
   text: string;
   /** Bot requests per second at full attacker HP. */
   botRps: number;
-  /** Chaos applied for the whole turn (engine `events`). */
-  chaos?: { node: NodeRef; action: 'latency' | 'errors'; value: number };
+  /** Chaos applied for the whole turn (engine `events`). `ext`: the partner service (payments, email, webhooks). */
+  chaos?: { node: NodeRef | 'ext'; action: 'latency' | 'errors'; value: number };
   /** Clients (bots and users) retry failed requests this many times, no backoff. */
   clientRetries?: number;
   /** Cache busting (0..1): random keys flatten the key popularity (zipf × (1 − bust)), so the cache hits less. */
@@ -242,6 +257,8 @@ export interface BattleConfig {
   overBudgetDamage: number;
   /** Bot requests filtered per point of damage to the attacker. */
   blockedPerDamage: number;
+  /** Module slots per group. */
+  slots: Record<Layer, number>;
   /** Bots adapt: a turn that filters at least `at` of them adds a stack of `status` for `turns` turns. */
   adapt?: { at: number; status: string; turns: number };
   startingDeck: string[];
@@ -523,6 +540,8 @@ export interface BattleState {
     /** Memory leak built up so far (see `Intent.leak`). */
     leak?: number;
   };
+  /** Installed modules, oldest first (see `CardDef.slot`). `card` keeps the "+" of an upgraded copy. */
+  modules?: ModuleInst[];
   /** Timed effects in play (see `StatusDef`). */
   statuses?: StatusInst[];
   /** Real users' traffic multiplier for this fight (default 1). */

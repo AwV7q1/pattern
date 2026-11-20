@@ -373,9 +373,10 @@ export function CardFace({
       </span>
 
       <p className={cn('mt-1.5 line-clamp-2 px-1 text-center text-[13px] font-bold leading-tight', def.upgraded && 'text-emerald-300')}>{def.name}</p>
-      <span className={cn('mx-auto mt-1 flex items-center gap-1 rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
+      <span className={cn('mx-auto mt-1 flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-px text-[9px] font-semibold uppercase tracking-wider', style.chip)}>
         <TypeIcon aria-hidden className="size-2.5" />
         {style.label}
+        {def.slot && <span className="whitespace-nowrap opacity-80">· slot {def.slot === 'api' ? 'API' : 'data'}</span>}
       </span>
       <p className="flex flex-1 items-center justify-center px-1 pt-1 text-center text-[11px] leading-snug text-foreground/90">{def.text}</p>
       {lesson && <p className="mt-1 border-t border-white/10 px-1 pt-1.5 text-[10px] italic leading-snug text-muted-foreground">{def.lesson}</p>}

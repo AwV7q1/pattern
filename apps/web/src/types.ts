@@ -329,6 +329,9 @@ export interface Summary {
   sloWindowRatio: number;
   budgetPerHour: number | null;
   backlog: number;
+  /** Messages a queue accepted that later succeeded or failed (async work). */
+  asyncOk?: number;
+  asyncErr?: number;
   stars: number;
 }
 

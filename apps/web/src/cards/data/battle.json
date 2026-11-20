@@ -12,6 +12,10 @@
   "latencyDamage": 3,
   "overBudgetDamage": 10,
   "blockedPerDamage": 800,
+  "slots": {
+    "api": 3,
+    "data": 2
+  },
   "adapt": {
     "at": 0.5,
     "status": "adapted",
@@ -72,7 +76,8 @@
           "queueSize": 30,
           "latencyP50Ms": 20,
           "latencyP99Ms": 80,
-          "costPerHour": 0.1
+          "costPerHour": 0.1,
+          "routing": "sequence"
         }
       },
       {
@@ -91,6 +96,23 @@
           "latencyP99Ms": 50,
           "costPerHour": 0.5
         }
+      },
+      {
+        "id": "ext",
+        "kind": "service",
+        "label": "Đối tác (thanh toán, email)",
+        "position": {
+          "x": 0,
+          "y": 140
+        },
+        "config": {
+          "instances": 1,
+          "concurrency": 60,
+          "queueSize": 40,
+          "latencyP50Ms": 4,
+          "latencyP99Ms": 20,
+          "costPerHour": 0.05
+        }
       }
     ],
     "edges": [
@@ -107,7 +129,14 @@
       {
         "source": "api",
         "target": "db",
-        "latencyMs": 1
+        "latencyMs": 1,
+        "order": 0
+      },
+      {
+        "source": "api",
+        "target": "ext",
+        "latencyMs": 1,
+        "order": 1
       }
     ]
   },

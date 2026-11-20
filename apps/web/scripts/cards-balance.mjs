@@ -36,7 +36,12 @@ const policies = {
   idle: () => null,
   random: (s, rnd) => {
     const playable = s.hand.filter((c) => rules.canPlay(content, s, c.uid));
-    return playable.length ? playable[Math.floor(rnd() * playable.length)].uid : null;
+    if (!playable.length) return null;
+    const uid = playable[Math.floor(rnd() * playable.length)].uid;
+    const layer = rules.needsReplace(content, s, uid);
+    if (!layer) return uid;
+    const mods = rules.modulesIn(content, s, layer);
+    return { uid, replace: mods[Math.floor(rnd() * mods.length)].uid };
   },
 };
 
@@ -44,9 +49,9 @@ const policies = {
 const SMART = {
   // A reasonable human: infra first, then defend on big intents, otherwise attack.
   greedy: {
-    big: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'geo_block', 'tarpit', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
-    calm: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'tarpit', 'honeypot', 'geo_block', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
-    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart', 'rollback', 'geo_block', 'tarpit'],
+    big: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'queue', 'autoscaler', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'geo_block', 'tarpit', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
+    calm: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'queue', 'autoscaler', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'tarpit', 'honeypot', 'geo_block', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
+    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart', 'rollback', 'geo_block', 'tarpit', 'queue', 'autoscaler'],
   },
   // The rut the research doc measured: the same seven cards in the same order, every fight.
   rut: {
@@ -63,8 +68,8 @@ const SMART = {
   },
   // Single axis: make the system fast (cache, DB, scale) and nothing else.
   cacheOnly: {
-    big: ['coffee', 'refactor', 'rollback', 'cache', 'cache_key', 'swr', 'index', 'scale_api', 'replica', 'vertical', 'bigger_queue', 'timeout', 'pool', 'stale', 'buffer', 'postmortem', 'runbook', 'patch', 'block_ip', 'honeypot'],
-    want: ['cache', 'index', 'replica', 'vertical', 'scale_api', 'swr', 'cache_key', 'pool', 'timeout', 'runbook', 'refactor', 'rollback'],
+    big: ['coffee', 'refactor', 'rollback', 'cache', 'cache_key', 'swr', 'index', 'queue', 'autoscaler', 'scale_api', 'replica', 'vertical', 'bigger_queue', 'timeout', 'pool', 'stale', 'buffer', 'postmortem', 'runbook', 'patch', 'block_ip', 'honeypot'],
+    want: ['cache', 'index', 'queue', 'autoscaler', 'replica', 'vertical', 'scale_api', 'swr', 'cache_key', 'pool', 'timeout', 'runbook', 'refactor', 'rollback'],
   },
   // Single axis: filter bots (WAF, rate limit, captcha) and hit the botnet.
   filterOnly: {
@@ -75,7 +80,7 @@ const SMART = {
 
 function useless(id, s, intent) {
   if (id === 'hotfix') return !rules.hotfixable(intent);
-  if (id === 'cache') return (rules.nodeOf(s.design, 'cache')?.config.cache?.capacity ?? 0) >= 4000;
+  if (id === 'cache') return (rules.nodeOf(rules.designOf(content, s), 'cache')?.config.cache?.capacity ?? 0) >= 4000;
   if (id === 'cache_key') return !!s.cache?.normalize;
   if (id === 'swr') return !!s.cache?.swr;
   if (id === 'restart') return (s.enemy.leak ?? 0) < 0.6;
@@ -85,8 +90,19 @@ function useless(id, s, intent) {
     return !bad.length || (bad.length === 1 && bad[0].id === 'adapted' && bad[0].stacks < 2);
   }
   if (id === 'tarpit' || id === 'geo_block') return (s.statuses ?? []).some((x) => x.id === (id === 'tarpit' ? 'tarpit' : 'geo_blocked') && x.turns > 1) && id === 'tarpit';
-  if (id === 'index') return rules.nodeOf(s.design, 'db').config.latencyP50Ms < 5;
+  if (id === 'index') return rules.nodeOf(rules.designOf(content, s), 'db').config.latencyP50Ms < 5;
+  // a module already in: playing it again only levels it up, which does nothing for these
+  if (['timeout', 'backoff', 'breaker', 'pool', 'retry_budget', 'autoscaler', 'queue', 'load_shed'].includes(id)) return !!rules.moduleOf(s, id);
   return false;
+}
+
+// A full slot group: take out the module this policy values least, if it values it less than the new card.
+function replaceFor(p, s, uid, id) {
+  const layer = rules.needsReplace(content, s, uid);
+  if (!layer) return { uid };
+  const rank = (card) => { const i = p.big.indexOf(rules.baseId(card)); return i < 0 ? Infinity : i; };
+  const worst = rules.modulesIn(content, s, layer).reduce((a, b) => (rank(b.card) > rank(a.card) ? b : a));
+  return rank(worst.card) > rank(id) ? { uid, replace: worst.uid } : null;
 }
 
 for (const [name, p] of Object.entries(SMART)) {
@@ -95,7 +111,9 @@ for (const [name, p] of Object.entries(SMART)) {
     const big = intent.botRps >= 1000 || intent.chaos || intent.clientRetries;
     for (const id of big || !p.calm ? p.big : p.calm) {
       const c = s.hand.find((h) => rules.baseId(h.id) === id && rules.canPlay(content, s, h.uid));
-      if (c && !((name === 'rut' || name === 'thin') ? false : useless(id, s, intent))) return c.uid;
+      if (!c || ((name === 'rut' || name === 'thin') ? false : useless(id, s, intent))) continue;
+      const move = replaceFor(p, s, c.uid, id);
+      if (move) return move;
     }
     return null;
   };
@@ -120,8 +138,13 @@ function fight(policy, seed, setup) {
   const rnd = () => ((r = (r * 1664525 + 1013904223) >>> 0) / 4294967296);
   while (s.phase === 'player' && s.turn <= 30) {
     s = rules.setTarget(s, aim(policy, s, rnd));
-    let uid;
-    while (s.phase === 'player' && (uid = policies[policy](s, rnd)) != null) s = rules.playCard(content, s, uid);
+    let move;
+    while (s.phase === 'player' && (move = policies[policy](s, rnd)) != null) {
+      const { uid, replace } = typeof move === 'number' ? { uid: move } : move;
+      const next = rules.playCard(content, s, uid, { replace });
+      if (next === s) break;
+      s = next;
+    }
     if (s.phase !== 'player') break;
     const plan = rules.planTurn(content, s);
     const summary = run(plan.input);

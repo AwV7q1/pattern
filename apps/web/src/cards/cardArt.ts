@@ -3,6 +3,8 @@
 
 import {
   Archive,
+  Inbox,
+  TrendingUp,
   BellRing,
   Cpu,
   DatabaseZap,
@@ -79,6 +81,8 @@ const CARD_ICON: Record<string, LucideIcon> = {
   postmortem: FileSearch,
   null_route: CircleSlash,
   rollback: Undo2,
+  autoscaler: TrendingUp,
+  queue: Inbox,
   geo_block: Globe,
   tarpit: Snail,
   tech_debt: Bug,
