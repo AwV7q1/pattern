@@ -522,3 +522,58 @@ Riêng bước chỉnh độ khó: máu 90 và địch +15%/tầng, khi chưa c�
    - CDN.
    - Elite và trùm đòi lá chuyên dụng.
    - Relic +1 slot.
+
+## 12. Giai đoạn 3: bot đo bằng Dự kiến, dồn độ khó xuống trận thường
+
+### Bot `forecast`
+Bot này chơi như người đọc ô Dự kiến trên giao diện:
+- Mỗi lần ra quyết định, nó thử từng lá trong tay trên một bản sao trạng thái. Nếu nhóm slot đầy, nó thử thêm từng phương án thay module. Mỗi phương án được chạy qua `planTurn`, engine và `scoreTurn`, giống hệt ô Dự kiến.
+- Giá trị một trạng thái = −(máu sẽ mất) − 0.6 × (máu địch còn lại sau lượt; máu lính tính một nửa). Thắng ngay thì +10⁴; chết trong lượt thì −10⁴.
+- Lá vĩnh viễn (module, scale không tạm) được nhân đôi phần lợi, vì còn tác dụng các lượt sau. Lá Ops và rút bài được cộng 1.5, vì dự kiến lượt này không thấy được giá trị của chúng.
+- Lá không đổi gì vẫn được đánh, vì Ops dư cuối lượt là mất, trừ khi lá vô dụng hoặc phải gỡ một module.
+- Ngoài trận, nó draft như `greedy` nhưng ưu tiên lá hoàn thành một combo.
+- Mỗi lần chạy engine mất khoảng 23 ms. Có memo theo input, và cờ `--jobs=4` chia seed ra nhiều tiến trình. 40 run cả tháp mất khoảng 2 phút.
+- Giới hạn: bot chỉ nhìn lượt hiện tại. Nó không giữ lá cho lượt sau và không tính trước ý định kế tiếp.
+
+So từng địch (bộ khởi đầu, không nhân hệ số, 80 máu, 6 trận mỗi địch): `forecast` thắng trung bình 62%, `greedy` 28%. Forecast thắng bằng hoặc hơn greedy ở mọi địch.
+
+**Kết luận chính**: với độ khó cũ, `forecast` đã vượt tháp **30%**, còn `greedy` chỉ 8%. Game không quá khó; con số 8% thấp là do bot `greedy` kém.
+
+### Dồn độ khó
+Mình quét lưới với 20 run, bằng biến môi trường `BALANCE_RUN`:
+- Làm trận thường khó hơn (máu và tải) thì cả `rut` lẫn `forecast` cùng tụt, khoảng cách giữa hai bên giữ nguyên.
+- Nới trùm có lợi cho `rut` nhiều nhất: với tải trùm ×0.9, `rut` thắng trùm 98%.
+- Bộ được chọn:
+  - trận thường: máu ×0.6 và tải ×0.75 (trước là 0.45 và 0.6);
+  - trùm: máu ×0.85 (trước là 1), tải giữ ×1.
+
+Kết quả với 40 run:
+
+| Chiến thuật | Vượt tháp trước | Sau | Trận thường (thắng / máu mất) | Chết ở đâu |
+|---|---|---|---|---|
+| random | 0% | 0% | 90% / −13 (trước 96% / −8) | trùm T1 14, elite T1 10, trận thường 16 |
+| greedy | 8% | 3% | 94% / −10 | trùm 17, trận thường 12, elite 10 |
+| rut | 65% | **53%** | 98% / −9 (trước 100% / −4) | trận thường 8, elite 6, trùm 5 |
+| thin | 10% | 5% | 96% / −11 | trùm 16, trận thường 13, elite 9 |
+| cacheOnly | 0% | 0% | 89% / −13 | — |
+| filterOnly | 8% | 0% | 90% / −13 | trận thường T2 20 |
+| **forecast** | 30% | **28%** | 98% / −10 (trước 99% / −5) | trùm 15, elite 9, trận thường 5 |
+
+Đối chiếu mục tiêu:
+
+| Mục tiêu | Kết quả |
+|---|---|
+| `forecast` ≥ 25% | Đạt: 28% |
+| `rut` ≤ 55% | Đạt: 53% |
+| `filterOnly` và `cacheOnly` < 25% | Đạt: 0% và 0% |
+| Chết rải ra cả trận thường, elite và trùm | Đạt: `rut` giờ chết nhiều nhất ở trận thường |
+| `random` thắng trận thường 60–75% | Chưa: 90%. Trận thường vẫn dễ với người chơi bấm bừa, nhưng đã bào mòn máu gần gấp đôi |
+
+`greedy` giờ chỉ còn để tham chiếu, không còn dùng để chỉnh độ khó.
+
+### Việc tiếp theo
+1. **Khoảng cách `rut` và `forecast`** (53% và 28%) phần lớn nằm ở draft: `rut` có cả Redis lẫn Index và bộ bài 15 lá; `forecast` nhận tới 18 lá. Cần thử thêm:
+   - bot forecast draft bằng cách mô phỏng: thêm lá vào bộ, rồi đánh thử vài trận;
+   - phần thưởng lá có trọng số combo.
+2. Bot forecast nhìn trước 2 lượt, dùng ý định kế tiếp đang hiện trên UI.
+3. Các ý tưởng còn lại ở mục 11: chia tải theo loại request, CDN, elite và trùm đòi lá chuyên dụng, relic +1 slot.

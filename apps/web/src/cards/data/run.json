@@ -69,8 +69,8 @@
     "ddos_lord"
   ],
   "fight": {
-    "hp": 0.45,
-    "rps": 0.6
+    "hp": 0.6,
+    "rps": 0.75
   },
   "elite": {
     "hp": 0.8,
@@ -78,7 +78,7 @@
     "maxHp": 5
   },
   "boss": {
-    "hp": 1,
+    "hp": 0.85,
     "rps": 1
   },
   "actScale": {

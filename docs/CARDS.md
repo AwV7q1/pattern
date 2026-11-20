@@ -313,6 +313,8 @@ pnpm balance:cards 30 --run   # leo cả tháp: tỉ lệ vượt từng tầng 
 pnpm balance:cards 40 --run --by-enemy  # thêm tỉ lệ thắng, máu mất, số lượt theo từng địch
 pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật; trận quá 30 lượt tính là thua do giằng co
 pnpm balance:cards 20 --each               # từng địch thường và tinh anh, không nhân hệ số, 80 máu
+pnpm balance:cards 40 --run --jobs=4       # chia seed ra 4 tiến trình (bot forecast chạy engine ~10 lần mỗi lá)
+BALANCE_RUN='{"fight":{"hp":0.6}}' pnpm balance:cards 20 --run  # thử hệ số độ khó mà không sửa run.json
 ```
 
 Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý; giữ bộ bài mỏng sau 18 lá), `rut` (bộ bài lối mòn cũ của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): có sẵn Redis và Index, thêm 2 Scale API và 2 Rate limit, không nhận thêm lá; đây là mốc khó nhất), `thin` (bộ khởi đầu hiện tại cộng Redis, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Các bot thông minh biết chọn module để gỡ khi nhóm slot đầy. Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
