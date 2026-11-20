@@ -2,8 +2,8 @@
  * Postmortem of a fight: what hurt, where, and which cards would have helped.
  * Pure (reads the turn reports only), so it works on a saved fight too.
  */
-import { baseId, chassisDef } from './rules.ts';
-import type { BattleState, Content, HotNode, TurnReport } from './types';
+import { baseId, budgetOf, chassisDef } from './rules.ts';
+import type { BattleState, Content, HotNode, NodeCost, TurnReport } from './types';
 
 export type CauseKind = 'db' | 'api' | 'ext' | 'cache' | 'queue' | 'down' | 'errors' | 'bots' | 'latency' | 'budget';
 
@@ -55,7 +55,7 @@ const ADVICE: Record<CauseKind, string[]> = {
   errors: ['breaker', 'retry_budget', 'timeout'],
   bots: ['waf', 'edge_shield', 'block_ip', 'rate_limit', 'captcha'],
   latency: ['timeout', 'cache', 'cdn'],
-  budget: ['autoscaler', 'refactor'],
+  budget: ['rightsize', 'reserved', 'spot', 'scale_in', 'cost_alert', 'autoscaler'],
 };
 
 type Role = Exclude<CauseKind, 'down' | 'errors' | 'bots' | 'latency' | 'budget'> | 'lb';
@@ -82,7 +82,7 @@ function culprit(content: Content, chassis: string, r: TurnReport): { hot: HotNo
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
-function describe(kind: CauseKind, r: TurnReport, hot: HotNode | undefined, content: Content): string {
+function describe(kind: CauseKind, r: TurnReport, hot: HotNode | undefined, content: Content, chassis: { chassis: string }): string {
   const at = `lượt ${r.turn} (${r.intent})`;
   const name = hot?.label ?? '';
   switch (kind) {
@@ -106,9 +106,43 @@ function describe(kind: CauseKind, r: TurnReport, hot: HotNode | undefined, cont
     }
     case 'latency':
       return `p99 lên ${Math.round(r.p99Ms).toLocaleString('vi-VN')}ms ở ${at}, vượt SLO ${content.battle.sloP99Ms}ms. Chậm cũng là hỏng với người dùng.`;
-    case 'budget':
-      return `Chi phí lên $${r.costPerHour.toFixed(2)}/h ở ${at}. Scale cố định cả trận thì tốn tiền cả lúc không cần.`;
+    case 'budget': {
+      const top = r.costs?.[0];
+      const total = r.costPerHour || 1;
+      const where = top ? ` Tốn nhất: ${top.label} ($${top.costPerHour.toFixed(2)}/h, ${Math.round((top.costPerHour / total) * 100)}%${top.util !== undefined && top.util < 0.3 ? `, chỉ dùng ${Math.round(top.util * 100)}% công suất` : ''}).` : '';
+      const egress = r.egressPerHour ? ` Egress do bot tải ra: $${r.egressPerHour.toFixed(2)}/h, lọc bot là giảm được.` : '';
+      return `Chi phí lên $${r.costPerHour.toFixed(2)}/h ở ${at}, vượt ngân sách $${budgetOf(content, chassis).toFixed(2)}/h.${where}${egress} Scale cố định cả trận thì tốn tiền cả lúc không cần.`;
+    }
   }
+}
+
+/** Each node's average $/h (and utilization) over the turns that recorded costs, most expensive first; egress averaged over those turns too. */
+export function spendByNode(reports: TurnReport[]): { costs: NodeCost[]; egress: number } {
+  const seen = reports.filter((r) => r.costs?.length);
+  if (!seen.length) return { costs: [], egress: 0 };
+  const acc = new Map<string, NodeCost & { n: number; u: number; un: number }>();
+  for (const r of seen)
+    for (const c of r.costs!) {
+      const a = acc.get(c.node) ?? { ...c, costPerHour: 0, instances: 0, n: 0, u: 0, un: 0 };
+      a.costPerHour += c.costPerHour;
+      a.instances += c.instances;
+      if (c.util !== undefined) {
+        a.u += c.util;
+        a.un++;
+      }
+      a.n++;
+      acc.set(c.node, a);
+    }
+  const k = seen.length;
+  const costs = [...acc.values()]
+    .map(({ n: _n, u, un, ...c }) => {
+      const out: NodeCost = { node: c.node, kind: c.kind, label: c.label, instances: Math.round((c.instances / k) * 10) / 10, costPerHour: Math.round((c.costPerHour / k) * 1000) / 1000 };
+      if (un) out.util = Math.round((u / un) * 100) / 100;
+      return out;
+    })
+    .sort((a, b) => b.costPerHour - a.costPerHour);
+  const egress = Math.round((seen.reduce((s, r) => s + (r.egressPerHour ?? 0), 0) / k) * 100) / 100;
+  return { costs, egress };
 }
 
 /** What cost the fight its Error Budget, worst first. `deck` (card ids) puts the cards the player has first. */
@@ -123,14 +157,14 @@ export function postmortem(content: Content, state: Pick<BattleState, 'reports' 
       cur.damage += damage;
       if (damage > peak.get(kind)!) {
         peak.set(kind, damage);
-        Object.assign(cur, { turn: r.turn, intent: r.intent, node: hot?.node, text: describe(kind, r, hot, content) });
+        Object.assign(cur, { turn: r.turn, intent: r.intent, node: hot?.node, text: describe(kind, r, hot, content, state) });
       }
       return;
     }
     peak.set(kind, damage);
     const known = ADVICE[kind].filter((id) => content.cards.some((c) => c.id === id));
     const advice = [...known.filter((id) => have.has(id)).map((card) => ({ card, inDeck: true })), ...known.filter((id) => !have.has(id)).map((card) => ({ card, inDeck: false }))];
-    byKind.set(kind, { kind, damage, turn: r.turn, intent: r.intent, ...(hot && { node: hot.node }), title: TITLE[kind], text: describe(kind, r, hot, content), advice });
+    byKind.set(kind, { kind, damage, turn: r.turn, intent: r.intent, ...(hot && { node: hot.node }), title: TITLE[kind], text: describe(kind, r, hot, content, state), advice });
   };
 
   for (const r of state.reports) {

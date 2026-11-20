@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, ChassisDef, CardInst, ComboDef, Content, Effect, EnemyDef, HotNode, Intent, IntentWhen, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, SocketDef, SocketKind, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, ChassisDef, CardInst, ComboDef, Content, Effect, EnemyDef, HotNode, Intent, IntentWhen, MinionDef, MinionState, ModuleInst, NodeCost, NodeRef, RelicDef, SocketDef, SocketKind, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -356,7 +356,7 @@ export const mainCall = (content: Content, state: Pick<BattleState, 'chassis'>, 
 /** Effects that change the topology: from a socketed card they live in its module, so removing it undoes them. */
 const DESIGN_OPS = new Set<Effect['op']>(['cache', 'edge', 'tune', 'scale', 'autoscale', 'queue', 'cdn', 'shard']);
 /** Effects that only work while their module is in (read by the rules, not built into the design). */
-const MODULE_OPS = new Set<Effect['op']>(['edgeFilter', 'foresee', 'trace', 'alert']);
+const MODULE_OPS = new Set<Effect['op']>(['edgeFilter', 'foresee', 'trace', 'alert', 'spot', 'costGuard']);
 /** Effects that add nodes: built after the others, so a call policy follows the call into the new node and a shard copies a tuned DB. */
 const TOPOLOGY = new Set<Effect['op']>(['cache', 'queue', 'cdn', 'shard']);
 
@@ -446,6 +446,13 @@ function moduleEffects<K extends Effect['op']>(content: Content, state: BattleSt
 
 /** Turns ahead the player sees (observability modules). */
 export const foresightOf = (content: Content, state: BattleState) => Math.max(state.revealed ?? 0, ...moduleEffects(content, state, 'foresee').map(({ e, level }) => Math.min(e.max, e.n * level)));
+/** Over-budget damage the spend alerts take off. */
+export const costGuardOf = (content: Content, state: BattleState) => moduleEffects(content, state, 'costGuard').reduce((sum, { e, level }) => sum + Math.min(e.max, e.cut * level), 0);
+/** Spot instances in the system: how many, and the odds a turn loses them. */
+export function spotOf(content: Content, state: BattleState): { n: number; evict: number } {
+  const all = moduleEffects(content, state, 'spot');
+  return { n: all.reduce((sum, { e, level }) => sum + e.n * level, 0), evict: Math.max(0, ...all.map(({ e }) => e.evict)) };
+}
 /** The forecast marks the bottleneck (tracing). */
 export const tracing = (content: Content, state: BattleState) => moduleEffects(content, state, 'trace').length > 0;
 /** Extra cards drawn after a turn where a node failed (alerting). */
@@ -533,6 +540,18 @@ export function designOf(content: Content, state: BattleState): Design {
     const place = placeOf(chassis, socketOf(content, state, m.socket));
     for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level, place);
   }
+  // spot instances: cheap extra API capacity, unless reclaimed this turn
+  if (!state.spotEvicted)
+    for (const m of ordered)
+      for (const e of cardDef(content, m.card).effects) {
+        if (e.op !== 'spot') continue;
+        const cfg = nodeOf(design, nodeAt(placeOf(chassis, socketOf(content, state, m.socket)), 'api'))!.config!;
+        const base = cfg.instances ?? 1;
+        const extra = e.n * m.level;
+        const price = cfg.costPerHour ?? 0;
+        cfg.costPerHour = Math.round(((base * price + extra * price * e.price) / (base + extra)) * 1000) / 1000;
+        cfg.instances = base + extra;
+      }
   // KEDA: the queue's workers scale with its backlog
   const queue = nodeOf(design, 'queue');
   if (queue && activeCombos(content, state).some((c) => c.flag === 'keda'))
@@ -810,6 +829,9 @@ function apply(content: Content, state: BattleState, effect: Effect) {
     case 'reveal':
       state.revealed = Math.max(state.revealed ?? 0, effect.n);
       break;
+    case 'prepay':
+      state.prepaid = (state.prepaid ?? 0) + effect.n;
+      break;
     case 'restart':
       delete state.enemy.leak;
       state.temp.api -= 1;
@@ -968,11 +990,13 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
     if (!hotfix && intent.cacheTtlMs) model.ttlMs = intent.cacheTtlMs;
   }
   const legitRps = legitRpsNow(content, state);
+  const egressPerHour = intent.egress ? Math.round(((intent.egress * botPassed) / 1000) * 100) / 100 : 0;
   return {
     intent,
     legitRps,
     botRps: raw,
     botBlockedRps: raw - botPassed,
+    ...(egressPerHour > 0 && { egressPerHour }),
     input: {
       design,
       scenario: {
@@ -1003,6 +1027,39 @@ export function hotfixable(intent: Intent): boolean {
   return !!(intent.chaos || intent.clientRetries || intent.cacheBust || intent.cacheTtlMs || intent.squeeze);
 }
 
+/** $/h of a turn: the engine's (instances) plus egress. */
+export const turnCost = (plan: Pick<TurnPlan, 'egressPerHour'>, summary: Pick<Summary, 'costPerHour'>) => Math.round((summary.costPerHour + (plan.egressPerHour ?? 0)) * 1000) / 1000;
+
+/** Each paid node's share of a turn's $/h, most expensive first. With the engine's windows, autoscaled nodes count at their average size. */
+export function nodeCosts(design: Design, windows?: { nodes: { utilization: number; instances: number }[] }[]): NodeCost[] {
+  const out: NodeCost[] = [];
+  design.nodes.forEach((node, k) => {
+    const price = node.config?.costPerHour ?? 0;
+    if (price <= 0) return;
+    const seen = windows?.map((w) => w.nodes[k]).filter(Boolean) ?? [];
+    const instances = seen.length ? seen.reduce((s, w) => s + w.instances, 0) / seen.length : (node.config?.instances ?? 1);
+    const util = seen.length ? seen.reduce((s, w) => s + w.utilization, 0) / seen.length : undefined;
+    out.push({
+      node: node.id,
+      kind: node.kind,
+      label: node.label ?? node.id,
+      instances: Math.round(instances * 10) / 10,
+      costPerHour: Math.round(price * instances * 1000) / 1000,
+      ...(util !== undefined && { util: Math.round(util * 100) / 100 }),
+    });
+  });
+  return out.sort((a, b) => b.costPerHour - a.costPerHour);
+}
+
+/** A fight's cloud bill in gold: spend per turn (× `run.bill.perDollarTurn`, × relic deals), plus what was paid up front. */
+export function cloudBill(content: Content, state: Pick<BattleState, 'reports' | 'prepaid' | 'relics'>): { usage: number; prepaid: number; total: number } {
+  const rate = content.run.bill?.perDollarTurn ?? 0;
+  const deal = state.relics.reduce((m, id) => m * (content.relics.find((r) => r.id === id)?.billMul ?? 1), 1);
+  const usage = Math.round(state.reports.reduce((s, r) => s + r.costPerHour, 0) * rate * deal);
+  const prepaid = state.prepaid ?? 0;
+  return { usage, prepaid, total: usage + prepaid };
+}
+
 /** Damage both sides take for a turn, from the engine's summary. Shared by the preview and `resolveTurn`. */
 export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, summary: Summary): TurnScore {
   const b = content.battle;
@@ -1013,8 +1070,9 @@ export function scoreTurn(content: Content, state: BattleState, plan: TurnPlan, 
   const legitFailed = Math.round(summary.errorRate * plan.legitRps * sec + (sent > 0 ? (lostAsync * plan.legitRps) / sent : 0));
   const failed = Math.round(legitFailed / b.failedPerDamage);
   const latency = summary.p99Ms > b.sloP99Ms ? b.latencyDamage : 0;
-  const over = summary.costPerHour - budgetOf(content, state);
-  const budget = over > 0.001 ? Math.ceil(over * b.overBudgetDamage) : 0;
+  const over = turnCost(plan, summary) - budgetOf(content, state);
+  const mul = enemyDef(content, state).passive?.budgetDamageMul ?? 1;
+  const budget = over > 0.001 ? Math.max(0, Math.ceil(over * b.overBudgetDamage * mul) - costGuardOf(content, state)) : 0;
   const raw = failed + latency + budget;
   const absorbed = Math.min(state.headroom, raw);
   const total = Math.min(b.maxDamagePerTurn, raw - absorbed);
@@ -1045,7 +1103,7 @@ export function hotNodes(design: Design, windows: { nodes: { utilization: number
     .slice(0, n);
 }
 
-export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary, hot?: HotNode[]): BattleState {
+export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan, summary: Summary, hot?: HotNode[], costs?: NodeCost[]): BattleState {
   const b = content.battle;
   const state = clone(prev);
   state.relicFired = [];
@@ -1058,7 +1116,11 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
 
   if (legitFailed > 0) notes.push(`${legitFailed.toLocaleString('vi-VN')} request của người dùng thật bị lỗi`);
   if (latency) notes.push(`p99 ${Math.round(summary.p99Ms)}ms vượt SLO ${b.sloP99Ms}ms`);
-  if (budget) notes.push(`Vượt ngân sách: $${summary.costPerHour.toFixed(2)}/h > $${budgetOf(content, state).toFixed(2)}/h`);
+  const cost = turnCost(plan, summary);
+  if (budget) notes.push(`Vượt ngân sách: $${cost.toFixed(2)}/h > $${budgetOf(content, state).toFixed(2)}/h`);
+  const guard = costGuardOf(content, state);
+  if (guard && cost > budgetOf(content, state) + 0.001) notes.push(`Cảnh báo chi phí đỡ ${guard} sát thương vượt ngân sách`);
+  if (plan.egressPerHour) notes.push(`Egress: bot tải ra $${plan.egressPerHour.toFixed(2)}/h băng thông`);
   if (absorbed) notes.push(`Headroom hấp thụ ${absorbed} sát thương`);
   if (capped) notes.push(`Sát thương tối đa ${b.maxDamagePerTurn}/lượt (bỏ qua ${capped})`);
   const lostAsync = (summary.asyncErr ?? 0) + (summary.backlog ?? 0);
@@ -1134,12 +1196,14 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     errorRate: summary.errorRate,
     p50Ms: summary.p50Ms,
     p99Ms: summary.p99Ms,
-    costPerHour: summary.costPerHour,
+    costPerHour: cost,
     legitFailed,
     damage: score.damage,
     enemyDamage,
     notes,
     ...(hot?.length && { hot }),
+    ...(costs?.length && { costs }),
+    ...(plan.egressPerHour && { egressPerHour: plan.egressPerHour }),
   };
   state.reports.push(report);
 
@@ -1175,6 +1239,11 @@ export function resolveTurn(content: Content, prev: BattleState, plan: TurnPlan,
     report.notes.push(`${def.passive.label}: WAF còn ${Math.round(state.waf * 100)}%`);
   }
   pickIntent(content, state);
+  const spot = spotOf(content, state);
+  if (spot.n > 0) {
+    state.spotEvicted = nextRandom(state) < spot.evict;
+    if (state.spotEvicted) report.notes.push(`Nhà cung cấp thu hồi Spot: lượt sau mất ${spot.n} instance giá rẻ`);
+  } else delete state.spotEvicted;
   state.ops = Math.max(1, b.opsPerTurn - (plan.intent.drainOps ?? 0) + statusMods(content, state).opsPerTurn);
   if (state.ops < b.opsPerTurn) report.notes.push(`Lượt sau chỉ còn ${state.ops} Ops`);
   draw(state, b.handSize);

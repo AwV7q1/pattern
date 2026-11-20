@@ -6,6 +6,7 @@ import {
   BellRing,
   Cable,
   Cpu,
+  PiggyBank,
   BookOpen,
   Bookmark,
   CalendarClock,
@@ -41,6 +42,7 @@ const RELIC_ICON: Record<string, LucideIcon> = {
   network: Network,
   cable: Cable,
   cpu: Cpu,
+  piggy: PiggyBank,
 };
 
 export const RELIC_RARITY: Record<RelicRarity, { label: string; tone: string }> = {

@@ -1182,6 +1182,97 @@
     ]
   },
   {
+    "id": "wallet_drainer",
+    "name": "Kẻ Rút Ví",
+    "description": "Denial of Wallet: không cần làm sập bạn, chỉ cần hóa đơn cloud cháy. Gọi endpoint đắt nhất, tải file lớn, ép autoscaler đẻ pod.",
+    "hp": 55,
+    "escalation": 0.3,
+    "passive": {
+      "label": "Đánh vào ví",
+      "text": "Vượt ngân sách mất gấp đôi Error Budget.",
+      "budgetDamageMul": 2
+    },
+    "intents": [
+      {
+        "id": "pricey",
+        "label": "Request đắt",
+        "icon": "debt",
+        "botRps": 900,
+        "costSpike": 2.5,
+        "text": "Bot ~900 rps gọi endpoint đắt nhất (xuất báo cáo, gọi AI): mỗi instance API tốn ×2.5 lượt này."
+      },
+      {
+        "id": "hotlink",
+        "label": "Hút băng thông",
+        "icon": "spike",
+        "botRps": 1400,
+        "egress": 0.5,
+        "text": "Bot ~1400 rps tải file lớn: mỗi 1.000 rps bot lọt vào tốn $0.50/h egress. Lọc bot là giảm hóa đơn.",
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "cdn"
+              ]
+            },
+            "tag": "Phản ứng: bạn có CDN",
+            "label": "Né CDN",
+            "icon": "slow",
+            "egress": 0.3,
+            "cacheBust": 0.7,
+            "text": "CDN giữ file tĩnh nên bot đổi query string để né cache: phá cache 70%, mỗi 1.000 rps bot lọt vào tốn $0.30/h egress."
+          }
+        ]
+      },
+      {
+        "id": "force_scale",
+        "label": "Ép autoscale",
+        "icon": "spike",
+        "botRps": 1600,
+        "burst": {
+          "atMs": 1000,
+          "ms": 6000,
+          "mul": 2
+        },
+        "text": "Bot ~1600 rps, dồn ×2 trong 6 giây.",
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Đẻ pod theo bot",
+            "icon": "debt",
+            "costSpike": 1.8,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~1600 rps, dồn ×2 trong 6 giây: autoscaler thêm pod cho bot, mỗi instance API tốn ×1.8, rồi Hoá đơn tăng vọt 2 lượt."
+          }
+        ]
+      },
+      {
+        "id": "invoice",
+        "label": "Chờ hóa đơn",
+        "icon": "heal",
+        "botRps": 600,
+        "heal": 6,
+        "inflict": [
+          {
+            "status": "bill_shock",
+            "turns": 2
+          }
+        ],
+        "text": "Bot ~600 rps, Kẻ Rút Ví hồi 6 máu. Log và egress dồn lại: Hoá đơn tăng vọt 2 lượt."
+      }
+    ]
+  },
+  {
     "id": "click_farm",
     "name": "Trại Click Farm",
     "description": "Tinh anh: hàng trăm điện thoại thật xếp trên giá, người thật được thuê bấm. Không bộ lọc nào phân biệt hết được.",

@@ -1355,3 +1355,96 @@ test('daily: score = 100 per node cleared, 1000 for the tower, 5 per Error Budge
   assert.equal(runs.runScore({ climbed: 12, phase: 'lost', hp: 0 }), 1200);
   assert.equal(runs.runScore({ climbed: 27, phase: 'won', hp: 40 }), 3900);
 });
+
+test('cloud bill: spend per turn (and what was paid up front) comes out of the reward, a discount deal cuts usage', () => {
+  let run = climbTo(fresh(5), 'battle');
+  run = { ...run, gold: 0 };
+  assert.equal(run.phase, 'battle');
+  const reports = [1.5, 1.5, 1].map((c) => ({ costPerHour: c }) as BattleState['reports'][number]);
+  const fight = { ...win(run, run.hp), reports, prepaid: 2 };
+  assert.deepEqual(rules.cloudBill(content, fight), { usage: 4, prepaid: 2, total: 6 });
+  const after = runs.finishBattle(content, run, fight);
+  const h = after.history.at(-1)!;
+  assert.equal(h.bill, 6);
+  assert.equal(after.gold, h.gold! - 6);
+  // the deal relic: usage × 0.6, the prepaid part untouched
+  assert.equal(rules.cloudBill(content, { ...fight, relics: ['edp_deal'] }).total, Math.round(4 * 0.6) + 2);
+  // never below zero gold
+  const broke = runs.finishBattle(content, run, { ...fight, prepaid: 500 });
+  assert.equal(broke.gold, 0);
+});
+
+test('nodeCosts: autoscaled nodes at their average size, most expensive first, with utilization', () => {
+  const design = rules.chassisDef(content, 'monolith').design;
+  const ids = design.nodes.map((n) => n.id);
+  const w = (inst: Record<string, number>, util: number) => ({ nodes: ids.map((id) => ({ instances: inst[id] ?? 1, utilization: util })) });
+  const costs = rules.nodeCosts(design, [w({ api: 2 }, 0.2), w({ api: 4 }, 0.4)]);
+  const api = costs.find((c) => c.node === 'api')!;
+  const price = design.nodes.find((n) => n.id === 'api')!.config!.costPerHour!;
+  assert.equal(api.instances, 3);
+  assert.equal(api.costPerHour, Math.round(price * 3 * 1000) / 1000);
+  assert.equal(api.util, 0.3);
+  for (let i = 1; i < costs.length; i++) assert.ok(costs[i - 1].costPerHour >= costs[i].costPerHour);
+  assert.ok(costs.every((c) => c.costPerHour > 0));
+});
+
+test('FinOps: spot instances are cheap extra API capacity until reclaimed; reserved pays up front for a lower price', () => {
+  const s0 = rules.newBattle(content, 9, { chassis: 'monolith' });
+  const api0 = rules.nodeOf(rules.designOf(content, s0), 'api')!.config!;
+  const s1 = playIn(s0, 'spot');
+  assert.ok(rules.modulesOf(s1).some((m) => m.card === 'spot'));
+  const api1 = rules.nodeOf(rules.designOf(content, s1), 'api')!.config!;
+  assert.equal(api1.instances, api0.instances! + 2);
+  // 2 spot at 30% next to the on-demand ones: the average price drops, the total less than 2 more full-price instances
+  assert.ok(api1.costPerHour! < api0.costPerHour!);
+  assert.ok(api1.instances! * api1.costPerHour! < (api0.instances! + 2) * api0.costPerHour!);
+  const reclaimed = rules.nodeOf(rules.designOf(content, { ...s1, spotEvicted: true }), 'api')!.config!;
+  assert.equal(reclaimed.instances, api0.instances);
+  // each new turn rolls the reclaim
+  assert.equal(typeof endTurn(s1).spotEvicted, 'boolean');
+
+  const r = playIn(s0, 'reserved');
+  assert.equal(r.prepaid, 4);
+  assert.equal(rules.nodeOf(rules.designOf(content, r), 'api')!.config!.costPerHour, Math.round(api0.costPerHour! * 0.6 * 100) / 100);
+});
+
+test('FinOps: the spend alert takes over-budget damage off; Kẻ Rút Ví doubles it and bills egress for the bots that get in', () => {
+  const s = rules.newBattle(content, 4, { chassis: 'monolith' });
+  const budget = rules.budgetOf(content, s);
+  const over = summary({ costPerHour: budget + 1 });
+  const base = rules.scoreTurn(content, s, rules.planTurn(content, s), over).damage.budget;
+  assert.equal(base, content.battle.overBudgetDamage);
+  const guarded = playIn(s, 'cost_alert');
+  assert.equal(rules.scoreTurn(content, guarded, rules.planTurn(content, guarded), over).damage.budget, base - 4);
+
+  const d = rules.newBattle(content, 4, { chassis: 'monolith', enemy: 'wallet_drainer' });
+  assert.equal(rules.scoreTurn(content, d, rules.planTurn(content, d), over).damage.budget, base * 2);
+  // turn 2 (Hút băng thông): egress from the bots that pass, on top of the engine's cost
+  let t = endTurn(d);
+  assert.equal(rules.currentIntent(content, t).id, 'hotlink');
+  const plan = rules.planTurn(content, t);
+  assert.ok(plan.egressPerHour! > 0);
+  assert.equal(rules.turnCost(plan, summary({ costPerHour: 1 })), Math.round((1 + plan.egressPerHour!) * 1000) / 1000);
+  t = rules.resolveTurn(content, t, plan, summary({ costPerHour: 1 }));
+  assert.equal(t.reports.at(-1)!.egressPerHour, plan.egressPerHour);
+  assert.equal(t.reports.at(-1)!.costPerHour, rules.turnCost(plan, summary({ costPerHour: 1 })));
+});
+
+test('postmortem: an over-budget fight names the most expensive node and advises FinOps cards; spendByNode averages turns', async () => {
+  const { postmortem, spendByNode } = await import('./postmortem.ts');
+  const costs = [
+    { node: 'api', kind: 'service', label: 'API', instances: 6, costPerHour: 1.8, util: 0.2 },
+    { node: 'db', kind: 'database', label: 'DB', instances: 1, costPerHour: 0.4, util: 0.5 },
+  ];
+  const r = { turn: 1, intent: 'x', legitRps: 300, botRps: 0, botBlockedRps: 0, okRps: 300, errorRate: 0, p50Ms: 10, p99Ms: 50, costPerHour: 2.2, legitFailed: 0, damage: { failed: 0, latency: 0, budget: 7, absorbed: 0, capped: 0, total: 7 }, enemyDamage: 0, notes: [], costs };
+  const pm = postmortem(content, { reports: [r], chassis: 'monolith' }, ['rightsize']);
+  assert.equal(pm.causes[0].kind, 'budget');
+  assert.match(pm.causes[0].text, /API/);
+  assert.match(pm.causes[0].text, /20% công suất/);
+  assert.deepEqual(pm.causes[0].advice[0], { card: 'rightsize', inDeck: true });
+  const avg = spendByNode([r, { ...r, costs: [{ ...costs[0], costPerHour: 1.2, instances: 4, util: 0.4 }], egressPerHour: 0.4 }]);
+  assert.equal(avg.costs[0].costPerHour, 1.5);
+  assert.equal(avg.costs[0].util, 0.3);
+  assert.equal(avg.costs[1].costPerHour, 0.2);
+  assert.equal(avg.egress, 0.2);
+});

@@ -3,6 +3,11 @@
 
 import {
   ChartLine,
+  BadgePercent,
+  Dices,
+  Minimize2,
+  PiggyBank,
+  MoonStar,
   Flame,
   Flag,
   Shuffle,
@@ -107,6 +112,11 @@ const CARD_ICON: Record<string, LucideIcon> = {
   hotfix_prod: Flame,
   feature_flag: Flag,
   chaos_test: Shuffle,
+  reserved: BadgePercent,
+  spot: Dices,
+  rightsize: Minimize2,
+  cost_alert: PiggyBank,
+  scale_in: MoonStar,
   tech_debt: Bug,
 };
 

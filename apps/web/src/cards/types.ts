@@ -96,7 +96,13 @@ export type Effect =
   /** Socketed: a turn where a node went down or turned requests away, draw `draw` more cards (per level) at the start of the next. */
   | { op: 'alert'; draw: number }
   /** See the attacker's next `n` turns for the rest of the fight (like Metrics, without a socket). */
-  | { op: 'reveal'; n: number };
+  | { op: 'reveal'; n: number }
+  /** Socketed: `n` spot API instances per level at `price` × the normal price; each turn they are reclaimed with odds `evict`. */
+  | { op: 'spot'; n: number; price: number; evict: number }
+  /** Socketed: over-budget damage −`cut` per level (up to `max`): the spend alert fires before the bill does. */
+  | { op: 'costGuard'; cut: number; max: number }
+  /** Pay `n` gold up front on this fight's cloud bill (a commitment, like a reserved instance). */
+  | { op: 'prepay'; n: number };
 
 /** What a status changes while it lasts. Multipliers apply once per stack (×v^stacks), additions add once per stack. */
 export interface StatusMods {
@@ -258,6 +264,8 @@ export interface Intent {
   burst?: { atMs: number; ms: number; mul: number };
   /** Statuses put on the player after this turn, for the next `turns` turns. Hotfix does not stop them. */
   inflict?: { status: string; turns: number; stacks?: number }[];
+  /** Egress: $/h per 1,000 rps of bot traffic that gets through (big downloads billed per GB). Hotfix does not stop it. */
+  egress?: number;
 }
 
 /** A small bot fighting next to an enemy. It has its own HP and can be targeted; it flees when its master falls. */
@@ -302,6 +310,8 @@ export interface EnemyDef {
     bypass?: number;
     /** HP the enemy regains at the end of every turn. */
     regen?: number;
+    /** Over-budget damage multiplier (denial of wallet). */
+    budgetDamageMul?: number;
   };
 }
 
@@ -353,6 +363,8 @@ export interface RelicDef {
   pickup?: { maxHp?: number };
   /** More room in the system: +n to the capacity of every socket of these kinds. */
   sockets?: Partial<Record<SocketKind, number>>;
+  /** Multiplies the usage part of every cloud bill (a discount deal). */
+  billMul?: number;
 }
 
 export interface Content {
@@ -460,6 +472,8 @@ export interface RunConfig {
   actScale: Scale & { legit?: number };
   /** Cards offered before the first fight (the starting infrastructure pick). */
   startPick?: string[];
+  /** Cloud bill after each fight: gold per $1/h of spend per turn (see `cloudBill`). */
+  bill?: { perDollarTurn: number };
 }
 
 export type EventEffect =
@@ -513,6 +527,8 @@ export interface FloorResult {
   node?: number;
   /** Gold won (fights, events) or spent (shops). */
   gold?: number;
+  /** Cloud bill paid after the fight (gold), already taken out of `gold`. */
+  bill?: number;
   /** Shop purchases. */
   bought?: string[];
   /** Relic taken (elite drop, boss pick). */
@@ -588,6 +604,22 @@ export interface TurnReport {
   notes: string[];
   /** The most loaded nodes of the turn (from the engine's windows), most loaded first. */
   hot?: HotNode[];
+  /** Where the money went: each node's $/h, most expensive first (`nodeCosts`). */
+  costs?: NodeCost[];
+  /** Egress billed this turn ($/h, part of `costPerHour`). */
+  egressPerHour?: number;
+}
+
+/** One node's share of the bill in a turn. */
+export interface NodeCost {
+  node: string;
+  kind: string;
+  label: string;
+  /** Average instances over the turn (an autoscaled node changes size). */
+  instances: number;
+  costPerHour: number;
+  /** Average utilization (0..1+); absent without the engine's windows. */
+  util?: number;
 }
 
 /** One node's worst moment in a turn, for the postmortem. */
@@ -651,6 +683,10 @@ export interface BattleState {
   migrating?: string;
   /** Turns ahead seen for the rest of the fight (`reveal`). */
   revealed?: number;
+  /** Gold paid up front on this fight's cloud bill (`prepay`). */
+  prepaid?: number;
+  /** The spot instances were reclaimed for this turn. */
+  spotEvicted?: boolean;
   /** Installed modules, oldest first (see `CardDef.fits`). `card` keeps the "+" of an upgraded copy. */
   modules?: ModuleInst[];
   /** Timed effects in play (see `StatusDef`). */
@@ -689,6 +725,8 @@ export interface TurnPlan {
   legitRps: number;
   botRps: number;
   botBlockedRps: number;
+  /** Egress billed this turn ($/h), on top of the engine's cost. */
+  egressPerHour?: number;
 }
 
 export type Action = { type: 'play'; uid: number } | { type: 'endTurn' };

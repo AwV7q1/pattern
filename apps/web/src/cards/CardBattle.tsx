@@ -34,6 +34,8 @@ import {
   Trophy,
   Turtle,
   Wallet,
+  CloudDownload,
+  Dices,
   Zap,
   Snowflake,
 } from 'lucide-react';
@@ -64,6 +66,8 @@ import {
   MIGRATION,
   foresightOf,
   tracing,
+  nodeCosts,
+  spotOf,
   upcomingIntents,
   leakNow,
   intentsNow,
@@ -81,7 +85,9 @@ import {
   statusDef,
   targetOf,
 } from './rules';
-import type { BattleSetup, BattleState, CardDef, Intent, MinionState, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, Intent, MinionState, NodeCost, TurnPlan, TurnReport, TurnScore } from './types';
+import { BillLine, CostBreakdown } from './Cost';
+import { spendByNode } from './postmortem';
 import { CONTENT } from './content';
 import { statusIcon } from './cardArt';
 import { NetBackdrop } from './NetBackdrop';
@@ -132,6 +138,12 @@ function costOf(design: Design, temp: BattleState['temp']) {
 }
 
 type Flash = { key: number; player: number; enemy: number };
+
+/** A turn's bill as the forecast saw it. */
+type Spend = { costs: NodeCost[]; egress: number };
+
+/** The design the engine would run now (temporary instances, statuses, the attacker's cost spike included). */
+const planDesign = (state: BattleState) => planTurn(CONTENT, state).input.design;
 
 /** Load on one node during the replay of a turn. */
 
@@ -233,22 +245,21 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   /** Set by the skip button: the turn's playback jumps to the result. */
   const skip = useRef(false);
   /** Engine dry-run of the turn as it stands: what ending the turn now would do. */
-  const [preview, setPreview] = useState<{ of: BattleState; score: TurnScore; bottleneck?: string } | null>(null);
+  const [preview, setPreview] = useState<{ of: BattleState; score: TurnScore; bottleneck?: string; spend: Spend } | null>(null);
   useEffect(() => {
     if (state.phase !== 'player' || resolving) return;
     let stale = false;
     const t = setTimeout(() => {
       const plan = planTurn(CONTENT, state);
-      // with tracing, the dry run keeps its windows to find the bottleneck
-      const run = tracing(CONTENT, state)
-        ? compute.runDetailed(plan.input).then(({ summary, windows }) => {
-            const top = hotNodes(plan.input.design, windows, 1)[0];
-            return { summary, bottleneck: top && (top.down || top.rejected > 0 || top.util >= 0.8) ? top.node : undefined };
-          })
-        : compute.run(plan.input).then((summary) => ({ summary, bottleneck: undefined }));
+      // the dry run keeps its windows: each node's cost (autoscaled ones at their average size), and with tracing the bottleneck
+      const run = compute.runDetailed(plan.input).then(({ summary, windows }) => {
+        const top = tracing(CONTENT, state) ? hotNodes(plan.input.design, windows, 1)[0] : undefined;
+        const spend = { costs: nodeCosts(plan.input.design, windows), egress: plan.egressPerHour ?? 0 };
+        return { summary, spend, bottleneck: top && (top.down || top.rejected > 0 || top.util >= 0.8) ? top.node : undefined };
+      });
       run
-        .then(({ summary, bottleneck }) => {
-          if (!stale) setPreview({ of: state, score: scoreTurn(CONTENT, state, plan, summary), bottleneck });
+        .then(({ summary, bottleneck, spend }) => {
+          if (!stale) setPreview({ of: state, score: scoreTurn(CONTENT, state, plan, summary), bottleneck, spend });
         })
         .catch(() => undefined);
     }, 120);
@@ -259,6 +270,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
   }, [state, resolving]);
   const forecast = preview && preview.of === state && !resolving ? preview.score : null;
   const bottleneck = preview && preview.of === state && !resolving ? preview.bottleneck : undefined;
+  const spend = preview && preview.of === state && !resolving ? preview.spend : undefined;
 
   const arenaRef = useRef<HTMLDivElement>(null);
   const fxRef = useRef<HTMLDivElement>(null);
@@ -721,7 +733,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       engine.catch(() => undefined); // awaited below; avoid an unhandled rejection meanwhile
       await attackPhase(plan, () => done);
       const { summary, windows } = await engine;
-      const next = resolveTurn(CONTENT, state, plan, summary, hotNodes(plan.input.design, windows));
+      const next = resolveTurn(CONTENT, state, plan, summary, hotNodes(plan.input.design, windows), nodeCosts(plan.input.design, windows));
       const r = next.reports.at(-1)!;
       await replayPhase(plan, windows, r, state, next);
       setFlash({ key: Date.now(), player: r.damage.total, enemy: Math.max(0, state.enemy.hp - next.enemy.hp) });
@@ -832,7 +844,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
             <div ref={systemZoneRef} className={cn('relative flex w-full max-w-[460px] flex-col items-center gap-3 transition-opacity duration-200', targetRing(canSystem))}>
               {canSystem && <SystemTarget over={dragOver?.kind === 'system'} text={dragDef?.fits ? (moduleOf(state, dragDef.id) ? `Thả để nâng cấp ${dragDef.name}` : 'Thả để lắp vào ổ trống') : undefined} />}
               <div className="w-full">
-                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} refs={infraRefs} plug={plug} shieldRef={shieldRef} hit={resolving} bottleneck={bottleneck} />
+                <SystemPanel state={state} hp={live?.hp ?? state.hp} loads={live?.nodes} panelRef={infraRef} refs={infraRefs} plug={plug} shieldRef={shieldRef} hit={resolving} bottleneck={bottleneck} spend={spend} />
               </div>
                 <HpBar
                   hpRef={hpRef}
@@ -1131,6 +1143,7 @@ function SystemPanel({
   shieldRef,
   hit,
   bottleneck,
+  spend,
 }: {
   state: BattleState;
   /** Error Budget shown (live while a turn plays). */
@@ -1143,8 +1156,14 @@ function SystemPanel({
   hit: boolean;
   /** Tracing: the node the forecast says will saturate. */
   bottleneck?: string;
+  /** The forecast's bill: each node's $/h and egress (absent while it runs). */
+  spend?: Spend;
 }) {
-  const cost = costOf(designOf(CONTENT, state), state.temp);
+  const [costsOpen, setCostsOpen] = useState(false);
+  const costs = spend?.costs ?? nodeCosts(planDesign(state));
+  const egress = spend?.egress ?? 0;
+  const cost = spend ? costs.reduce((s, c) => s + c.costPerHour, 0) + egress : costOf(designOf(CONTENT, state), state.temp);
+  const spot = spotOf(CONTENT, state);
   const budget = budgetOf(CONTENT, state);
   const ratio = hp / state.maxHp;
   const status = ratio > 0.5 ? 'ok' : ratio > 0.25 ? 'warn' : 'crit';
@@ -1193,10 +1212,38 @@ function SystemPanel({
                 → {chassisDef(CONTENT, state.migrating).name}
               </span>
             )}
-            <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
+            {spot.n > 0 && (
+              <span
+                className={cn('flex items-center gap-0.5 rounded-full border px-1.5 text-[10px]', state.spotEvicted ? 'border-rose-400/50 bg-rose-500/10 text-rose-200' : 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200')}
+                title={state.spotEvicted ? `Nhà cung cấp đã thu hồi ${spot.n} instance Spot: lượt này không có chúng.` : `${spot.n} instance Spot giá rẻ; mỗi lượt có ${Math.round(spot.evict * 100)}% bị thu hồi.`}
+              >
+                <Dices className="size-3" /> Spot {state.spotEvicted ? 'bị thu hồi' : `+${spot.n}`}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setCostsOpen((o) => !o)}
+              aria-expanded={costsOpen}
+              title="Chi phí theo từng node"
+              className={cn('ml-auto flex items-center gap-1 rounded-md px-1 font-mono text-xs hover:bg-muted/40', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground', costsOpen && 'bg-muted/40')}
+            >
+              {egress > 0 && <CloudDownload className="size-3.5 text-rose-300" />}
               <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
-            </span>
+            </button>
           </div>
+          {costsOpen && (
+            <div className="absolute right-0 top-7 z-30 w-72 rounded-lg border bg-background/95 p-3 shadow-xl backdrop-blur">
+              <div className="mb-2 flex items-center justify-between text-xs font-medium">
+                <span>Tiền đi đâu (lượt này)</span>
+                <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setCostsOpen(false)} aria-label="Đóng">
+                  ×
+                </button>
+              </div>
+              <CostBreakdown costs={costs} egress={egress} budget={budget} />
+              {!spend && <p className="mt-1 text-[10px] text-muted-foreground">Đang chạy thử: chưa có số đo công suất.</p>}
+              {state.reports.length > 0 && <BillLine state={state} className="mt-2 border-t pt-2" />}
+            </div>
+          )}
           <InfraLine state={state} loads={loads} refs={refs} plug={plug} bottleneck={bottleneck} />
         </div>
       </div>
@@ -1259,6 +1306,7 @@ function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
   }
   if (intent.leakReset) out.push({ icon: RotateCcw, text: 'pod tự restart: hết rò rỉ', tone: 'heal' });
   if (intent.costSpike) out.push({ icon: Wallet, text: `chi phí API ×${intent.costSpike}`, tone: 'bad', lasting: true });
+  if (intent.egress) out.push({ icon: CloudDownload, text: `egress $${intent.egress.toFixed(2)}/h mỗi 1k rps bot lọt`, tone: 'bad' });
   if (intent.bandwidth) out.push({ icon: Network, text: `phản hồi ${intent.bandwidth.responseKb}KB, đường truyền ${intent.bandwidth.mbps}Mbps`, tone: 'bad', lasting: true });
   if (intent.addCards) out.push({ icon: Bug, text: `+${intent.addCards.n} thẻ nợ`, tone: 'warn', lasting: true });
   if (intent.bypass) out.push({ icon: EyeOff, text: `lách ${Math.round(intent.bypass * 100)}% bộ lọc`, tone: 'bad', lasting: true });
@@ -1782,6 +1830,7 @@ function EndScreen({
   const failed = state.reports.reduce((s, r) => s + r.legitFailed, 0);
   const blocked = state.reports.reduce((s, r) => s + r.botBlockedRps * (CONTENT.battle.turnMs / 1000), 0);
   const peakCost = Math.max(0, ...state.reports.map((r) => r.costPerHour));
+  const byNode = useMemo(() => spendByNode(state.reports), [state.reports]);
   // a loss opens on the postmortem: that is when the player wants to know why
   const [tab, setTab] = useState<'sum' | 'pm'>(won ? 'sum' : 'pm');
   return (
@@ -1815,6 +1864,13 @@ function EndScreen({
               <Stat label="Request bot bị chặn" value={n0(blocked)} />
               <Stat label="Chi phí cao nhất" value={`$${peakCost.toFixed(2)}/h`} />
               <Stat label="Seed" value={String(seed)} />
+              <BillLine state={state} className="col-span-2 rounded-lg border bg-background/40 px-2 py-1.5" />
+              {byNode.costs.length > 0 && (
+                <div className="col-span-2 rounded-lg border bg-background/40 p-2">
+                  <div className="mb-1 text-[11px] text-muted-foreground">Tiền đi đâu (trung bình mỗi lượt)</div>
+                  <CostBreakdown costs={byNode.costs} egress={byNode.egress} budget={budgetOf(CONTENT, state)} />
+                </div>
+              )}
             </div>
           ) : (
             <PostmortemPanel reports={state.reports} chassis={state.chassis} deck={deck} />
@@ -1841,6 +1897,7 @@ function RulesPanel({ onClose }: { onClose: () => void }) {
       ['Hiệu ứng theo lượt', 'Một số lá và đòn của địch để lại hiệu ứng kéo dài vài lượt (số trên chip là số lượt còn lại). Hotfix không gỡ được debuff, Rollback thì gỡ được.'],
       ['Bot thích nghi', CONTENT.battle.adapt ? `Lượt nào bạn chặn từ ${Math.round(CONTENT.battle.adapt.at * 100)}% bot trở lên, bot cộng 1 tầng thích nghi và lách bộ lọc nhiều hơn. Ngừng lọc mạnh ${CONTENT.battle.adapt.turns} lượt thì hết.` : 'Tắt.'],
       ['Error Budget', `Phần lỗi còn được phép trước khi vi phạm SLO. Mất 1 cho mỗi ${CONTENT.battle.failedPerDamage} request người dùng lỗi, ${CONTENT.battle.latencyDamage} nếu p99 > ${CONTENT.battle.sloP99Ms}ms, và khi chi phí vượt ngân sách. Hết là thua.`],
+      ['Chi phí', `Mỗi lượt hệ thống tốn $/h theo số instance (bấm vào số $/h trên hệ thống để xem từng node). Vượt ngân sách của kiến trúc thì mất ${CONTENT.battle.overBudgetDamage} Error Budget cho mỗi $1/h vượt.${CONTENT.run.bill ? ` Trong ca leo tháp, sau mỗi trận thắng còn trả hóa đơn cloud: ${CONTENT.run.bill.perDollarTurn} vàng cho mỗi $1/h mỗi lượt, trừ vào vàng thưởng.` : ''}`],
       ['Deploy liều', `Lá ghi "Deploy liều" không tốn Ops mà trừ thẳng Error Budget. Dưới ${Math.round(FREEZE_AT * 100)}% Error Budget là đóng băng deploy: không đánh được lá liều, nhưng mỗi lượt hồi 1.`],
       ['Địch mất máu', `Từ lá Phản công, và 1 máu cho mỗi ${CONTENT.battle.blockedPerDamage} request bot bị WAF hoặc rate limit chặn. Địch yếu thì gửi ít traffic hơn.`],
       ['Leo tháp', `${CONTENT.run.title} có ${CONTENT.run.acts} tầng. Mỗi tầng là một bản đồ rẽ nhánh: tự chọn đường qua trận thường, tinh anh (khó hơn, thưởng nhiều hơn), sự cố và chỗ nghỉ, rồi đánh trùm ở đỉnh. Máu và bộ bài giữ nguyên suốt ca; tầng càng cao địch càng mạnh.`],

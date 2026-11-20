@@ -304,6 +304,27 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
 | Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
+## Quản lý chi phí hạ tầng
+
+Chi phí có ba tầng: mỗi lượt (vượt ngân sách thì mất Error Budget), mỗi trận (hóa đơn cloud trừ vào vàng) và cả ca (ít vàng thì mua được ít ở cửa hàng).
+
+- **Chi phí theo node** (`nodeCosts`, panel `CostBreakdown` trong `Cost.tsx`): bấm vào số `$/h` trên khung hệ thống để xem mỗi node tốn bao nhiêu, chiếm bao nhiêu phần trăm, số instance (node autoscale tính theo cỡ trung bình trong lượt). Node chiếm từ 15% chi phí mà dùng dưới 30% công suất có nhãn "dư"; từ 90% là "nóng" (cắt ở đây sẽ hỏng request). Số liệu lấy từ lần chạy thử của engine, nên tính cả Spot, trạng thái và đòn của địch.
+  - Mỗi lượt lưu `TurnReport.costs` và `egressPerHour`. Màn kết thúc trận (tab Tổng kết) hiện trung bình mỗi lượt (`spendByNode`); sandbox hiện lượt vừa chạy.
+- **Hóa đơn cloud** (`cloudBill`, `run.bill.perDollarTurn` = 1): trong ca leo tháp, sau mỗi trận thắng trả `tổng $/h của các lượt × 1` vàng (cộng phần trả trước của Reserved), trừ vào vàng thưởng. Không bao giờ âm vàng: phần thiếu được xoá. Vàng thưởng tăng lên để bù (thường 22, tinh anh 40, trùm 70). Scale dư thì thắng dễ nhưng nghèo ở cửa hàng. `FloorResult.bill` ghi lại; màn phần thưởng và lịch sử ca hiện số này.
+  - Relic **Hợp đồng chiết khấu** (`billMul` 0.6): phần sử dụng của hóa đơn rẻ hơn 40%.
+- **Lá FinOps:**
+  - Reserved Instance (chính sách, tiêu hao): trả trước 4 vàng (nâng cấp: 2) vào hóa đơn trận, cả trận API rẻ hơn 40%, DB rẻ hơn 30% (`prepay` + `tune`).
+  - Spot Instance (ổ service): +2 instance API giá 30% mỗi cấp. Đầu mỗi lượt có 25% bị thu hồi (`spotEvicted`): lượt đó không có số instance này. Tung xúc xắc ngay khi lượt mới bắt đầu, nên dự kiến và chip "Spot bị thu hồi" đã biết trước để kịp bù.
+  - Rightsizing (ổ service): instance nhỏ hơn, rẻ hơn 35% nhưng nhận ít hơn 15% request cùng lúc. Lắp hai cấp thì nhân hai lần.
+  - Cảnh báo chi phí (ổ quan sát): lượt vượt ngân sách mất ít hơn 4 Error Budget mỗi cấp, tối đa 12 (`costGuard`). Rút 1 lá.
+  - Scale-in giờ thấp điểm (hành động, 0 Ops): lượt này API bớt 1 instance, rút 1 lá.
+- **Kẻ Rút Ví** (Denial of Wallet, trận thường tầng 2): nội tại "Đánh vào ví" nhân đôi sát thương vượt ngân sách (`passive.budgetDamageMul`).
+  - Request đắt: API tốn ×2.5.
+  - Hút băng thông: egress `$0.50/h` mỗi 1.000 rps bot lọt vào (`Intent.egress`, cộng vào chi phí lượt qua `turnCost`). Lọc bot là giảm hóa đơn. Có CDN thì bot đổi query string để né cache.
+  - Ép autoscale: dồn ×2 trong 6 giây. Nếu có Autoscaler thì nó đẻ pod theo bot: API ×1.8 và Hoá đơn tăng vọt.
+  - Chờ hóa đơn: hồi máu, Hoá đơn tăng vọt 2 lượt.
+- **Postmortem:** nguyên nhân "Vượt ngân sách" nêu node tốn nhất (và nếu nó đang dư công suất), phần egress, rồi gợi ý Rightsizing, Reserved, Spot, Scale-in, Cảnh báo chi phí.
+
 ## Thử thách hằng ngày
 
 Nút "Thử thách hôm nay" ở màn chọn kiến trúc mở run của ngày (UTC): seed là FNV-1a của ngày (`dailySeed`), kiến trúc cố định theo seed (`dailyChassis`), nên mọi người cùng bản đồ, phần thưởng và bài trên tay. `RunState.daily` giữ ngày.

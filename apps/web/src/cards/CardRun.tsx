@@ -215,7 +215,7 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
           <Trophy className="size-6 text-amber-300" /> {start ? 'Chọn hạ tầng ban đầu' : fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
         </div>
         <p className="text-sm text-muted-foreground">
-          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget${last.gold ? `, +${last.gold} vàng` : ''}. ` : ''}
+          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget${last.gold ? `, +${last.gold} vàng` : ''}${last.bill ? `, hóa đơn cloud −${last.bill} vàng` : ''}. ` : ''}
           {last?.kind === 'elite' ? `+${CONTENT.run.elite.maxHp} Error Budget tối đa. ` : ''}
           {start ? 'Bộ bài khởi đầu chưa có hạ tầng tối ưu: chọn 1 hướng để bắt đầu. Không có đủ cả ba, nên trục còn lại phải tìm dọc đường.' : 'Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.'}
         </p>
@@ -805,7 +805,7 @@ function HistoryRow({ h }: { h: FloorResult }) {
         ? shopDetail(h)
         : h.kind === 'event'
           ? (h.option ?? '')
-          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}${h.migrated ? ` · chuyển sang ${chassisDef(CONTENT, h.migrated).name}` : ''}`;
+          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}${h.bill ? ` · hóa đơn ${h.bill} vàng` : ''}${h.migrated ? ` · chuyển sang ${chassisDef(CONTENT, h.migrated).name}` : ''}`;
   return (
     <li className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
       <Icon className={cn('size-4 shrink-0', fell ? 'text-rose-400' : info.tone.split(' ')[0])} />

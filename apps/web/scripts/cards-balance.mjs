@@ -328,7 +328,7 @@ if (eachMode) {
 function climb(policy, seed) {
   const before = stalls;
   const run = playRun(policy, seed);
-  return { won: run.phase === 'won', lost: run.phase === 'lost', act: run.act, stalled: stalls - before, history: run.history.map(({ kind, act, enemy, won, hpLost, turns }) => ({ kind, act, enemy, won, hpLost, turns })) };
+  return { won: run.phase === 'won', lost: run.phase === 'lost', act: run.act, stalled: stalls - before, history: run.history.map(({ kind, act, enemy, won, hpLost, turns, gold, bill }) => ({ kind, act, enemy, won, hpLost, turns, gold, bill })) };
 }
 
 // --worker=policy:from:to (internal): climb those seeds and print the records.
@@ -372,6 +372,7 @@ if (runMode) {
     const stat = Object.fromEntries(kinds.map((k) => [k, { n: 0, won: 0, hp: 0 }]));
     const deaths = {};
     const foes = {};
+    const bill = { n: 0, paid: 0, gold: 0 };
     for (const run of await climbAll(policy)) {
       if (run.won) wins++;
       stalled += run.stalled;
@@ -381,6 +382,7 @@ if (runMode) {
       for (const h of run.history) {
         if (h.kind === 'boss' && h.won) cleared[h.act - 1]++;
         if (!stat[h.kind]) continue;
+        if (h.won) Object.assign(bill, { n: bill.n + 1, paid: bill.paid + (h.bill ?? 0), gold: bill.gold + (h.gold ?? 0) });
         const f = (foes[`T${h.act} ${h.kind.padEnd(6)} ${h.enemy}`] ??= { n: 0, won: 0, hp: 0, turns: 0 });
         f.n++;
         f.won += h.won ? 1 : 0;
@@ -395,7 +397,7 @@ if (runMode) {
     const acts = cleared.map((c, i) => `T${i + 1} ${pct(c)}`).join(' ');
     const per = kinds.map((k) => `${k} ${stat[k].n ? Math.round((stat[k].won / stat[k].n) * 100) : '-'}%/-${stat[k].n ? (stat[k].hp / stat[k].n).toFixed(0) : '-'}hp`).join('  ');
     const died = Object.entries(deaths).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', ');
-    console.log(`${policy.padEnd(10)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}${died ? `   chết: ${died}` : ''}${stalled ? `   giằng co 30 lượt: ${stalled}` : ''}`);
+    console.log(`${policy.padEnd(10)} vượt ${acts}  tầng TB ${(actSum / fights).toFixed(2)}   ${per}   hóa đơn TB ${bill.n ? (bill.paid / bill.n).toFixed(1) : '-'}/${bill.n ? (bill.gold / bill.n).toFixed(0) : '-'} vàng${died ? `   chết: ${died}` : ''}${stalled ? `   giằng co 30 lượt: ${stalled}` : ''}`);
     if (byEnemy && policy !== 'idle')
       for (const [k, f] of Object.entries(foes).sort())
         console.log(`    ${k.padEnd(34)} ${String(f.n).padStart(3)} trận  thắng ${String(Math.round((f.won / f.n) * 100)).padStart(3)}%  -${(f.hp / f.n).toFixed(0).padStart(2)}hp  ${(f.turns / f.n).toFixed(1)} lượt`);

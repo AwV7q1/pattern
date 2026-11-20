@@ -17,7 +17,7 @@
 //   run = chooseEvent(content, run, option, removeIndex?);
 //   run = nextAct(content, run);                      // after 'cleared'
 
-import { canUpgrade, cardDef, chassisDef, MIGRATION, nextRandom } from './rules.ts';
+import { canUpgrade, cardDef, chassisDef, cloudBill, MIGRATION, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
 import type { BattleSetup, BattleState, ChassisDef, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
 
@@ -273,8 +273,11 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
     return run;
   }
   const gold = Math.max(0, content.run.gold[node.kind as 'battle' | 'elite' | 'boss'] + Math.floor((nextRandom(run) * 2 - 1) * (content.run.goldJitter + 1)));
-  run.gold += gold;
+  // the cloud bill comes out of the reward (never below zero gold: an unpaid rest is written off)
+  const bill = Math.min(run.gold + gold, cloudBill(content, battle).total);
+  run.gold += gold - bill;
   run.history.at(-1)!.gold = gold;
+  if (bill > 0) run.history.at(-1)!.bill = bill;
   if (run.migrating && --run.migrating.battles <= 0) {
     run.chassis = run.migrating.to;
     run.history.at(-1)!.migrated = run.migrating.to;

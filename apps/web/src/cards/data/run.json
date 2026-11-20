@@ -40,7 +40,8 @@
       "scraper",
       "cred_stuffer",
       "slowloris",
-      "sneaker_bot"
+      "sneaker_bot",
+      "wallet_drainer"
     ],
     [
       "iot_botnet",
@@ -106,11 +107,14 @@
   "bossRelicChoices": 3,
   "startGold": 40,
   "gold": {
-    "battle": 16,
-    "elite": 32,
-    "boss": 60
+    "battle": 22,
+    "elite": 40,
+    "boss": 70
   },
   "goldJitter": 5,
+  "bill": {
+    "perDollarTurn": 1
+  },
   "shop": {
     "cards": 5,
     "cardPrice": {

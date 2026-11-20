@@ -9,7 +9,8 @@ import { cardIcon } from './cardArt';
 import { INTENT_ICON } from './CardBattle';
 import { InfraLine, SOCKET_KIND_LABEL, type InfraRefs, type NodeLoad } from './Infra';
 import { PostmortemPanel } from './Postmortem';
-import { baseId, budgetOf, cardDef, chassisDef, currentIntent, forceIntent, hotNodes, intentsNow, modulesOf, newBattle, placementsOf, planTurn, playCard, resolveTurn, socketOf } from './rules';
+import { CostBreakdown } from './Cost';
+import { baseId, budgetOf, cardDef, chassisDef, currentIntent, forceIntent, hotNodes, intentsNow, nodeCosts, modulesOf, newBattle, placementsOf, planTurn, playCard, resolveTurn, socketOf } from './rules';
 import type { BattleState, CardDef, TurnReport } from './types';
 
 /** Cards that change the system without a socket and stay for the fight. */
@@ -103,7 +104,7 @@ export function CardSandbox() {
     try {
       const plan = planTurn(CONTENT, state);
       const { summary, windows } = await compute.runDetailed(plan.input);
-      const next = resolveTurn(CONTENT, state, plan, summary, hotNodes(plan.input.design, windows));
+      const next = resolveTurn(CONTENT, state, plan, summary, hotNodes(plan.input.design, windows), nodeCosts(plan.input.design, windows));
       const r = { ...next.reports.at(-1)!, turn: reports.length + 1 };
       setReports((x) => [...x, r]);
       // each node at its worst second of the turn
@@ -337,6 +338,12 @@ export function CardSandbox() {
                   ))}
                 </tbody>
               </table>
+              {reports.at(-1)!.costs && (
+                <div className="mb-3 rounded-lg border bg-background/40 p-2">
+                  <div className="mb-1 text-[11px] text-muted-foreground">Tiền đi đâu (lượt {reports.at(-1)!.turn})</div>
+                  <CostBreakdown costs={reports.at(-1)!.costs!} egress={reports.at(-1)!.egressPerHour} budget={budgetOf(CONTENT, state)} />
+                </div>
+              )}
               <PostmortemPanel reports={reports} chassis={chassis} deck={PALETTE.map((c) => c.id)} />
             </div>
           )}
