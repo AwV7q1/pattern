@@ -304,6 +304,18 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
 | Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
+## Di trú kiến trúc
+
+Từ tầng 2 có thể gặp sự cố "Kế hoạch tái kiến trúc": chuyển run sang một khung khác (`migrateTarget`, cố định theo seed và tầng, luôn khác khung hiện tại), hoặc giữ nguyên và nhận 35 vàng. Màn sự cố đặt hai khung cạnh nhau để so sánh.
+
+Di trú theo kiểu strangler fig (`MIGRATION` trong `rules.ts`):
+
+- Trong 2 trận kế tiếp (`RunState.migrating`), hệ cũ và hệ mới chạy song song. Topology vẫn là của khung cũ, nhưng có thêm ổ: với mỗi kiểu ổ mà khung mới có nhiều hơn, thêm một nửa phần chênh (làm tròn lên) vào ổ đầu tiên cùng kiểu (`migrationRoom`). Đổi lại API chậm ×1.15 và chi phí ×1.15 (đọc trong `statusMods`, nên Rollback không gỡ được).
+- Thắng trận thứ 2 thì `run.chassis` đổi hẳn; nhật ký ghi "chuyển sang …". Thua giữa chừng thì run kết thúc như thường.
+- Trên thanh tiến độ có huy hiệu "Di trú sang …: còn n trận", trong trận có huy hiệu "→ …" cạnh tên hệ thống.
+
+Sự cố có `minAct` để chỉ xuất hiện từ một tầng; `{chassis}` trong tiêu đề, nội dung và lựa chọn được thay bằng tên khung đích (`eventText`).
+
 ## Postmortem
 
 Thua một trận (hoặc mở tab Postmortem ở màn kết thúc trận) sẽ thấy vì sao hệ thống sập:

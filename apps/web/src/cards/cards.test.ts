@@ -482,9 +482,11 @@ test('relics: fire at battle start, turn start and on every n-th card', () => {
 
 test('relics: elites drop one, bosses offer a pick, pickups apply once', () => {
   let run = climbTo(fresh(21), 'elite');
+  // an event on the way may have given one already: the elite adds one more
+  const before = run.relics.length;
   run = runs.finishBattle(content, run, win(run, run.hp));
-  assert.equal(run.relics.length, 1);
-  assert.equal(run.history.at(-1)!.relic, run.relics[0]);
+  assert.equal(run.relics.length, before + 1);
+  assert.equal(run.history.at(-1)!.relic, run.relics.at(-1));
 
   let boss = climbTo(fresh(31), 'boss');
   boss = runs.finishBattle(content, boss, win(boss, 20));
@@ -1240,4 +1242,40 @@ test('observability: a watched APT group changes tactics', () => {
   s = playIn(s, 'metrics');
   const lateral = rules.upcomingIntents(content, s, 1)[0].find((o) => o.intent.id === 'lateral');
   assert.equal(lateral?.intent.label, 'Né giám sát');
+});
+
+// ---------------------------------------------------------------- migration
+
+test('migration: the event moves the run to another chassis after two fights on a hybrid system', () => {
+  let run = climbTo(fresh(5), 'battle');
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  // forced: the event itself only comes up from floor 2
+  run = { ...runs.pickReward(content, run, null), phase: 'event', event: 'migrate' };
+  const target = runs.migrateTarget(content, run);
+  assert.notEqual(target.id, 'monolith');
+  assert.match(runs.eventText(content, run, '{chassis}'), new RegExp(target.name));
+  run = runs.chooseEvent(content, run, 0);
+  assert.deepEqual(run.migrating, { to: target.id, battles: rules.MIGRATION.battles });
+  assert.equal(run.phase, 'map');
+
+  // the fights in between: the old system with the new one's extra room, slower and dearer
+  run = climbTo(run, 'battle');
+  const setup = runs.battleSetup(content, run);
+  assert.equal(setup.migrating, target.id);
+  const hybrid = rules.newBattle(content, 1, setup);
+  const plain = rules.newBattle(content, 1, { ...setup, migrating: undefined });
+  const cap = (s: BattleState) => rules.socketsOf(content, s).reduce((n, x) => n + x.cap, 0);
+  const room = Object.values(rules.migrationRoom(content, 'monolith', target.id)).reduce((a, b) => a + b!, 0);
+  assert.equal(cap(hybrid), cap(plain) + room);
+  assert.equal(rules.statusMods(content, hybrid).apiLatency, rules.MIGRATION.apiLatency);
+  assert.equal(hybrid.design.nodes.length, plain.design.nodes.length);
+
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  assert.equal(run.migrating?.battles, 1);
+  run = climbTo(runs.pickReward(content, run, null), 'battle');
+  run = runs.finishBattle(content, run, win(run, run.hp));
+  assert.equal(run.chassis, target.id);
+  assert.equal(run.migrating, undefined);
+  assert.equal(run.history.at(-1)!.migrated, target.id);
+  assert.ok(runs.isValidRun(content, run));
 });

@@ -61,5 +61,15 @@
       { "label": "Mua thêm switch: −40 vàng, nhận relic Thêm cổng mạng", "effects": [{ "op": "gold", "n": -40 }, { "op": "relic", "id": "rack_link" }] },
       { "label": "Xin license công cụ: nhận 1 lá ngẫu nhiên", "effects": [{ "op": "randomCard" }] }
     ]
+  },
+  {
+    "id": "migrate",
+    "minAct": 2,
+    "title": "Kế hoạch tái kiến trúc",
+    "text": "CTO muốn chuyển hệ thống sang {chassis}. Làm theo kiểu strangler fig: hệ mới chạy song song hệ cũ trong 2 trận (có thêm ổ của hệ mới, nhưng API chậm ×1.15 và chi phí ×1.15 vì nuôi cả hai), thắng xong trận thứ 2 thì chuyển hẳn.",
+    "options": [
+      { "label": "Di trú sang {chassis}", "effects": [{ "op": "migrate" }] },
+      { "label": "Giữ kiến trúc hiện tại: +35 vàng", "effects": [{ "op": "gold", "n": 35 }] }
+    ]
   }
 ]

@@ -235,6 +235,7 @@ export function statusMods(content: Content, state: BattleState): Mods {
   const all = [
     ...(state.statuses ?? []).map((inst) => ({ mods: statusDef(content, inst.id).mods, stacks: inst.stacks })),
     ...activeCombos(content, state).map((c) => ({ mods: c.mods ?? {}, stacks: 1 })),
+    ...(state.migrating ? [{ mods: { apiLatency: MIGRATION.apiLatency, cost: MIGRATION.cost }, stacks: 1 }] : []),
   ];
   for (const inst of all) {
     const d = inst.mods;
@@ -347,12 +348,41 @@ const MODULE_OPS = new Set<Effect['op']>(['edgeFilter', 'foresee', 'trace', 'ale
 const TOPOLOGY = new Set<Effect['op']>(['cache', 'queue', 'cdn', 'shard']);
 
 export const modulesOf = (state: BattleState): ModuleInst[] => state.modules ?? [];
-/** The system's sockets, with the room relics add. */
+/** A migration (strangler fig): the old and the new system run side by side for `battles` fights, slower and dearer. */
+export const MIGRATION = { battles: 2, apiLatency: 1.15, cost: 1.15 };
+
+const capsOf = (c: ChassisDef) => {
+  const out: Partial<Record<SocketKind, number>> = {};
+  for (const s of c.sockets) out[s.kind] = (out[s.kind] ?? 0) + s.cap;
+  return out;
+};
+
+/** Room a migration adds: half (rounded up) of what the new chassis has more of, per socket kind. */
+export function migrationRoom(content: Content, from: string, to: string): Partial<Record<SocketKind, number>> {
+  const a = capsOf(chassisDef(content, from));
+  const b = capsOf(chassisDef(content, to));
+  const out: Partial<Record<SocketKind, number>> = {};
+  for (const [k, n] of Object.entries(b)) {
+    const more = n! - (a[k as SocketKind] ?? 0);
+    if (more > 0 && a[k as SocketKind] !== undefined) out[k as SocketKind] = Math.ceil(more / 2);
+  }
+  return out;
+}
+
+/** The system's sockets, with the room relics and a migration add (on the first socket of each kind). */
 export function socketsOf(content: Content, state: BattleState): SocketDef[] {
   const bonus: Partial<Record<SocketKind, number>> = {};
   for (const id of state.relics ?? []) for (const [k, n] of Object.entries(content.relics.find((r) => r.id === id)?.sockets ?? {})) bonus[k as SocketKind] = (bonus[k as SocketKind] ?? 0) + n!;
   const list = chassisOf(content, state).sockets;
-  return Object.keys(bonus).length ? list.map((s) => (bonus[s.kind] ? { ...s, cap: s.cap + bonus[s.kind]! } : s)) : list;
+  const extra = state.migrating ? migrationRoom(content, state.chassis, state.migrating) : {};
+  if (!Object.keys(bonus).length && !Object.keys(extra).length) return list;
+  const seen = new Set<SocketKind>();
+  return list.map((s) => {
+    const first = !seen.has(s.kind);
+    seen.add(s.kind);
+    const add = (bonus[s.kind] ?? 0) + (first ? (extra[s.kind] ?? 0) : 0);
+    return add ? { ...s, cap: s.cap + add } : s;
+  });
 }
 export const socketOf = (content: Content, state: BattleState, id: string) => socketsOf(content, state).find((x) => x.id === id);
 export const modulesAt = (state: BattleState, socket: string) => modulesOf(state).filter((m) => m.socket === socket);
@@ -678,6 +708,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     discard: [],
     exhausted: [],
     chassis: chassis.id,
+    ...(setup.migrating && setup.migrating !== chassis.id && content.chassis.some((c) => c.id === setup.migrating) && { migrating: setup.migrating }),
     design: clone(chassis.design),
     waf: 0,
     temp: { api: 0, db: 0, botCut: 0, hotfix: false },

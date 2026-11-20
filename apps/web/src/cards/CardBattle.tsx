@@ -56,6 +56,8 @@ import {
   guardNow,
   hotfixable,
   hotNodes,
+  chassisDef,
+  MIGRATION,
   foresightOf,
   tracing,
   upcomingIntents,
@@ -1170,6 +1172,14 @@ function SystemPanel({
               ))}
             </span>
             <span className="text-xs uppercase tracking-wider text-muted-foreground">Hệ thống của bạn</span>
+            {state.migrating && (
+              <span
+                className="rounded-full border border-sky-400/50 bg-sky-500/10 px-1.5 text-[10px] text-sky-200"
+                title={`Đang di trú sang ${chassisDef(CONTENT, state.migrating).name}: có thêm ổ của hệ mới, nhưng API chậm ×${MIGRATION.apiLatency} và chi phí ×${MIGRATION.cost}.`}
+              >
+                → {chassisDef(CONTENT, state.migrating).name}
+              </span>
+            )}
             <span className={cn('ml-auto flex items-center gap-1 font-mono text-xs', cost > budget + 0.001 ? 'text-rose-400' : 'text-muted-foreground')}>
               <Wallet className="size-3.5" /> ${cost.toFixed(2)}/${budget.toFixed(2)}/h
             </span>

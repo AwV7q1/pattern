@@ -17,9 +17,9 @@
 //   run = chooseEvent(content, run, option, removeIndex?);
 //   run = nextAct(content, run);                      // after 'cleared'
 
-import { canUpgrade, cardDef, chassisDef, nextRandom } from './rules.ts';
+import { canUpgrade, cardDef, chassisDef, MIGRATION, nextRandom } from './rules.ts';
 import { generateMap, mapNode } from './map.ts';
-import type { BattleSetup, BattleState, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
+import type { BattleSetup, BattleState, ChassisDef, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
@@ -137,10 +137,28 @@ export function chooseNode(content: Content, prev: RunState, id: number): RunSta
   return run;
 }
 
+/** Whether an event can come up now: its floor, and a migration needs somewhere to go and none under way. */
+function eventFits(content: Content, run: RunState, e: RunEvent): boolean {
+  if (e.minAct && run.act < e.minAct) return false;
+  if (e.options.some((o) => o.effects.some((x) => x.op === 'migrate')) && (run.migrating || content.chassis.length < 2)) return false;
+  return true;
+}
+
+/** The chassis a migration offered now moves to: another one, fixed by the run's seed and floor. */
+export function migrateTarget(content: Content, run: RunState): ChassisDef {
+  const current = chassisDef(content, run.chassis).id;
+  const others = content.chassis.filter((c) => c.id !== current);
+  return others[((Math.imul(run.seed ^ 0x9e3779b9, 31) + run.act * 7) >>> 0) % others.length];
+}
+
+/** An event's text with its placeholders filled in (`{chassis}`: the migration target). */
+export const eventText = (content: Content, run: RunState, text: string) => (text.includes('{chassis}') ? text.replaceAll('{chassis}', migrateTarget(content, run).name) : text);
+
 function pickEvent(content: Content, run: RunState): RunEvent {
   const seen = new Set(run.history.filter((h) => h.kind === 'event').map((h) => h.enemy));
-  const fresh = content.events.filter((e) => !seen.has(e.id));
-  const pool = fresh.length ? fresh : content.events;
+  const fits = content.events.filter((e) => eventFits(content, run, e));
+  const fresh = fits.filter((e) => !seen.has(e.id));
+  const pool = fresh.length ? fresh : fits;
   return pool[Math.floor(nextRandom(run) * pool.length)];
 }
 
@@ -186,7 +204,7 @@ export function battleSetup(content: Content, run: RunState): BattleSetup {
   const node = currentNode(content, run);
   if (!node || (node.kind !== 'battle' && node.kind !== 'elite' && node.kind !== 'boss')) throw new Error(`node ${run.node} is not a fight`);
   const legitScale = isWarmup(content, run, node.kind) ? 1 : 1 + (content.run.actScale.legit ?? 0) * (run.act - 1);
-  return { chassis: chassisDef(content, run.chassis).id, enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
+  return { chassis: chassisDef(content, run.chassis).id, ...(run.migrating && { migrating: run.migrating.to }), enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
 }
 
 /** Title of the current fight, e.g. "Tinh anh: Bão Retry". */
@@ -234,6 +252,11 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
   const gold = Math.max(0, content.run.gold[node.kind as 'battle' | 'elite' | 'boss'] + Math.floor((nextRandom(run) * 2 - 1) * (content.run.goldJitter + 1)));
   run.gold += gold;
   run.history.at(-1)!.gold = gold;
+  if (run.migrating && --run.migrating.battles <= 0) {
+    run.chassis = run.migrating.to;
+    run.history.at(-1)!.migrated = run.migrating.to;
+    delete run.migrating;
+  }
   if (node.kind === 'boss') {
     run.phase = run.act >= content.run.acts ? 'won' : 'cleared';
     if (run.phase === 'cleared') run.relicOffer = bossOffer(content, run);
@@ -303,7 +326,7 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
   if (prev.phase !== 'event' || !event || !opt) return prev;
   if (opt.effects.some((e) => e.op === 'removeCard') && (removeIndex === undefined || !canRemove(content, prev, removeIndex))) return prev;
   const run = clone(prev);
-  const entry: FloorResult & { added: string[]; healed: number } = { act: run.act, kind: 'event', enemy: event.id, won: true, turns: 0, hpLost: 0, option: opt.label, added: [], healed: 0, removed: undefined };
+  const entry: FloorResult & { added: string[]; healed: number } = { act: run.act, kind: 'event', enemy: event.id, won: true, turns: 0, hpLost: 0, option: eventText(content, run, opt.label), added: [], healed: 0, removed: undefined };
   let pick = false;
   for (const e of opt.effects) {
     if (e.op === 'heal') {
@@ -334,6 +357,8 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
       entry.gold = (entry.gold ?? 0) + n;
     } else if (e.op === 'relic') {
       if (content.relics.some((r) => r.id === e.id) && !run.relics.includes(e.id)) gainRelic(content, run, e.id);
+    } else if (e.op === 'migrate') {
+      if (!run.migrating) run.migrating = { to: migrateTarget(content, run).id, battles: MIGRATION.battles };
     } else if (e.op === 'pickCard') pick = true;
   }
   run.history.push(entry);
@@ -458,6 +483,7 @@ export function isValidRun(content: Content, v: unknown): v is RunState {
       r.act <= content.run.acts &&
       Number.isInteger(r.climbed) &&
       (r.chassis === undefined || content.chassis.some((c) => c.id === r.chassis)) &&
+      (r.migrating === undefined || (content.chassis.some((c) => c.id === r.migrating!.to) && Number.isInteger(r.migrating.battles))) &&
       ['chassis', 'map', 'battle', 'reward', 'rest', 'event', 'shop', 'cleared', 'won', 'lost'].includes(r.phase) &&
       Array.isArray(r.deck) &&
       r.deck.every(isCard) &&

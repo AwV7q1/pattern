@@ -377,6 +377,8 @@ export interface BattleSetup {
   legitScale?: number;
   /** `ChassisDef.id` (default: the first chassis). */
   chassis?: string;
+  /** Moving to this chassis: its extra sockets are in, at a cost (see `MIGRATION`). */
+  migrating?: string;
 }
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
@@ -465,10 +467,15 @@ export type EventEffect =
   | { op: 'randomCard' }
   | { op: 'gold'; n: number }
   | { op: 'pickCard' }
-  | { op: 'removeCard' };
+  | { op: 'removeCard' }
+  /** Start moving to another chassis (`migrateTarget`): both systems run side by side for a few fights. */
+  | { op: 'migrate' };
 
 export interface RunEvent {
   id: string;
+  /** Only from this floor on. */
+  minAct?: number;
+  /** `{chassis}` in the title, text and labels: the chassis a `migrate` option moves to. */
   title: string;
   text: string;
   options: { label: string; effects: EventEffect[] }[];
@@ -496,6 +503,8 @@ export interface FloorResult {
   /** Card taken after the fight (null: skipped), or removed / healed at a rest. */
   picked?: string | null;
   removed?: string;
+  /** The chassis the run switched to after this fight (end of a migration). */
+  migrated?: string;
   /** Map node (shops: so purchases in one shop share an entry). */
   node?: number;
   /** Gold won (fights, events) or spent (shops). */
@@ -545,6 +554,8 @@ export interface RunState {
   /** Boss relics offered in the `cleared` phase (pick one when climbing). */
   relicOffer: string[];
   history: FloorResult[];
+  /** Moving to another chassis: `battles` fights left on the hybrid system before the switch. */
+  migrating?: { to: string; battles: number };
   /** The fight that ended the run (a loss), for its postmortem. */
   lastFight?: { enemy: string; chassis: string; reports: TurnReport[] };
 }
@@ -630,6 +641,8 @@ export interface BattleState {
   };
   /** The system built on (`ChassisDef.id`). */
   chassis: string;
+  /** Moving to this chassis (strangler fig): its extra sockets are in, latency and cost are up. */
+  migrating?: string;
   /** Installed modules, oldest first (see `CardDef.fits`). `card` keeps the "+" of an upgraded copy. */
   modules?: ModuleInst[];
   /** Timed effects in play (see `StatusDef`). */

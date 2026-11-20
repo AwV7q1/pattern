@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, BookOpen, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
@@ -19,7 +19,9 @@ import {
   chooseNode,
   currentEvent,
   currentNode,
+  eventText,
   finishBattle,
+  migrateTarget,
   leaveShop,
   newRun,
   nextAct,
@@ -29,7 +31,7 @@ import {
   shopRemove,
   stepsPerAct,
 } from './run';
-import { canUpgrade, cardDef } from './rules';
+import { canUpgrade, cardDef, chassisDef } from './rules';
 import { layoutOf, SOCKET_KIND_LABEL } from './Infra';
 import { PostmortemPanel } from './Postmortem';
 import type { ChassisDef, FloorResult, RestChoice, RunState, SocketKind } from './types';
@@ -179,6 +181,11 @@ function Progress({ run }: { run: RunState }) {
           <Icon className="size-3" /> {tagged.kind === 'boss' ? 'Trùm' : 'Tinh anh'}
         </span>
       )}
+      {run.migrating && (
+        <span className="flex items-center gap-0.5 rounded-full border border-sky-400/50 bg-sky-500/10 px-1.5 text-sky-200" title="Hệ mới chạy song song hệ cũ: có thêm ổ, nhưng API chậm hơn và tốn tiền hơn. Thắng đủ số trận thì chuyển hẳn.">
+          <ArrowRightLeft className="size-3" /> Di trú sang {chassisDef(CONTENT, run.migrating.to).name}: còn {run.migrating.battles} trận
+        </span>
+      )}
     </span>
   );
 }
@@ -270,24 +277,25 @@ function ChassisScreen({ onPick }: { onPick: (id: string) => void }) {
   );
 }
 
-function ChassisCard({ chassis: c, on, onClick }: { chassis: ChassisDef; on: boolean; onClick: () => void }) {
+function ChassisCard({ chassis: c, on = false, onClick, caption }: { chassis: ChassisDef; on?: boolean; onClick?: () => void; caption?: string }) {
   const { main, branches } = layoutOf(c.design);
   const label = (id: string) => {
     const n = c.design.nodes.find((x) => x.id === id);
     return id === c.aliases.ext ? 'Đối tác' : (n?.label ?? id);
   };
+  const Wrapper = onClick ? 'button' : 'div';
   const kinds = new Map<SocketKind, number>();
   for (const sk of c.sockets) if (sk.cap > 0) kinds.set(sk.kind, (kinds.get(sk.kind) ?? 0) + sk.cap);
   return (
-    <button
-      type="button"
-      aria-pressed={on}
-      onClick={onClick}
+    <Wrapper
+      {...(onClick && { type: 'button' as const, 'aria-pressed': on, onClick })}
       className={cn(
         'flex flex-col gap-3 rounded-2xl border-2 bg-card/70 p-4 text-left outline-none transition-[transform,border-color] duration-200 focus-visible:ring-2 focus-visible:ring-sky-300',
-        on ? '-translate-y-1 border-sky-400 shadow-[0_0_30px_rgba(56,189,248,0.25)]' : 'border-border hover:-translate-y-0.5',
+        on ? 'border-sky-400 shadow-[0_0_30px_rgba(56,189,248,0.25)]' : 'border-border',
+        onClick && (on ? '-translate-y-1' : 'hover:-translate-y-0.5'),
       )}
     >
+      {caption && <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{caption}</div>}
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-lg font-semibold">{c.name}</span>
         <span className="font-mono text-xs text-muted-foreground">${(c.budgetPerHour ?? CONTENT.battle.budgetPerHour).toFixed(2)}/h</span>
@@ -330,7 +338,7 @@ function ChassisCard({ chassis: c, on, onClick }: { chassis: ChassisDef; on: boo
           <li key={t} className="text-rose-300">− {t}</li>
         ))}
       </ul>
-    </button>
+    </Wrapper>
   );
 }
 
@@ -607,10 +615,16 @@ function EventScreen({ run, onChoose }: { run: RunState; onChoose: (option: numb
     <div className="mx-auto flex max-w-xl flex-col items-center gap-5 pt-6">
       <div className="text-center">
         <div className="mb-2 flex items-center justify-center gap-2 text-2xl font-bold">
-          <CircleHelp className="size-6 text-violet-300" /> {event.title}
+          <CircleHelp className="size-6 text-violet-300" /> {eventText(CONTENT, run, event.title)}
         </div>
-        <p className="text-sm text-muted-foreground">{event.text}</p>
+        <p className="text-sm text-muted-foreground">{eventText(CONTENT, run, event.text)}</p>
       </div>
+      {event.options.some((o) => o.effects.some((e) => e.op === 'migrate')) && (
+        <div className="grid w-full grid-cols-2 gap-3">
+          <ChassisCard chassis={chassisDef(CONTENT, run.chassis)} caption="Hiện tại" />
+          <ChassisCard chassis={migrateTarget(CONTENT, run)} caption="Đích đến" on />
+        </div>
+      )}
       <div className="flex w-full flex-col gap-2">
         {event.options.map((o, i) => {
           const removes = o.effects.some((e) => e.op === 'removeCard');
@@ -623,7 +637,7 @@ function EventScreen({ run, onChoose }: { run: RunState; onChoose: (option: numb
               onClick={() => (removes ? setRemovingFor(i) : onChoose(i))}
               className="rounded-xl border bg-card/80 px-4 py-3 text-left text-sm transition-colors hover:border-violet-300/60 hover:bg-card disabled:pointer-events-none disabled:opacity-50"
             >
-              {o.label}
+              {eventText(CONTENT, run, o.label)}
               {blocked && <span className="block text-xs text-muted-foreground">Bộ bài cần ít nhất {CONTENT.battle.handSize + 1} lá.</span>}
             </button>
           );
@@ -709,7 +723,7 @@ function HistoryRow({ h }: { h: FloorResult }) {
         ? shopDetail(h)
         : h.kind === 'event'
           ? (h.option ?? '')
-          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}`;
+          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}${h.migrated ? ` · chuyển sang ${chassisDef(CONTENT, h.migrated).name}` : ''}`;
   return (
     <li className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
       <Icon className={cn('size-4 shrink-0', fell ? 'text-rose-400' : info.tone.split(' ')[0])} />
