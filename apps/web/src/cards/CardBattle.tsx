@@ -152,14 +152,11 @@ type Live = {
 type Foe = { enemyHp: number; minions: MinionState[]; target?: number };
 const foeOf = (s: BattleState): Foe => ({ enemyHp: s.enemy.hp, minions: minionsOf(s), target: s.target });
 
-/** `from` moved `f` (0..1) of the way to `to`: HP down (never up) in step with the bolts that landed. */
-function foeAt(from: Foe, to: Foe, f: number): Foe {
-  if (f >= 1) return to;
-  const after = new Map(to.minions.map((m) => [m.uid, m.hp]));
-  const lerp = (a: number, b: number) => (b >= a ? a : a - Math.floor((a - b) * f));
+/** `from` after `landed` points of damage reached each target (minion uid, or 'enemy'). */
+function foeLanded(from: Foe, landed: Map<number | 'enemy', number>): Foe {
   return {
-    enemyHp: lerp(from.enemyHp, to.enemyHp),
-    minions: from.minions.map((m) => ({ ...m, hp: lerp(m.hp, after.get(m.uid) ?? 0) })),
+    enemyHp: from.enemyHp - (landed.get('enemy') ?? 0),
+    minions: from.minions.map((m) => ({ ...m, hp: m.hp - (landed.get(m.uid) ?? 0) })),
     target: from.target,
   };
 }
@@ -575,14 +572,23 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     let prev = { hp: start.hp, headroom: start.headroom };
     // the filtered traffic hits the target: a minion or the enemy, past its guards.
     // Its share of the damage shows as each window's bolts land.
+    // the filtered traffic hits its target first (a minion, which may fall), then the enemy
     const enemyLoss = Math.max(0, start.enemy.hp - end.enemy.hp);
-    const aimed = aimEl(start);
-    const minionHit = minionLoss(start, end);
+    const after = new Map(minionsOf(end).map((m) => [m.uid, m.hp]));
+    const first = targetOf(start)?.uid;
+    const segs: { key: number | 'enemy'; left: number }[] = [];
+    if (end.phase !== 'won')
+      for (const m of [...minionsOf(start)].sort((x, y) => Number(y.uid === first) - Number(x.uid === first))) {
+        const lost = Math.max(0, m.hp - (after.get(m.uid) ?? 0));
+        if (lost > 0) segs.push({ key: m.uid, left: lost });
+      }
+    if (enemyLoss > 0) segs.push({ key: 'enemy', left: enemyLoss });
+    const total = segs.reduce((sum, x) => sum + x.left, 0);
     const fromFoe = foeOf(start);
     const toFoe = { ...foeOf(end), enemyHp: Math.min(start.enemy.hp, end.enemy.hp), minions: end.phase === 'won' ? fromFoe.minions : minionsOf(end) };
     const token = ++foeToken.current;
     setFoe(fromFoe);
-    let landed = 0;
+    const landed = new Map<number | 'enemy', number>();
     let shownLoss = 0;
     const volleys: Promise<void>[] = [];
     for (let i = 0; i < n; i++) {
@@ -632,18 +638,23 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
           if (hpAt) floatText(layer, hpAt, `−${prev.hp - cur.hp}`, '#fb7185');
         }
       }
-      // this window's share of the damage, in whole points
-      const total = enemyLoss + minionHit;
-      const due = Math.floor((total * (i + 1)) / n) - shownLoss;
-      if (due > 0) {
-        shownLoss += due;
-        const f = shownLoss / total;
+      // this window's share of the damage, in whole points, split across the targets in order
+      let due = Math.floor((total * (i + 1)) / n) - shownLoss;
+      shownLoss += Math.max(0, due);
+      while (due > 0 && segs.length) {
+        const seg = segs[0];
+        const pts = Math.min(due, seg.left);
+        seg.left -= pts;
+        due -= pts;
+        if (!seg.left) segs.shift();
+        const key = seg.key;
         const onLand = () => {
           if (token !== foeToken.current) return;
-          landed = Math.max(landed, f);
-          setFoe(foeAt(fromFoe, toFoe, landed));
+          landed.set(key, (landed.get(key) ?? 0) + pts);
+          setFoe(foeLanded(fromFoe, landed));
         };
-        if (layer) volleys.push(counterFx(due, enemyLoss > 0 ? botRef.current : aimed, onLand));
+        const at = key === 'enemy' ? botRef.current : minionEls.current[key] ?? botRef.current;
+        if (layer) volleys.push(counterFx(pts, at, onLand));
         else onLand();
       }
       prev = cur;
@@ -651,6 +662,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
     }
     // the last bolts land before the result shows
     if (!skip.current) await Promise.all(volleys);
+    if (token === foeToken.current) setFoe(toFoe);
     foeToken.current++;
     await wait(skip.current ? 0 : 450);
   };
