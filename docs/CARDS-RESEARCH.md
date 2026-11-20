@@ -577,3 +577,29 @@ Kết quả với 40 run:
    - phần thưởng lá có trọng số combo.
 2. Bot forecast nhìn trước 2 lượt, dùng ý định kế tiếp đang hiện trên UI.
 3. Các ý tưởng còn lại ở mục 11: chia tải theo loại request, CDN, elite và trùm đòi lá chuyên dụng, relic +1 slot.
+
+## 13. Hạ tầng lắp ghép: khung, ổ cắm, linh kiện
+
+Bốn giai đoạn:
+- **A.** Ổ cắm thay hai nhóm slot.
+- **B.** Bốn khung chọn ở đầu ca.
+- **C.** Linh kiện chỉ lắp vào ổ: CDN, Lọc tại biên, Shard DB, Service Mesh.
+- **D.** Combo theo vị trí và địch đọc khung.
+
+Thiết kế chi tiết ở [CARDS.md](CARDS.md), mục "Khung và ổ cắm".
+
+**Giai đoạn A** (Monolith, 40 run): greedy, rut, thin, cacheOnly và filterOnly cho kết quả giống hệt trước khi đổi; chỉ random thay đổi một chút (vượt T1 23% → 18%) vì có thêm ổ. Riêng forecast chưa đo lại ở giai đoạn này: lượt đo bị dừng giữa chừng khi cấu hình ổ thay đổi.
+
+**Sau giai đoạn D** (`node scripts/cards-balance.mjs 20 --run --only=random,greedy,rut,forecast --chassis=<khung>`), tỉ lệ vượt cả tháp (T3):
+
+| Khung | random | greedy | rut | forecast |
+|---|---|---|---|---|
+| Monolith | 0% | 0% | 30% | 20% |
+| Hướng sự kiện | 0% | 5% | 15% | 10% |
+| Microservice | 0% | 0% | 0% | 15% |
+| Đọc nhiều | 0% | 5% | 5% | 25% |
+
+- Bot forecast ở mọi khung nằm trong ±10 điểm so với Monolith, đúng mục tiêu đã đặt.
+- Bộ bài lối mòn `rut` (cache → scale → rate limit) yếu đi rõ rệt trên ba khung mới. Lối chơi cố định không còn thắng đều ở mọi kiến trúc.
+- Lần đo đầu, khung Đọc nhiều cho cả bot random vượt tháp 30%. Sau đó đã chỉnh lại: CDN còn 120 trang, API còn 1 instance, DB managed còn 8 kết nối.
+- 20 run mỗi khung nên sai số khoảng ±10 điểm. Cần 40 run trở lên nếu muốn chỉnh tiếp từng khung.
