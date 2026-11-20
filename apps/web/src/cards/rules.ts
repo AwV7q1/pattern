@@ -308,7 +308,7 @@ export function canPlay(content: Content, state: BattleState, uid: number): bool
   const inst = state.hand.find((c) => c.uid === uid);
   if (!inst) return false;
   const def = cardDef(content, inst.id);
-  return !def.unplayable && def.cost <= state.ops && (!def.fits || placements(content, state, uid).length > 0) && (!def.risk || riskBlock(state, def) === null);
+  return !limitPending(state) && !def.unplayable && def.cost <= state.ops && (!def.fits || placements(content, state, uid).length > 0) && (!def.risk || riskBlock(state, def) === null);
 }
 
 /** Below this share of the Error Budget, risky deploys stop and the budget recovers 1 a turn. */
@@ -347,7 +347,8 @@ export function chassisDef(content: Content, id?: string): ChassisDef {
 export const chassisOf = (content: Content, state: Pick<BattleState, 'chassis'>) => chassisDef(content, state.chassis);
 /** The node id behind a role the content names (`api`, `db`, `ext`) in this fight's system. */
 export const alias = (content: Content, state: Pick<BattleState, 'chassis'>, ref: NodeRef | 'ext') => chassisOf(content, state).aliases[ref];
-export const budgetOf = (content: Content, state: Pick<BattleState, 'chassis'>) => chassisOf(content, state).budgetPerHour ?? content.battle.budgetPerHour;
+export const budgetOf = (content: Content, state: Pick<BattleState, 'chassis' | 'budgetMul'>) =>
+  Math.round((chassisOf(content, state).budgetPerHour ?? content.battle.budgetPerHour) * (state.budgetMul ?? 1) * 100) / 100;
 /** The main service's call to its data (cache or DB): where call policies from outside a socket (relics) go. */
 export const mainCall = (content: Content, state: Pick<BattleState, 'chassis'>, design: Design) => edgeAt(design, [alias(content, state, 'api'), alias(content, state, 'db')]);
 
@@ -661,6 +662,59 @@ function installModule(content: Content, state: BattleState, def: CardDef, socke
   if (!hadCache && nodeOf(designOf(content, state), 'cache')) state.cache = { ...state.cache, placed: state.turn };
 }
 
+// ---------------------------------------------------------------- cloud debt: the account is limited
+
+/** A way to spend less, taken at the start of a fight while the account is limited by cloud debt. */
+export interface Concession {
+  id: string;
+  kind: 'scaleIn' | 'downgrade' | 'cap';
+  label: string;
+  text: string;
+}
+/** Spend cap concession: the budget for the fight. */
+export const SPEND_CAP = 0.8;
+/** Downgraded DB: price and concurrent queries. */
+export const DB_DOWNGRADE = { cost: 0.6, concurrency: 0.7 } as const;
+
+/** Concessions still waiting to be chosen. */
+export const limitPending = (state: Pick<BattleState, 'limit'>) => !!state.limit && state.limit.picked.length < state.limit.cut;
+
+/** What the player can give up: one instance of a node that runs several, a smaller DB, or a lower spend cap. Each once. */
+export function limitOptions(content: Content, state: BattleState): Concession[] {
+  const usd = (v: number) => `$${v.toFixed(2)}/h`;
+  const out: Concession[] = [];
+  for (const node of state.design.nodes) {
+    const cfg = node.config;
+    if (!cfg || (cfg.costPerHour ?? 0) <= 0 || (cfg.instances ?? 1) < 2) continue;
+    const label = node.label ?? node.id;
+    out.push({ id: `scaleIn:${node.id}`, kind: 'scaleIn', label: `Bớt 1 instance ${label}`, text: `${label} chạy ×${(cfg.instances ?? 1) - 1} cả trận, tiết kiệm ${usd(cfg.costPerHour ?? 0)}. Ít máy hơn thì tải cao dễ lỗi.` });
+  }
+  const db = nodeOf(state.design, alias(content, state, 'db'));
+  if (db?.config)
+    out.push({
+      id: `downgrade:${db.id}`,
+      kind: 'downgrade',
+      label: 'Hạ cấp DB',
+      text: `Đổi DB sang gói nhỏ: rẻ hơn ${Math.round((1 - DB_DOWNGRADE.cost) * 100)}% (tiết kiệm ${usd((db.config.costPerHour ?? 0) * (1 - DB_DOWNGRADE.cost))}) nhưng nhận ít hơn ${Math.round((1 - DB_DOWNGRADE.concurrency) * 100)}% truy vấn cùng lúc.`,
+    });
+  out.push({ id: 'cap', kind: 'cap', label: 'Trần chi tiêu', text: `Giữ nguyên hệ thống nhưng ngân sách trận này chỉ còn ${Math.round(SPEND_CAP * 100)}% (${usd(budgetOf(content, { ...state, budgetMul: SPEND_CAP }))}): vượt là mất Error Budget.` });
+  return out.filter((o) => !state.limit?.picked.includes(o.id));
+}
+
+/** Take one concession (account limited by cloud debt). */
+export function concede(content: Content, prev: BattleState, id: string): BattleState {
+  if (!limitPending(prev) || !limitOptions(content, prev).some((o) => o.id === id)) return prev;
+  const state = clone(prev);
+  const [kind, node] = id.split(':');
+  if (kind === 'scaleIn') {
+    const cfg = nodeOf(state.design, node)!.config!;
+    cfg.instances = Math.max(1, (cfg.instances ?? 1) - 1);
+  } else if (kind === 'downgrade') tuneNode(state.design, node, DB_DOWNGRADE);
+  else state.budgetMul = (state.budgetMul ?? 1) * SPEND_CAP;
+  state.limit!.picked.push(id);
+  return state;
+}
+
 function removeModule(content: Content, state: BattleState, uid: number) {
   state.modules = modulesOf(state).filter((m) => m.uid !== uid);
   if (!state.modules.length) delete state.modules;
@@ -771,6 +825,7 @@ export function newBattle(content: Content, seed: number, setup: BattleSetup = {
     relicCount: {},
     relicFired: [],
     ...(setup.legitScale && setup.legitScale !== 1 && { legitMul: setup.legitScale }),
+    ...(setup.limit && setup.limit > 0 && { limit: { cut: setup.limit, picked: [] } }),
   };
   for (const id of enemy.minions ?? []) summon(content, state, id, 1);
   const deck: CardInst[] = (setup.deck ?? b.startingDeck).map((id) => ({ uid: state.nextUid++, id }));

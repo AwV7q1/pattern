@@ -113,7 +113,9 @@
   },
   "goldJitter": 5,
   "bill": {
-    "perDollarTurn": 1
+    "perDollarTurn": 2,
+    "debtPerCut": 10,
+    "maxCuts": 2
   },
   "shop": {
     "cards": 5,

@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError } from '@/app/api';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, CalendarDays, FlaskConical, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, CalendarDays, FlaskConical, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Lock, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
 import { CONTENT, loadBest, loadRun, recordRun, saveRun } from './content';
 import type { Best } from './content';
 import {
+  limitOf,
   actHealOf,
   battleSeed,
   battleSetup,
@@ -136,6 +137,11 @@ function RunScreen({ run, best, onNew, children }: { run: RunState; best: Best; 
           <span className="flex items-center gap-1 text-yellow-300" title="Vàng: tiêu ở cửa hàng">
             <Coins className="size-4" /> {run.gold}
           </span>
+          {!!run.debt && (
+            <span className="flex items-center gap-1 rounded bg-rose-500/15 px-1.5 text-rose-300" title={`Nợ cloud: vàng thưởng trả nợ trước. Còn nợ thì trận sau bắt đầu với tài khoản bị giới hạn (${limitOf(CONTENT, run.debt)} lựa chọn cắt giảm).`}>
+              <Lock className="size-3.5" /> nợ {run.debt}
+            </span>
+          )}
           <span className="flex items-center gap-1 text-rose-300">
             <HeartPulse className="size-4" /> {run.hp}/{run.maxHp}
           </span>
@@ -202,6 +208,32 @@ function Progress({ run }: { run: RunState }) {
 
 // ---------------------------------------------------------------- reward
 
+/** After a fight: reward − old debt − cloud bill = gold kept, and the debt left if the money ran out. */
+function Payout({ entry }: { entry: FloorResult }) {
+  const kept = (entry.gold ?? 0) - (entry.debtPaid ?? 0) - Math.max(0, (entry.bill ?? 0) - (entry.debt ?? 0));
+  return (
+    <div className="w-full max-w-md rounded-lg border bg-card/60 px-4 py-3 text-sm">
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 font-mono">
+        <span className="text-yellow-200">+{entry.gold} thưởng</span>
+        {!!entry.debtPaid && <span className="text-rose-300">− {entry.debtPaid} trả nợ cũ</span>}
+        {!!entry.bill && <span className="text-rose-300">− {entry.bill} hóa đơn cloud</span>}
+        <span className="text-muted-foreground">=</span>
+        <b className={kept >= 0 ? 'text-emerald-300' : 'text-rose-300'}>{kept >= 0 ? `+${kept}` : kept} vàng</b>
+      </div>
+      {entry.topCost && (
+        <p className="mt-1 text-center text-xs text-muted-foreground">
+          Tốn nhất: <b className="text-foreground">{entry.topCost.label}</b> ({Math.round(entry.topCost.share * 100)}% chi phí)
+        </p>
+      )}
+      {!!entry.debt && (
+        <p className="mt-2 flex items-center justify-center gap-1.5 text-center text-xs text-rose-300">
+          <Lock className="size-3.5 shrink-0" /> Không đủ vàng: nợ cloud {entry.debt}. Trận sau tài khoản bị giới hạn, bạn phải chọn cắt bớt hạ tầng.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | null) => void }) {
   const [chosen, setChosen] = useState<string | null>(null);
   const last = run.history.at(-1);
@@ -215,11 +247,12 @@ function RewardScreen({ run, onPick }: { run: RunState; onPick: (id: string | nu
           <Trophy className="size-6 text-amber-300" /> {start ? 'Chọn hạ tầng ban đầu' : fromEvent ? 'Chọn công cụ mới' : `Thắng ${last?.kind === 'elite' ? 'tinh anh ' : ''}${enemy?.name ?? 'trận'}`}
         </div>
         <p className="text-sm text-muted-foreground">
-          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget${last.gold ? `, +${last.gold} vàng` : ''}${last.bill ? `, hóa đơn cloud −${last.bill} vàng` : ''}. ` : ''}
+          {last && !fromEvent ? `${last.turns} lượt, mất ${last.hpLost} Error Budget. ` : ''}
           {last?.kind === 'elite' ? `+${CONTENT.run.elite.maxHp} Error Budget tối đa. ` : ''}
           {start ? 'Bộ bài khởi đầu chưa có hạ tầng tối ưu: chọn 1 hướng để bắt đầu. Không có đủ cả ba, nên trục còn lại phải tìm dọc đường.' : 'Chọn 1 lá thêm vào bộ bài, hoặc bỏ qua để giữ bộ bài gọn.'}
         </p>
       </div>
+      {last && !fromEvent && last.gold !== undefined && <Payout entry={last} />}
       {last?.relic && !fromEvent && (() => {
         const relic = CONTENT.relics.find((r) => r.id === last.relic);
         return relic ? (
@@ -805,7 +838,7 @@ function HistoryRow({ h }: { h: FloorResult }) {
         ? shopDetail(h)
         : h.kind === 'event'
           ? (h.option ?? '')
-          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}${h.bill ? ` · hóa đơn ${h.bill} vàng` : ''}${h.migrated ? ` · chuyển sang ${chassisDef(CONTENT, h.migrated).name}` : ''}`;
+          : `${h.kind === 'elite' ? 'tinh anh · ' : h.kind === 'boss' ? 'trùm · ' : ''}${h.turns} lượt · −${h.hpLost}${h.bill ? ` · hóa đơn ${h.bill} vàng` : ''}${h.debt ? ` · nợ ${h.debt}` : ''}${h.migrated ? ` · chuyển sang ${chassisDef(CONTENT, h.migrated).name}` : ''}`;
   return (
     <li className="flex items-center gap-2 rounded-md bg-muted/40 px-3 py-1.5">
       <Icon className={cn('size-4 shrink-0', fell ? 'text-rose-400' : info.tone.split(' ')[0])} />

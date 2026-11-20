@@ -38,6 +38,10 @@ import {
   Dices,
   Zap,
   Snowflake,
+  Lock,
+  Server,
+  DatabaseZap,
+  Gauge,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { compute } from '@/sim/compute';
@@ -49,6 +53,10 @@ import {
   bypassNow,
   canPlay,
   cardDef,
+  concede,
+  limitOptions,
+  limitPending,
+  type Concession,
   activeCombos,
   currentIntent,
   designOf,
@@ -929,7 +937,7 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
                 Bỏ qua
               </Button>
             ) : (
-              <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player'} onClick={() => void endTurn()}>
+              <Button size="lg" className="h-12 rounded-full px-6 shadow-lg shadow-black/40" disabled={state.phase !== 'player' || limitPending(state)} onClick={() => void endTurn()}>
                 <ArrowRight />
                 Kết thúc lượt
               </Button>
@@ -948,6 +956,8 @@ export function CardBattle({ seed, setup, title, progress, deck, continueLabel, 
       {splash && <PlayedSplash key={splash.key} def={splash.def} x={splash.x} y={splash.y} onDone={() => setSplash(null)} />}
 
       {showLibrary && <CardLibrary cards={CONTENT.cards} deck={deck} onClose={() => setShowLibrary(false)} />}
+
+      {limitPending(state) && !over && <LimitScreen state={state} onPick={(id) => setState((s) => concede(CONTENT, s, id))} />}
 
       {over && (state.phase === 'lost' || endReady) && <EndScreen state={state} deck={deck} enemyName={enemy.name} seed={seed} continueLabel={continueLabel} onLog={() => setShowLog(true)} onContinue={() => onFinish(state)} />}
     </div>
@@ -1808,6 +1818,45 @@ function LogDrawer({ open, reports, onClose }: { open: boolean; reports: TurnRep
 }
 
 // ---------------------------------------------------------------- overlays
+
+const CONCESSION_ICON: Record<Concession['kind'], typeof Server> = { scaleIn: Server, downgrade: DatabaseZap, cap: Gauge };
+
+/** Cloud debt: before the first turn the player chooses what to give up (the provider limits the account). */
+function LimitScreen({ state, onPick }: { state: BattleState; onPick: (id: string) => void }) {
+  const limit = state.limit!;
+  const options = limitOptions(CONTENT, state);
+  const left = limit.cut - limit.picked.length;
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+      <div className="w-[480px] rounded-xl border border-rose-500/30 bg-card p-6 shadow-2xl">
+        <div className="mb-2 flex items-center gap-2 text-xl font-bold">
+          <Lock className="size-6 text-rose-300" /> Tài khoản bị giới hạn
+        </div>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Hóa đơn cloud các trận trước chưa trả hết, nhà cung cấp hạ hạn mức tài khoản. Chọn <b className="text-foreground">{left}</b> thứ chấp nhận cắt cho trận này. Vàng thưởng sau trận sẽ trả nợ trước;
+          hết nợ thì hết giới hạn.
+        </p>
+        <ul className="space-y-2">
+          {options.map((o) => {
+            const Icon = CONCESSION_ICON[o.kind];
+            return (
+              <li key={o.id}>
+                <button type="button" className="flex w-full items-start gap-3 rounded-lg border bg-muted/30 p-3 text-left transition hover:border-rose-400/60 hover:bg-muted/60" onClick={() => onPick(o.id)}>
+                  <Icon className="mt-0.5 size-5 shrink-0 text-rose-200" />
+                  <span>
+                    <span className="block font-medium">{o.label}</span>
+                    <span className="block text-xs text-muted-foreground">{o.text}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="mt-3 text-xs text-muted-foreground">Ngoài đời: thẻ thanh toán bị từ chối thì tài khoản bị hạn chế, quá hạn nữa là dịch vụ bị tạm dừng. Tự chọn cắt cái ít quan trọng nhất luôn tốt hơn để nhà cung cấp tắt hộ.</p>
+      </div>
+    </div>
+  );
+}
 
 function EndScreen({
   state,

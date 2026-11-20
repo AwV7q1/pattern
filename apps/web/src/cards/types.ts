@@ -395,6 +395,8 @@ export interface BattleSetup {
   chassis?: string;
   /** Moving to this chassis: its extra sockets are in, at a cost (see `MIGRATION`). */
   migrating?: string;
+  /** Cloud debt: the account is limited, the fight starts with this many concessions to choose (`limitOptions`). */
+  limit?: number;
 }
 
 // ---------------------------------------------------------------- run: the tower ("Tháp On-Call")
@@ -473,7 +475,8 @@ export interface RunConfig {
   /** Cards offered before the first fight (the starting infrastructure pick). */
   startPick?: string[];
   /** Cloud bill after each fight: gold per $1/h of spend per turn (see `cloudBill`). */
-  bill?: { perDollarTurn: number };
+  /** `debtPerCut`: gold of cloud debt per concession the next fight asks for (up to `maxCuts`). */
+  bill?: { perDollarTurn: number; debtPerCut?: number; maxCuts?: number };
 }
 
 export type EventEffect =
@@ -527,8 +530,14 @@ export interface FloorResult {
   node?: number;
   /** Gold won (fights, events) or spent (shops). */
   gold?: number;
-  /** Cloud bill paid after the fight (gold), already taken out of `gold`. */
+  /** Cloud bill of the fight (gold). */
   bill?: number;
+  /** Old cloud debt paid off from this reward. */
+  debtPaid?: number;
+  /** Cloud debt left after this fight (the bill was more than the reward and the savings). */
+  debt?: number;
+  /** The node that cost the most over the fight, and its share of the spend. */
+  topCost?: { label: string; share: number };
   /** Shop purchases. */
   bought?: string[];
   /** Relic taken (elite drop, boss pick). */
@@ -578,6 +587,8 @@ export interface RunState {
   daily?: string;
   /** Moving to another chassis: `battles` fights left on the hybrid system before the switch. */
   migrating?: { to: string; battles: number };
+  /** Unpaid cloud bills (gold): the next rewards pay it first; until then fights start with the account limited. */
+  debt?: number;
   /** The fight that ended the run (a loss), for its postmortem. */
   lastFight?: { enemy: string; chassis: string; reports: TurnReport[] };
 }
@@ -683,6 +694,10 @@ export interface BattleState {
   migrating?: string;
   /** Turns ahead seen for the rest of the fight (`reveal`). */
   revealed?: number;
+  /** Account limited by cloud debt: `cut` concessions to choose before the first turn, the ones taken so far. */
+  limit?: { cut: number; picked: string[] };
+  /** Spend cap: the budget × this for the fight (a concession). */
+  budgetMul?: number;
   /** Gold paid up front on this fight's cloud bill (`prepay`). */
   prepaid?: number;
   /** The spot instances were reclaimed for this turn. */

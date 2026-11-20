@@ -18,6 +18,7 @@
 //   run = nextAct(content, run);                      // after 'cleared'
 
 import { canUpgrade, cardDef, chassisDef, cloudBill, MIGRATION, nextRandom } from './rules.ts';
+import { spendByNode } from './postmortem.ts';
 import { generateMap, mapNode } from './map.ts';
 import type { BattleSetup, BattleState, ChassisDef, Content, FloorResult, MapNode, RunEvent, RarityWeights, RelicRarity, RestChoice, RunState, Scale, ShopStock, TowerMap } from './types';
 
@@ -227,7 +228,24 @@ export function battleSetup(content: Content, run: RunState): BattleSetup {
   const node = currentNode(content, run);
   if (!node || (node.kind !== 'battle' && node.kind !== 'elite' && node.kind !== 'boss')) throw new Error(`node ${run.node} is not a fight`);
   const legitScale = isWarmup(content, run, node.kind) ? 1 : 1 + (content.run.actScale.legit ?? 0) * (run.act - 1);
-  return { chassis: chassisDef(content, run.chassis).id, ...(run.migrating && { migrating: run.migrating.to }), enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
+  const limit = limitOf(content, run.debt);
+  return { chassis: chassisDef(content, run.chassis).id, ...(run.migrating && { migrating: run.migrating.to }), ...(limit && { limit }), enemy: enemyOf(content, run, node), hp: run.hp, maxHp: run.maxHp, deck: run.deck, enemyScale: scaleOf(content, run, node), relics: run.relics, ...(legitScale !== 1 && { legitScale }) };
+}
+
+/** Concessions a fight starts with for this much cloud debt: one per `debtPerCut` gold, up to `maxCuts`. */
+export function limitOf(content: Content, debt = 0): number {
+  const bill = content.run.bill;
+  if (debt <= 0 || !bill) return 0;
+  return Math.min(bill.maxCuts ?? 2, Math.ceil(debt / (bill.debtPerCut ?? 10)));
+}
+
+/** Gold coming in pays the cloud debt first. Returns the debt paid off. */
+function earn(run: RunState, n: number): number {
+  const paid = Math.min(run.debt ?? 0, n);
+  if (paid) run.debt! -= paid;
+  if (!run.debt) delete run.debt;
+  run.gold += n - paid;
+  return paid;
 }
 
 /** Title of the current fight, e.g. "Tinh anh: Bão Retry". */
@@ -273,11 +291,22 @@ export function finishBattle(content: Content, prev: RunState, battle: BattleSta
     return run;
   }
   const gold = Math.max(0, content.run.gold[node.kind as 'battle' | 'elite' | 'boss'] + Math.floor((nextRandom(run) * 2 - 1) * (content.run.goldJitter + 1)));
-  // the cloud bill comes out of the reward (never below zero gold: an unpaid rest is written off)
-  const bill = Math.min(run.gold + gold, cloudBill(content, battle).total);
-  run.gold += gold - bill;
-  run.history.at(-1)!.gold = gold;
-  if (bill > 0) run.history.at(-1)!.bill = bill;
+  // the reward pays old cloud debt first, then this fight's bill (savings too); what is still unpaid is debt
+  const entry = run.history.at(-1)!;
+  entry.gold = gold;
+  const debtPaid = earn(run, gold);
+  if (debtPaid) entry.debtPaid = debtPaid;
+  const bill = cloudBill(content, battle).total;
+  if (bill > 0) {
+    entry.bill = bill;
+    const paid = Math.min(run.gold, bill);
+    run.gold -= paid;
+    if (bill > paid) run.debt = (run.debt ?? 0) + bill - paid;
+  }
+  if (run.debt) entry.debt = run.debt;
+  const { costs, egress } = spendByNode(battle.reports);
+  const total = costs.reduce((s, c) => s + c.costPerHour, 0) + egress;
+  if (costs.length && total > 0) entry.topCost = { label: costs[0].label, share: Math.round((costs[0].costPerHour / total) * 100) / 100 };
   if (run.migrating && --run.migrating.battles <= 0) {
     run.chassis = run.migrating.to;
     run.history.at(-1)!.migrated = run.migrating.to;
@@ -379,7 +408,8 @@ export function chooseEvent(content: Content, prev: RunState, option: number, re
       entry.removed = run.deck.splice(removeIndex!, 1)[0];
     } else if (e.op === 'gold') {
       const n = Math.max(-run.gold, e.n);
-      run.gold += n;
+      if (n > 0) earn(run, n);
+      else run.gold += n;
       entry.gold = (entry.gold ?? 0) + n;
     } else if (e.op === 'relic') {
       if (content.relics.some((r) => r.id === e.id) && !run.relics.includes(e.id)) gainRelic(content, run, e.id);

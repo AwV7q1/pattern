@@ -1362,16 +1362,57 @@ test('cloud bill: spend per turn (and what was paid up front) comes out of the r
   assert.equal(run.phase, 'battle');
   const reports = [1.5, 1.5, 1].map((c) => ({ costPerHour: c }) as BattleState['reports'][number]);
   const fight = { ...win(run, run.hp), reports, prepaid: 2 };
-  assert.deepEqual(rules.cloudBill(content, fight), { usage: 4, prepaid: 2, total: 6 });
+  assert.deepEqual(rules.cloudBill(content, fight), { usage: 8, prepaid: 2, total: 10 });
   const after = runs.finishBattle(content, run, fight);
   const h = after.history.at(-1)!;
-  assert.equal(h.bill, 6);
-  assert.equal(after.gold, h.gold! - 6);
+  assert.equal(h.bill, 10);
+  assert.equal(after.gold, h.gold! - 10);
+  assert.equal(after.debt, undefined);
   // the deal relic: usage × 0.6, the prepaid part untouched
-  assert.equal(rules.cloudBill(content, { ...fight, relics: ['edp_deal'] }).total, Math.round(4 * 0.6) + 2);
-  // never below zero gold
+  assert.equal(rules.cloudBill(content, { ...fight, relics: ['edp_deal'] }).total, Math.round(8 * 0.6) + 2);
+  // never below zero gold: the rest is cloud debt
   const broke = runs.finishBattle(content, run, { ...fight, prepaid: 500 });
   assert.equal(broke.gold, 0);
+  assert.equal(broke.debt, 508 - broke.history.at(-1)!.gold!);
+  assert.equal(broke.history.at(-1)!.debt, broke.debt);
+});
+
+test('cloud debt: the next fight starts limited, the player picks the cuts, rewards pay the debt first', () => {
+  let run = climbTo(fresh(5), 'battle');
+  run = { ...run, gold: 0 };
+  const reports = [5, 5, 5].map((c) => ({ costPerHour: c }) as BattleState['reports'][number]);
+  run = runs.finishBattle(content, run, { ...win(run, run.hp), reports });
+  const debt = 30 - run.history.at(-1)!.gold!;
+  assert.ok(debt > 0);
+  assert.equal(run.debt, debt);
+  assert.equal(run.gold, 0);
+  assert.equal(runs.limitOf(content, debt), Math.min(2, Math.ceil(debt / 10)));
+  run = climbTo(runs.pickReward(content, run, null), 'battle');
+  // limited: nothing playable until the concessions are taken
+  const setup = runs.battleSetup(content, run);
+  assert.equal(setup.limit, runs.limitOf(content, run.debt));
+  let s = rules.newBattle(content, 1, { ...setup, limit: 2 });
+  assert.ok(rules.limitPending(s));
+  assert.ok(s.hand.every((c) => !rules.canPlay(content, s, c.uid)));
+  const opts = rules.limitOptions(content, s);
+  assert.deepEqual(opts.map((o) => o.kind).sort(), ['cap', 'downgrade', 'scaleIn']);
+  const api = rules.alias(content, s, 'api');
+  const before = rules.nodeOf(s.design, api)!.config!.instances!;
+  s = rules.concede(content, s, `scaleIn:${api}`);
+  assert.equal(rules.nodeOf(s.design, api)!.config!.instances, before - 1);
+  assert.equal(rules.concede(content, s, `scaleIn:${api}`), s, 'each concession once');
+  const budget = rules.budgetOf(content, s);
+  s = rules.concede(content, s, 'cap');
+  assert.equal(rules.budgetOf(content, s), Math.round(budget * rules.SPEND_CAP * 100) / 100);
+  assert.ok(!rules.limitPending(s));
+  assert.equal(rules.concede(content, s, rules.limitOptions(content, s)[0].id), s, 'no more than asked');
+  // the next reward pays the debt first
+  const owed = run.debt!;
+  const paid = runs.finishBattle(content, run, win(run, run.hp));
+  const h = paid.history.at(-1)!;
+  assert.equal(h.debtPaid, Math.min(owed, h.gold!));
+  assert.equal(paid.debt, owed > h.gold! ? owed - h.gold! : undefined);
+  assert.equal(paid.gold, Math.max(0, h.gold! - owed));
 });
 
 test('nodeCosts: autoscaled nodes at their average size, most expensive first, with utilization', () => {
