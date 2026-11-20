@@ -459,3 +459,66 @@ Hai cột đầu chạy 20 run, các cột sau chạy 40 run. Sai số khoảng 
 
 - `rut` lần đầu xuống quanh ngưỡng 60%. Bộ bài này chỉ có Timeout ở nhóm API, còn nhóm data bị Redis và Index chiếm hết; nó vẫn chết chủ yếu ở trùm tầng 3.
 - Đối tác đồng bộ làm hệ thống gốc yếu đi, nên mọi chiến thuật khác đều tụt. Độ khó tổng thể giờ quá cao. Việc chỉnh độ khó để lại sau đợt 2c, khi đã có đủ cơ chế.
+
+## 11. Giai đoạn 2c: mặt trái từng module, combo, chỉnh độ khó
+
+### Đã làm
+
+- **Mặt trái của module** (`when.hasModule`). Địch đánh vào đúng thứ bạn đã lắp:
+
+  | Module | Phản ứng | Địch |
+  |---|---|---|
+  | Autoscaler | Spike chớp nhoáng (bot ×3 trong 2s) | Bầy Kiến, Thundering Herd, Botnet IoT, Sneaker, Lãnh Chúa DDoS |
+  | Message Queue | Poison message (đối tác lỗi 35%) | Spam Form, Sneaker, Black Friday, Lạm Dụng API, Credential Stuffer |
+  | Read Replica | Replica tụt lại (DB nghẽn 3 lượt) | Scraper, Click Farm, Black Friday |
+  | Circuit Breaker | Lỗi chập chờn (DB lỗi 30%) | Cron Nửa Đêm, Sâu Zero-day, Hydra |
+  | Index | Lật trang sâu (DB ×3) | Lạm Dụng API |
+
+- **Denial of Wallet ở tầng 1–2**: thêm cho Bầy Kiến, Thundering Herd, Scraper, Sneaker và trùm tầng 1–2. Điều kiện kích hoạt là API từ 4 instance.
+- **5 combo** (`combos.json`): Queue + Autoscaler (KEDA), Breaker + Retry budget, Timeout + Breaker, Index + Replica, Redis + Queue.
+- **Bot đo `greedy` sát người chơi hơn**: nhận Scale API và Rate limit, và khi bộ bài đã đủ 18 lá thì chỉ nhận 7 lá tốt nhất.
+- **Độ khó**: máu 80 → 90; traffic địch tăng mỗi tầng từ 22% xuống 15%.
+
+### Đo cuối (`--run`, 40 run)
+
+| Chiến thuật | GĐ1 | Sau 2a | Sau 2b | **Cuối** | Vượt T1 / T2 |
+|---|---|---|---|---|---|
+| random | 0% | 0% | 0% | 0% | 23% / 0% |
+| greedy | 20% | 0% | 0% | **8%** | 50% / 20% |
+| rut (bộ cũ) | 100% | 95% | 63% | **65%** | 95% / 80% |
+| thin (lối mòn từ bộ mới) | — | 25% | 5% | **10%** | 85% / 35% |
+| cacheOnly | 5% | 0% | 0% | 0% | 8% / 0% |
+| filterOnly | 30% | 8% | 3% | **8%** | 90% / 28% |
+
+Riêng bước chỉnh độ khó: máu 90 và địch +15%/tầng, khi chưa có Denial of Wallet ở tầng 1–2, cho `greedy` 13%, `thin` 18%, `rut` **90%**. `rut` đứng sát ngưỡng thắng nên rất nhạy với mọi thay đổi độ khó tổng thể. Denial of Wallet ở tầng thấp kéo nó về 65%, nhưng cũng làm `greedy` tụt xuống 8%, vì bot này giờ cũng nhận Scale API.
+
+### So với mục tiêu
+
+| Mục tiêu | Kết quả |
+|---|---|
+| `rut` ≤ 60% | Gần đạt: 100% → 65% |
+| `filterOnly`, `cacheOnly` < 25% | **Đạt**: 8% và 0% |
+| `greedy` ≥ 20% | **Chưa đạt**: 8% |
+| Trận thường `random` khoảng 70% trở lên | **Đạt**: 96% (vẫn quá dễ) |
+
+### Nhận xét
+
+- **Lối mòn đơn trục đã hết**: chỉ lọc bot, chỉ cache, hay giữ nguyên bộ khởi đầu đều thua rõ.
+- **`rut` vẫn mạnh nhất**. Nó là bộ bài "draft hoàn hảo": cả Redis lẫn Index (đầu run chỉ được chọn 1), 2 Scale API, 2 Rate limit. Người chơi thật phải gặp may mới ghép đủ.
+- **`greedy` < `rut`, còn `thin` ≈ `greedy`**: nhận thêm lá hiện gần như không làm mạnh lên. Có hai lý do, chưa tách được:
+  - Bot `greedy` chơi còn kém: không biết giữ Ops, không đọc ý định để chọn lá.
+  - Phần thưởng lá chưa đủ sức nặng.
+
+  Muốn biết lý do nào, cần một bot tốt hơn (nhìn trước bằng ô Dự kiến), hoặc người chơi thật thử.
+- **Trùm là bức tường**: phần lớn lần chết là ở trùm tầng 1–2. Trận thường vẫn khoảng 96–100%.
+
+### Việc tiếp theo nên làm
+
+1. **Bot đo dùng ô Dự kiến**: mỗi lá chạy engine thử như người chơi thấy trên UI, rồi chọn lá giảm sát thương nhiều nhất. Không có bot này thì số của `greedy` chưa đáng tin để chỉnh tiếp.
+2. **Trận thường khó hơn, trùm dễ hơn**: dồn bớt độ khó từ trùm xuống trận thường, để bộ bài mỏng bị bào mòn dần thay vì chỉ chết ở trùm.
+3. **Phần thưởng có trọng số combo** (dự kiến từ đầu, chưa làm): lá hoàn thành combo được ưu tiên ×1.5 khi chia thưởng.
+4. **Tư vấn thêm, chưa làm**:
+   - Chia tải theo loại request (đọc / ghi / nội dung tĩnh).
+   - CDN.
+   - Elite và trùm đòi lá chuyên dụng.
+   - Relic +1 slot.

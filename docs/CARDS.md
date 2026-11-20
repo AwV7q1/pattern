@@ -62,6 +62,17 @@ Một số tình huống được dạy qua cơ chế, không cần viết kịc
 - **Đối tác** (`ext`): mỗi request, sau khi đọc dữ liệu, API còn gọi đồng bộ một dịch vụ đối tác (thanh toán, email). Một số địch làm đối tác chậm (`chaos.node: 'ext'`), giữ slot API.
   - **Message Queue** đặt hàng đợi giữa API và đối tác: API trả lời ngay, worker gọi đối tác sau. Việc lỗi (`asyncErr`) hoặc còn tồn (`backlog`) cuối lượt tính là request lỗi theo phần của người dùng thật.
   - **Autoscaler (HPA)** gắn `autoscale` của engine vào API: thêm tối đa 4 pod khi bận, mỗi pod mất 3s mới nhận tải, chỉ tính tiền lúc chạy.
+- **Mặt trái của từng module**: điều kiện `hasModule` trong biến thể ý định. Địch khai thác đúng thứ bạn đã lắp:
+  - Autoscaler → **Spike chớp nhoáng** (`burst`: bot dồn ×3 trong 2s, pod mới cần 3s).
+  - Message Queue → **Poison message** (đối tác lỗi 35%, việc lỗi trong hàng đợi vẫn tính).
+  - Read Replica → **Replica tụt lại** (DB nghẽn kéo dài 3 lượt).
+  - Circuit Breaker → **Lỗi chập chờn** (DB lỗi 30%, breaker mở và chặn cả người thật).
+  - Index → **Lật trang sâu** (OFFSET lớn, index không cứu).
+  - Redis → Cache Buster, TTL ngắn (từ giai đoạn 1).
+- **Combo** (`data/combos.json`): bật khi đủ module, tính chung trong `statusMods`.
+  - Queue + Autoscaler: autoscale theo độ dài hàng đợi (KEDA, engine `metric: queueLength`).
+  - Breaker + Retry budget: bão retry của client không còn tác dụng.
+  - Timeout + Breaker: API ×0.85. Index + Replica: DB ×0.8. Redis + Queue: API ×0.9.
 - **Bot thích nghi** (`battle.adapt`): lượt nào chặn từ `at` bot trở lên thì cộng 1 tầng `adapted` (lách thêm bộ lọc mỗi tầng, tối đa `maxStacks`). Ngừng lọc mạnh `turns` lượt thì hết. Luật này để lọc bot không còn vừa là phòng thủ vừa là sát thương miễn phí mãi.
 - Circuit breaker không có fallback biến quá tải thành sập toàn bộ.
 - Thêm Read Replica làm vượt ngân sách.
@@ -304,7 +315,7 @@ pnpm balance:cards 24 --run --only=greedy  # chỉ chạy một chiến thuật;
 pnpm balance:cards 20 --each               # từng địch thường và tinh anh, không nhân hệ số, 80 máu
 ```
 
-Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý), `rut` (bộ bài lối mòn của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): Redis → Scale → Index → Timeout → Rate limit, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
+Chiến thuật: `idle`, `random`, `greedy` (người chơi hợp lý; giữ bộ bài mỏng sau 18 lá), `rut` (bộ bài lối mòn cũ của [CARDS-RESEARCH.md](CARDS-RESEARCH.md): có sẵn Redis và Index, thêm 2 Scale API và 2 Rate limit, không nhận thêm lá; đây là mốc khó nhất), `thin` (bộ khởi đầu hiện tại cộng Redis, không nhận thêm lá), `cacheOnly` và `filterOnly` (chỉ đi một trục). Các bot thông minh biết chọn module để gỡ khi nhóm slot đầy. Nếu một chiến thuật đơn trục vượt tháp thường xuyên thì game lại có lối chơi thống trị.
 
 Mục tiêu hiện tại cho trận đầu:
 - Không làm gì: thua.

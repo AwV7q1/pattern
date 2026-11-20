@@ -95,7 +95,7 @@ const TABS: { id: Tab; label: string; icon: typeof Bot; count: number }[] = [
   { id: 'minions', label: 'Lính', icon: Users, count: CONTENT.minions.length },
   { id: 'cards', label: 'Thẻ bài', icon: Layers, count: CONTENT.cards.length },
   { id: 'relics', label: 'Bảo vật', icon: Gem, count: CONTENT.relics.length },
-  { id: 'effects', label: 'Hiệu ứng', icon: Timer, count: CONTENT.statuses.length },
+  { id: 'effects', label: 'Hiệu ứng & combo', icon: Timer, count: CONTENT.statuses.length + CONTENT.combos.length },
 ];
 
 /** Read-only encyclopedia of the card game: enemies, minions (with their animations), cards and relics. */
@@ -239,6 +239,7 @@ const extras = (it: Partial<Intent>): string[] => {
   if (it.costSpike) out.push(`chi phí API ×${it.costSpike}`);
   if (it.bandwidth) out.push(`${it.bandwidth.responseKb}KB / ${it.bandwidth.mbps}Mbps`);
   if (it.bypass) out.push(`lách lọc ${pct(it.bypass)}`);
+  if (it.burst) out.push(`dồn ×${it.burst.mul} trong ${it.burst.ms / 1000}s`);
   if (it.heal) out.push(`hồi ${it.heal} máu`);
   if (it.drainOps) out.push(`-${it.drainOps} Ops lượt sau`);
   if (it.wafStrip) out.push(`WAF -${pct(it.wafStrip)}`);
@@ -702,6 +703,26 @@ function EffectsTab({ onEnemy, onCard }: { onEnemy: (id: string) => void; onCard
           cần Rollback (hoặc Hotfix nâng cấp, gỡ 1).
           {adapt && ` Bot thích nghi là luật chung: lượt nào bạn chặn từ ${pct(adapt.at)} bot trở lên thì chúng cộng 1 tầng.`}
         </p>
+        <h2 className="mt-2 text-sm font-semibold uppercase tracking-wider text-amber-300">Combo hạ tầng</h2>
+        <p className="-mt-2 text-sm text-muted-foreground">Bật khi mọi module trong combo đều đang lắp (xem Slot trong luật chơi). Gỡ một module là mất combo.</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {CONTENT.combos.map((c) => (
+            <div key={c.id} className="rounded-xl border border-amber-400/40 bg-amber-500/5 p-3 text-sm">
+              <div className="mb-1 flex items-center gap-2 font-semibold">
+                <Sparkles className="size-4 text-amber-300" /> {c.name}
+              </div>
+              <p className="text-muted-foreground">{c.text}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+                {c.needs.map((id) => (
+                  <button key={id} type="button" onClick={() => onCard(id)} className="rounded-full border border-amber-400/40 px-2 py-0.5 text-amber-200 hover:bg-amber-500/15">
+                    {cardDef(CONTENT, id).name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <h2 className="mt-2 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Hiệu ứng theo lượt</h2>
         <div className="grid gap-3 sm:grid-cols-2">
           {list.map((d) => {
             const Icon = statusIcon(d.id);

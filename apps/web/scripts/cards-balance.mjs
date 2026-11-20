@@ -21,7 +21,7 @@ const rules = await import('../src/cards/rules.ts');
 const runs = await import('../src/cards/run.ts');
 
 const data = (f) => JSON.parse(readFileSync(join(here, '../src/cards/data', f), 'utf8'));
-const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json') };
+const content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json') };
 
 const fights = Number(process.argv.find((a) => /^\d+$/.test(a)) ?? 20);
 const verbose = process.argv.includes('--log');
@@ -51,7 +51,10 @@ const SMART = {
   greedy: {
     big: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'queue', 'autoscaler', 'retry_budget', 'backoff', 'breaker', 'hotfix', 'load_shed', 'rate_limit', 'captcha', 'burst', 'stale', 'buffer', 'postmortem', 'runbook', 'null_route', 'geo_block', 'tarpit', 'waf', 'replica', 'scale_api', 'vertical', 'block_ip', 'patch', 'honeypot'],
     calm: ['coffee', 'refactor', 'rollback', 'restart', 'cache', 'cache_key', 'swr', 'index', 'timeout', 'pool', 'queue', 'autoscaler', 'retry_budget', 'backoff', 'waf', 'runbook', 'postmortem', 'tarpit', 'honeypot', 'geo_block', 'block_ip', 'patch', 'null_route', 'rate_limit', 'captcha', 'breaker', 'replica', 'scale_api', 'stale', 'buffer', 'burst'],
-    want: ['retry_budget', 'backoff', 'waf', 'cache', 'index', 'pool', 'breaker', 'timeout', 'null_route', 'honeypot', 'hotfix', 'runbook', 'refactor', 'captcha', 'block_ip', 'swr', 'cache_key', 'restart', 'rollback', 'geo_block', 'tarpit', 'queue', 'autoscaler'],
+    // what to take, best first; past `keep` cards it only takes the first `core` of them, to keep the deck thin
+    want: ['cache', 'index', 'scale_api', 'rate_limit', 'retry_budget', 'hotfix', 'rollback', 'breaker', 'waf', 'queue', 'autoscaler', 'captcha', 'null_route', 'timeout', 'swr', 'cache_key', 'restart', 'refactor', 'runbook', 'honeypot', 'pool', 'backoff', 'geo_block', 'tarpit'],
+    keep: 18,
+    core: 7,
   },
   // The rut the research doc measured: the same seven cards in the same order, every fight.
   rut: {
@@ -189,7 +192,9 @@ function playRun(policy, seed) {
     if (run.phase === 'map') run = runs.chooseNode(content, run, pickNode(policy, run, rnd));
     else if (run.phase === 'battle') run = runs.finishBattle(content, run, fight(policy, runs.battleSeed(run), runs.battleSetup(content, run)));
     else if (run.phase === 'reward') {
-      const pick = policy === 'idle' ? null : policy === 'random' ? run.reward[Math.floor(rnd() * run.reward.length)] : (WANT.find((id) => run.reward.includes(id)) ?? null);
+      const p = SMART[policy];
+      const list = p?.keep && run.deck.length >= p.keep ? WANT.slice(0, p.core) : WANT;
+      const pick = policy === 'idle' ? null : policy === 'random' ? run.reward[Math.floor(rnd() * run.reward.length)] : (list.find((id) => run.reward.includes(id)) ?? null);
       run = runs.pickReward(content, run, pick);
     } else if (run.phase === 'rest') {
       const debt = run.deck.indexOf('tech_debt');

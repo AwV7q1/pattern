@@ -13,7 +13,7 @@ import type { Summary } from '@/types';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const data = (f: string) => JSON.parse(readFileSync(join(here, 'data', f), 'utf8'));
-const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json') };
+const content: Content = { cards: data('cards.json'), enemies: data('enemies.json'), battle: data('battle.json'), run: data('run.json'), events: data('events.json'), relics: data('relics.json'), minions: data('minions.json'), statuses: data('statuses.json'), combos: data('combos.json') };
 
 const summary = (s: Partial<Summary> = {}) => ({ errorRate: 0, p50Ms: 20, p99Ms: 50, costPerHour: 1, throughputRps: 300, ...s }) as Summary;
 
@@ -984,4 +984,48 @@ test('autoscaler: HPA on the API from this turn’s count, with its headroom', (
   const burst = api(a).autoscale as unknown as { min: number; max: number };
   assert.equal(burst.min, api(a).instances, 'starts from the burst count');
   assert.equal(burst.max - burst.min, 4);
+});
+
+const playIn = (st: BattleState, id: string, replace?: number) => {
+  const [h, uid] = withCard(st, id);
+  return rules.playCard(content, h, uid, { replace });
+};
+
+test('module counters: the enemy reads installed modules (autoscaler → short burst, queue → poison messages)', () => {
+  // Bầy Kiến's 2nd intent is a spike; with an autoscaler in, it comes as a burst too short for new pods
+  let s = playIn(rules.newBattle(content, 5, { enemy: 'swarm' }), 'autoscaler');
+  s = endTurn(s);
+  const it = rules.currentIntent(content, s);
+  assert.equal(it.label, 'Spike chớp nhoáng');
+  const traffic = (rules.planTurn(content, s).input.scenario as { traffic: { atMs: number; rps: number }[] }).traffic;
+  assert.equal(traffic.length, 3);
+  assert.ok(traffic[1].rps > traffic[0].rps && traffic[2].rps === traffic[0].rps);
+  // without it: the plain spike
+  const plain = endTurn(rules.newBattle(content, 5, { enemy: 'swarm' }));
+  assert.equal(rules.currentIntent(content, plain).label, 'Spike');
+
+  const sum = summary({ errorRate: 0.1 });
+  const p = rules.planTurn(content, s);
+  assert.deepEqual(rules.scoreTurn(content, s, p, sum).damage, rules.resolveTurn(content, s, p, sum).reports.at(-1)!.damage);
+});
+
+test('combos: on while every module is in, off when one goes; mods and flags apply', () => {
+  let s = rules.newBattle(content, 5, { enemy: 'retry_storm' });
+  s = playIn(playIn(s, 'breaker'), 'retry_budget');
+  assert.deepEqual(rules.activeCombos(content, s).map((c) => c.id), ['resilience']);
+  // Bão Retry's drizzle: client retries; the combo shields them
+  const client = (st: BattleState) => rules.planTurn(content, st).input.design.edges.find((e) => e.source === 'client')!;
+  assert.ok(!client(s).retries);
+  s = playIn(s, 'timeout');
+  assert.ok(rules.activeCombos(content, s).some((c) => c.id === 'fail_fast'));
+  assert.ok(Math.abs(rules.statusMods(content, s).apiLatency - 0.85) < 1e-9);
+  const off = playIn(s, 'pool', rules.moduleOf(s, 'breaker')!.uid);
+  assert.deepEqual(rules.activeCombos(content, off), [], 'the breaker went: both combos are off');
+  assert.ok(client(off).retries! > 0);
+
+  let q = playIn(playIn(rules.newBattle(content, 5, { enemy: 'swarm' }), 'queue'), 'autoscaler');
+  const queue = rules.nodeOf(rules.planTurn(content, q).input.design, 'queue')!.config!;
+  assert.equal((queue.autoscale as unknown as { metric: string }).metric, 'queueLength', 'KEDA: workers follow the backlog');
+  q = playIn(q, 'cache');
+  assert.equal(rules.modulesIn(content, q, 'data').length, 2);
 });

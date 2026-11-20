@@ -107,7 +107,24 @@
           "node": "ext",
           "action": "latency",
           "value": 4
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "queue"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Message Queue",
+            "label": "Poison message",
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~600 rps gửi dữ liệu hỏng vào hàng đợi: 35% việc gọi đối tác lỗi. API vẫn trả lời ngay, nhưng việc lỗi trong hàng đợi vẫn tính là request lỗi."
+          }
+        ]
       },
       {
         "id": "flood",
@@ -201,7 +218,24 @@
         "label": "Spike",
         "icon": "spike",
         "text": "Bot ~2600 rps cùng lúc.",
-        "botRps": 2600
+        "botRps": 2600,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Spike chớp nhoáng",
+            "burst": {
+              "atMs": 2000,
+              "ms": 2000,
+              "mul": 3
+            },
+            "text": "Bot ~2600 rps, nhưng dồn ×3 trong 2 giây: pod mới cần 3 giây mới nhận tải, nên Autoscaler không kịp đỡ."
+          }
+        ]
       },
       {
         "id": "retry_flood",
@@ -233,7 +267,27 @@
         "addCards": {
           "card": "tech_debt",
           "n": 2
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "costSpike": 3,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~3600 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "regroup",
@@ -397,7 +451,42 @@
         "label": "Cả đàn lao tới",
         "icon": "spike",
         "text": "Bot ~3600 rps cùng lúc.",
-        "botRps": 3600
+        "botRps": 3600,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Spike chớp nhoáng",
+            "burst": {
+              "atMs": 2000,
+              "ms": 2000,
+              "mul": 3
+            },
+            "text": "Bot ~3600 rps, nhưng dồn ×3 trong 2 giây: pod mới cần 3 giây mới nhận tải, nên Autoscaler không kịp đỡ."
+          },
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "costSpike": 3,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~3600 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "regroup",
@@ -595,7 +684,24 @@
         "icon": "retry",
         "text": "Bot ~1500 rps, job lỗi tự chạy lại 2 lần.",
         "botRps": 1500,
-        "clientRetries": 2
+        "clientRetries": 2,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "breaker"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Circuit Breaker",
+            "label": "Lỗi chập chờn",
+            "chaos": {
+              "node": "db",
+              "action": "errors",
+              "value": 0.3
+            },
+            "text": "Bot ~1500 rps, client retry 2 lần; DB lỗi 30% lúc có lúc không: breaker mở liên tục và chặn luôn người dùng thật."
+          }
+        ]
       },
       {
         "id": "report",
@@ -641,7 +747,25 @@
         "icon": "slow",
         "text": "Bot ~1500 rps vào mọi trang sản phẩm: phá cache 35%.",
         "botRps": 1500,
-        "cacheBust": 0.35
+        "cacheBust": 0.35,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "replica"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Read Replica",
+            "label": "Replica tụt lại",
+            "inflict": [
+              {
+                "status": "replica_lag",
+                "turns": 3
+              }
+            ],
+            "text": "Bot ~1500 rps vào mọi trang sản phẩm: phá cache 35%. Ghi dồn dập làm replica tụt lại: gây DB nghẽn kéo dài 3 lượt."
+          }
+        ]
       },
       {
         "id": "proxy_rotate",
@@ -649,7 +773,27 @@
         "icon": "spike",
         "text": "Bot ~2200 rps. Sau lượt này WAF mất 15%.",
         "botRps": 2200,
-        "wafStrip": 0.15
+        "wafStrip": 0.15,
+        "variants": [
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "costSpike": 3,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~2200 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "headless",
@@ -721,7 +865,24 @@
           "node": "ext",
           "action": "latency",
           "value": 5
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "queue"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Message Queue",
+            "label": "Poison message",
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~1200 rps gửi dữ liệu hỏng vào hàng đợi: 35% việc gọi đối tác lỗi. API vẫn trả lời ngay, nhưng việc lỗi trong hàng đợi vẫn tính là request lỗi."
+          }
+        ]
       },
       {
         "id": "new_list",
@@ -829,7 +990,42 @@
         "label": "Mở bán",
         "icon": "spike",
         "text": "Bot ~3200 rps cùng lúc.",
-        "botRps": 3200
+        "botRps": 3200,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Spike chớp nhoáng",
+            "burst": {
+              "atMs": 2000,
+              "ms": 2000,
+              "mul": 3
+            },
+            "text": "Bot ~3200 rps, nhưng dồn ×3 trong 2 giây: pod mới cần 3 giây mới nhận tải, nên Autoscaler không kịp đỡ."
+          },
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "costSpike": 3,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~3200 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "cart_hold",
@@ -860,7 +1056,24 @@
           "node": "ext",
           "action": "latency",
           "value": 6
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "queue"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Message Queue",
+            "label": "Poison message",
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~1800 rps gửi dữ liệu hỏng vào hàng đợi: 35% việc gọi đối tác lỗi. API vẫn trả lời ngay, nhưng việc lỗi trong hàng đợi vẫn tính là request lỗi."
+          }
+        ]
       },
       {
         "id": "resell",
@@ -912,7 +1125,25 @@
         "text": "Bot ~1500 rps vào trang đích: phá cache 25%.",
         "botRps": 1500,
         "weight": 2,
-        "cacheBust": 0.25
+        "cacheBust": 0.25,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "replica"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Read Replica",
+            "label": "Replica tụt lại",
+            "inflict": [
+              {
+                "status": "replica_lag",
+                "turns": 3
+              }
+            ],
+            "text": "Bot ~1500 rps vào trang đích: phá cache 25%. Ghi dồn dập làm replica tụt lại: gây DB nghẽn kéo dài 3 lượt."
+          }
+        ]
       },
       {
         "id": "fake_reviews",
@@ -978,7 +1209,24 @@
         "icon": "probe",
         "text": "Bot ~1300 rps gọi ?page=1..99999: phá cache 40%.",
         "botRps": 1300,
-        "cacheBust": 0.4
+        "cacheBust": 0.4,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "index"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Index",
+            "label": "Lật trang sâu",
+            "chaos": {
+              "node": "db",
+              "action": "latency",
+              "value": 3
+            },
+            "text": "Bot ~1300 rps gọi ?page=50000: OFFSET lớn vẫn phải quét qua mọi dòng, index không cứu được. DB chậm ×3, phá cache 40%."
+          }
+        ]
       },
       {
         "id": "burst",
@@ -998,7 +1246,24 @@
           "node": "ext",
           "action": "latency",
           "value": 5
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "queue"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Message Queue",
+            "label": "Poison message",
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~1600 rps gửi dữ liệu hỏng vào hàng đợi: 35% việc gọi đối tác lỗi. API vẫn trả lời ngay, nhưng việc lỗi trong hàng đợi vẫn tính là request lỗi."
+          }
+        ]
       },
       {
         "id": "new_key",
@@ -1051,7 +1316,24 @@
         "label": "Lũ request",
         "icon": "spike",
         "text": "Bot ~3400 rps cùng lúc.",
-        "botRps": 3400
+        "botRps": 3400,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Spike chớp nhoáng",
+            "burst": {
+              "atMs": 2000,
+              "ms": 2000,
+              "mul": 3
+            },
+            "text": "Bot ~3400 rps, nhưng dồn ×3 trong 2 giây: pod mới cần 3 giây mới nhận tải, nên Autoscaler không kịp đỡ."
+          }
+        ]
       },
       {
         "id": "reinfect",
@@ -1186,6 +1468,23 @@
           {
             "status": "noisy_neighbor",
             "turns": 2
+          }
+        ],
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "breaker"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Circuit Breaker",
+            "label": "Lỗi chập chờn",
+            "chaos": {
+              "node": "db",
+              "action": "errors",
+              "value": 0.3
+            },
+            "text": "Bot ~1300 rps, client retry 1 lần; DB lỗi 30% lúc có lúc không: breaker mở liên tục và chặn luôn người dùng thật."
           }
         ]
       },
@@ -1382,7 +1681,24 @@
         "icon": "retry",
         "text": "Bot ~2000 rps, mọi client retry 3 lần ngay khi lỗi.",
         "botRps": 2000,
-        "clientRetries": 3
+        "clientRetries": 3,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "breaker"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Circuit Breaker",
+            "label": "Lỗi chập chờn",
+            "chaos": {
+              "node": "db",
+              "action": "errors",
+              "value": 0.3
+            },
+            "text": "Bot ~2000 rps, client retry 3 lần; DB lỗi 30% lúc có lúc không: breaker mở liên tục và chặn luôn người dùng thật."
+          }
+        ]
       },
       {
         "id": "venom",
@@ -1467,7 +1783,27 @@
         "icon": "spike",
         "text": "Bot ~2400 rps cùng lúc.",
         "botRps": 2400,
-        "weight": 2
+        "weight": 2,
+        "variants": [
+          {
+            "when": {
+              "instancesAtLeast": {
+                "api": 4
+              }
+            },
+            "tag": "Phản ứng: API của bạn ≥ 4 instance",
+            "label": "Denial of Wallet",
+            "icon": "debt",
+            "costSpike": 3,
+            "inflict": [
+              {
+                "status": "bill_shock",
+                "turns": 2
+              }
+            ],
+            "text": "Bot ~2400 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+          }
+        ]
       },
       {
         "id": "debt",
@@ -1582,7 +1918,24 @@
           "node": "ext",
           "action": "latency",
           "value": 6
-        }
+        },
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "queue"
+              ]
+            },
+            "tag": "Phản ứng: bạn có Message Queue",
+            "label": "Poison message",
+            "chaos": {
+              "node": "ext",
+              "action": "errors",
+              "value": 0.35
+            },
+            "text": "Bot ~1400 rps gửi dữ liệu hỏng vào hàng đợi: 35% việc gọi đối tác lỗi. API vẫn trả lời ngay, nhưng việc lỗi trong hàng đợi vẫn tính là request lỗi."
+          }
+        ]
       },
       {
         "id": "lull",
@@ -1609,7 +1962,27 @@
           "summon": {
             "minion": "scalper",
             "n": 1
-          }
+          },
+          "variants": [
+            {
+              "when": {
+                "instancesAtLeast": {
+                  "api": 4
+                }
+              },
+              "tag": "Phản ứng: API của bạn ≥ 4 instance",
+              "label": "Denial of Wallet",
+              "icon": "debt",
+              "costSpike": 3,
+              "inflict": [
+                {
+                  "status": "bill_shock",
+                  "turns": 2
+                }
+              ],
+              "text": "Bot ~2600 rps nhắm endpoint đắt nhất: mỗi instance API tốn ×3 lượt này, rồi Hoá đơn tăng vọt 2 lượt. Scale càng nhiều càng cháy ngân sách."
+            }
+          ]
         },
         {
           "id": "stock_lock",
@@ -1622,7 +1995,25 @@
             "action": "latency",
             "value": 3
           },
-          "weight": 2
+          "weight": 2,
+          "variants": [
+            {
+              "when": {
+                "hasModule": [
+                  "replica"
+                ]
+              },
+              "tag": "Phản ứng: bạn có Read Replica",
+              "label": "Replica tụt lại",
+              "inflict": [
+                {
+                  "status": "replica_lag",
+                  "turns": 3
+                }
+              ],
+              "text": "Bot ~2000 rps, DB chậm ×3. Ghi dồn dập làm replica tụt lại: gây DB nghẽn kéo dài 3 lượt."
+            }
+          ]
         },
         {
           "id": "rage_retry",
@@ -1684,7 +2075,24 @@
         "icon": "spike",
         "text": "Bot ~2800 rps cùng lúc.",
         "botRps": 2800,
-        "weight": 3
+        "weight": 3,
+        "variants": [
+          {
+            "when": {
+              "hasModule": [
+                "autoscaler"
+              ]
+            },
+            "tag": "Phản ứng: bạn dựa vào Autoscaler",
+            "label": "Spike chớp nhoáng",
+            "burst": {
+              "atMs": 2000,
+              "ms": 2000,
+              "mul": 3
+            },
+            "text": "Bot ~2800 rps, nhưng dồn ×3 trong 2 giây: pod mới cần 3 giây mới nhận tải, nên Autoscaler không kịp đỡ."
+          }
+        ]
       },
       {
         "id": "carpet",

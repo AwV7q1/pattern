@@ -13,7 +13,7 @@
 // Keeping it this shape makes it straightforward to port to GDScript/C#/Rust.
 
 import type { Design, DesignEdge, DesignNode, Summary } from '@/types';
-import type { BattleSetup, BattleState, CardDef, CardInst, Content, Effect, EnemyDef, Intent, IntentWhen, Layer, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
+import type { BattleSetup, BattleState, CardDef, CardInst, ComboDef, Content, Effect, EnemyDef, Intent, IntentWhen, Layer, MinionDef, MinionState, ModuleInst, NodeRef, RelicDef, StatusDef, StatusMods, TuneMul, TurnPlan, TurnReport, TurnScore } from './types';
 
 // ---------------------------------------------------------------- rng (mulberry32)
 
@@ -150,6 +150,7 @@ export function designTraits(content: Content, state: BattleState) {
     waf: state.waf,
     retries: out?.retries ?? 0,
     retryBudget: !!out?.retryBudget,
+    modules: modulesOf(state).map((m) => baseId(m.card)),
   };
 }
 
@@ -159,6 +160,7 @@ export function matchesWhen(when: IntentWhen, t: ReturnType<typeof designTraits>
   if (when.wafAtLeast !== undefined && t.waf < when.wafAtLeast - 1e-9) return false;
   if (when.retriesAtLeast !== undefined && t.retries < when.retriesAtLeast) return false;
   if (when.noRetryBudget && t.retryBudget) return false;
+  if (when.hasModule && !when.hasModule.every((id) => t.modules.includes(id))) return false;
   return true;
 }
 
@@ -204,11 +206,19 @@ export function addStatus(content: Content, state: BattleState, id: string, turn
 export type Mods = Required<StatusMods>;
 const NO_MODS: Mods = { apiLatency: 1, dbLatency: 1, cost: 1, botRps: 1, blockedDamage: 1, apiInstances: 0, dbInstances: 0, botCut: 0, bypass: 0, opsPerTurn: 0 };
 
-/** Everything the statuses in play change, combined. The only place the rules read statuses from. */
+/** Combos whose modules are all installed. */
+export const activeCombos = (content: Content, state: BattleState): ComboDef[] =>
+  (content.combos ?? []).filter((c) => c.needs.every((id) => moduleOf(state, id)));
+
+/** Everything the statuses in play (and the active combos) change, combined. The only place the rules read them from. */
 export function statusMods(content: Content, state: BattleState): Mods {
   const m = { ...NO_MODS };
-  for (const inst of state.statuses ?? []) {
-    const d = statusDef(content, inst.id).mods;
+  const all = [
+    ...(state.statuses ?? []).map((inst) => ({ mods: statusDef(content, inst.id).mods, stacks: inst.stacks })),
+    ...activeCombos(content, state).map((c) => ({ mods: c.mods ?? {}, stacks: 1 })),
+  ];
+  for (const inst of all) {
+    const d = inst.mods;
     const k = inst.stacks;
     for (const key of ['apiLatency', 'dbLatency', 'cost', 'botRps', 'blockedDamage'] as const) if (d[key] !== undefined) m[key] *= d[key] ** k;
     for (const key of ['apiInstances', 'dbInstances', 'opsPerTurn'] as const) if (d[key] !== undefined) m[key] += d[key] * k;
@@ -310,6 +320,10 @@ export function needsReplace(content: Content, state: BattleState, uid: number):
 export function designOf(content: Content, state: BattleState): Design {
   const design = clone(state.design);
   for (const m of modulesOf(state)) for (const e of cardDef(content, m.card).effects) if (DESIGN_OPS.has(e.op)) applyDesign(design, e, m.level);
+  // KEDA: the queue's workers scale with its backlog
+  const queue = nodeOf(design, 'queue');
+  if (queue && activeCombos(content, state).some((c) => c.flag === 'keda'))
+    queue.config!.autoscale = { min: 1, max: 5, targetUtilization: 0.7, evalEveryMs: 1000, stabilizationMs: 5000, podStartMs: 3000, metric: 'queueLength', targetQueuePerInstance: 200 } as never;
   return design;
 }
 
@@ -635,7 +649,8 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
     if (intent.chaos?.action === 'latency' && intent.chaos.node === 'api') apiSlow *= intent.chaos.value;
     else if (intent.chaos?.action === 'latency' && intent.chaos.node === 'db') dbSlow *= intent.chaos.value;
     else if (intent.chaos) events.push({ atMs: 0, node: intent.chaos.node, action: intent.chaos.action, value: intent.chaos.value });
-    if (intent.clientRetries) Object.assign(client, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
+    const shield = activeCombos(content, state).some((c) => c.flag === 'retryShield');
+    if (intent.clientRetries && !shield) Object.assign(client, { retries: intent.clientRetries, backoffMs: 0, jitter: false });
     if (intent.squeeze) {
       const cfg = nodeOf(design, intent.squeeze.node)!.config!;
       cfg.concurrency = Math.max(1, Math.round((cfg.concurrency ?? 1) * intent.squeeze.concurrency));
@@ -671,7 +686,13 @@ export function planTurn(content: Content, state: BattleState): TurnPlan {
         seed: state.seed * 1000 + state.turn,
         durationMs: b.turnMs,
         timeoutMs: 1000,
-        traffic: [{ atMs: 0, rps: legitRps + botPassed }],
+        traffic: intent.burst
+          ? [
+              { atMs: 0, rps: legitRps + botPassed },
+              { atMs: intent.burst.atMs, rps: legitRps + Math.round(botPassed * intent.burst.mul) },
+              { atMs: intent.burst.atMs + intent.burst.ms, rps: legitRps + botPassed },
+            ]
+          : [{ atMs: 0, rps: legitRps + botPassed }],
         slo: { p99Ms: b.sloP99Ms, errorRate: 0.01 },
         events,
       },

@@ -95,6 +95,17 @@ export interface ModuleInst {
   level: number;
 }
 
+/** Two or more modules that work better together: on while all of `needs` are installed. */
+export interface ComboDef {
+  id: string;
+  name: string;
+  text: string;
+  needs: string[];
+  mods?: StatusMods;
+  /** keda: the autoscaler follows the queue's backlog (scales its workers). retryShield: client retry storms do nothing. */
+  flag?: 'keda' | 'retryShield';
+}
+
 /** A status in play. `turns` counts the turns left, this one included. */
 export interface StatusInst {
   id: string;
@@ -140,6 +151,8 @@ export interface IntentWhen {
   /** Retries on the API's outgoing call. */
   retriesAtLeast?: number;
   noRetryBudget?: boolean;
+  /** Every one of these cards has its module installed. */
+  hasModule?: string[];
 }
 
 /** What an intent turns into when the player's build matches `when`; `tag` tells the player why. */
@@ -187,6 +200,8 @@ export interface Intent {
   summon?: { minion: string; n: number };
   /** weighted enemies: odds of this intent (default 1). */
   weight?: number;
+  /** A short burst of the bots' traffic: ×`mul` for `ms` from `atMs` (faster than an autoscaler can react). */
+  burst?: { atMs: number; ms: number; mul: number };
   /** Statuses put on the player after this turn, for the next `turns` turns. Hotfix does not stop them. */
   inflict?: { status: string; turns: number; stacks?: number }[];
 }
@@ -296,6 +311,7 @@ export interface Content {
   run: RunConfig;
   events: RunEvent[];
   statuses: StatusDef[];
+  combos: ComboDef[];
 }
 
 /** What a fight starts from when it is part of a run (defaults: `battle.json`). */

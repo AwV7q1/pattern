@@ -18,6 +18,7 @@ import {
   Database,
   Heart,
   Hourglass,
+  Sparkles,
   Handshake,
   ListPlus,
   HeartPulse,
@@ -51,6 +52,7 @@ import {
   bypassNow,
   canPlay,
   cardDef,
+  activeCombos,
   currentIntent,
   designOf,
   modulesIn,
@@ -1122,6 +1124,7 @@ function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
   if (intent.wafStrip) out.push({ icon: ShieldOff, text: `WAF −${Math.round(intent.wafStrip * 100)}%`, tone: 'warn', lasting: true });
   if (intent.drainOps) out.push({ icon: Unplug, text: `lượt sau −${intent.drainOps} Ops`, tone: 'warn', lasting: true });
   if (intent.summon) out.push({ icon: UserPlus, text: `gọi ${intent.summon.n} ${minionDef(CONTENT, intent.summon.minion).name}`, tone: 'warn', lasting: true });
+  if (intent.burst) out.push({ icon: Zap, text: `dồn ×${intent.burst.mul} trong ${intent.burst.ms / 1000}s`, tone: 'bad', lasting: true });
   if (intent.heal) out.push({ icon: HeartPulse, text: `hồi ${intent.heal} máu`, tone: 'heal' });
   for (const x of intent.inflict ?? []) out.push({ icon: statusIcon(x.status), text: `${statusDef(CONTENT, x.status).name} ${x.turns} lượt tới`, tone: 'bad', lasting: true });
   return out;
@@ -1130,9 +1133,15 @@ function intentEffects(intent: Intent, state?: BattleState): IntentEffect[] {
 /** Timed effects in play: buffs green, debuffs red, turns left on each (stacks when more than one). */
 function StatusRow({ state }: { state: BattleState }) {
   const list = state.statuses ?? [];
-  if (!list.length) return null;
+  const combos = activeCombos(CONTENT, state);
+  if (!list.length && !combos.length) return null;
   return (
     <div className="flex flex-wrap justify-center gap-1.5 text-[11px]" aria-label="Hiệu ứng theo lượt">
+      {combos.map((c) => (
+        <span key={c.id} title={`Combo ${c.name}: ${c.text}`} className="flex items-center gap-1 rounded-full border border-amber-400/60 bg-amber-500/15 px-2 py-0.5 text-amber-200">
+          <Sparkles className="size-3" /> {c.name}
+        </span>
+      ))}
       {list.map((x) => {
         const def = statusDef(CONTENT, x.id);
         const Icon = statusIcon(x.id);

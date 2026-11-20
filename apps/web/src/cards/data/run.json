@@ -1,7 +1,7 @@
 {
   "title": "Tháp On-Call",
   "acts": 3,
-  "hp": 80,
+  "hp": 90,
   "rewardChoices": 3,
   "startPick": [
     "cache",
@@ -83,7 +83,7 @@
   },
   "actScale": {
     "hp": 0.35,
-    "rps": 0.22,
+    "rps": 0.15,
     "legit": 0.25
   },
   "rarityWeights": {
