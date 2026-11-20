@@ -313,3 +313,85 @@ for (const enemy of ids) {
   console.log(enemy.padEnd(14), `win ${Math.round(100*wins/N)}%`, `hpLost ${(hpLost/N).toFixed(1)}`, `turns ${(turns/N).toFixed(1)}`);
 }
 ```
+
+## 8. Giai đoạn 1: đã làm gì và đo được gì
+
+### Đã làm
+
+- **Ý định có điều kiện**: trường `variants` (mỗi biến thể có `when` và `tag`), chọn một lần lúc bắt đầu lượt từ `designTraits(state)`, nên ô Dự kiến vẫn bằng `resolveTurn`. Đã áp cho 9 địch:
+
+  | Điều kiện | Địch | Biến thể |
+  |---|---|---|
+  | Có cache | Bầy Kiến, Crawler | Cache Buster |
+  | Có cache | Thundering Herd, Cron Nửa Đêm | TTL ngắn |
+  | WAF ≥ 25% | Scraper, Credential Stuffer | Proxy dân cư |
+  | API ≥ 4 instance | Botnet IoT, Lãnh Chúa DDoS | Denial of Wallet |
+  | Retry không có budget | Bão Retry | Retry chồng retry |
+
+- **Cache theo key**: lá Redis dựng `CacheModel` của engine (10k key, zipf 1, 1k → 4k key).
+  - `cacheHitScale` được thay bằng `cacheBust` (làm phẳng zipf) và `cacheTtlMs`.
+  - Thêm lá **Stale-while-revalidate** và **Chuẩn hoá cache key**.
+- **Ba địch khớp chủ đề**:
+  - Slowloris giữ slot API (`squeeze`).
+  - Rò Rỉ Bộ Nhớ tích tụ qua lượt (`leak`), chữa bằng lá **Rolling restart**.
+  - Khuếch Đại DNS làm nghẽn băng thông (`bandwidth`).
+- **Script cân bằng**: thêm chiến thuật `rut`, `cacheOnly`, `filterOnly` và chế độ `--each`.
+
+### Đề xuất bị bỏ sau khi đo engine
+
+Ở tải của game (300–3000 rps, lượt 10s), cache theo key nạp lại trong khoảng 1s sau `flush`. Vì vậy:
+- ý định "Deploy lỗi" (flush) gần như không gây khác biệt (hit trung bình 0.67 → 0.65, lỗi không đổi);
+- Singleflight (`coalesce`) cũng không đổi gì.
+
+Hai đề xuất này bị bỏ. Những thứ đo được có tác dụng thật:
+
+| Yếu tố | Hit rate đo được |
+|---|---|
+| Phân bố key (`zipf`): 1 → 0.5 | 0.67 → 0.19 |
+| Dung lượng 1k → 4k khi bị phá cache 50% | 0.19 → 0.51 |
+| TTL 1s, bất kể dung lượng | khoảng 0.52 |
+| TTL 1s có SWR | trở lại 0.68 |
+| Cache nguội | chỉ lượt đầu, giây đầu (0.44–0.6) |
+
+### Kết quả đo
+
+Từng địch, không nhân hệ số, 80 máu, 20 seed (`--each`), tỉ lệ thắng:
+
+| Chiến thuật | TB | Thua rõ ở |
+|---|---|---|
+| random | 76% | Rò Rỉ Bộ Nhớ 35%, Click Farm 40%, APT 35%, Hydra 0% |
+| greedy | 80% | Rò Rỉ Bộ Nhớ 15%, APT 30%, Hydra 5% |
+| rut | 93% | chỉ Hydra 5%, APT 80% |
+| cacheOnly | 53% | Khuếch Đại DNS 0%, Rò Rỉ Bộ Nhớ 0%, Sâu 0%, Botnet IoT 15%, Slowloris 35% |
+| filterOnly | 54% | Click Farm 0%, Lạm Dụng API 15%, Rò Rỉ Bộ Nhớ 5%, Sâu 40%, Thundering Herd 45% |
+
+Leo tháp (`--run`, 20 run):
+
+| Chiến thuật | Vượt T1 | Vượt T2 | Vượt tháp | Trận thường |
+|---|---|---|---|---|
+| random | 25% | 15% | 0% | 99%, −5 máu |
+| greedy | 80% | 55% | 20% | 99%, −2 máu |
+| rut | 100% | 100% | **100%** | 100%, −1 máu |
+| cacheOnly | 20% | 5% | 5% | 98%, −4 máu |
+| filterOnly | 75% | 50% | 30% | 99%, −5 máu |
+
+So với tiêu chí ở mục 7:
+
+- **Đạt**:
+  - Mỗi địch mới hoặc đã sửa đều có ít nhất một chiến thuật đơn trục thua rõ rệt.
+  - `cacheOnly` không còn đường thắng.
+  - `greedy` vượt tháp 20%, so với 17% trước khi sửa.
+- **Chưa đạt**:
+  - `filterOnly` vượt tháp 30%, trên ngưỡng 25%.
+  - `rut` vượt **cả tháp 100%**.
+  - Trận thường vẫn gần như không có rủi ro với mọi chiến thuật.
+
+Bộ bài lối mòn mạnh vì nó mỏng: 15 lá, trong đó có 2 Scale API vĩnh viễn và 2 Rate limit. Nó không bao giờ bị loãng, và ngân sách vẫn dư (khoảng $1.08/h trên $1.50/h). Đây đúng là nguyên nhân 1.2 (hạ tầng không mất giá) và 1.5 (lọc bot vừa thủ vừa công). Các cơ chế của giai đoạn 1 chỉ thêm câu hỏi theo từng địch; chúng không đánh vào hai nguyên nhân này.
+
+### Việc tiếp theo nên làm
+
+Theo thứ tự tác động dự kiến lên `rut`:
+
+1. **B3/B4, chi phí theo trận**: mỗi instance hạ tầng tốn ngân sách cả trận, hoặc có upkeep Ops; thêm lá Decommission. Scale vĩnh viễn sẽ không còn miễn phí.
+2. **E3, giảm lợi nhuận của lọc**: `blockedPerDamage` tăng sau mỗi lượt lọc trên 50% liên tiếp.
+3. **Mở rộng Denial of Wallet**: đưa xuống tầng 1–2 với ngưỡng theo tổng `$/h`, thay vì chỉ theo số instance.
