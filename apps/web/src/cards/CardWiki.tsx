@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import { ArrowLeft, BookOpen, Bot, Crown, Timer, Flame, Gem, HeartPulse, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Users, Zap } from 'lucide-react';
+import { ArrowLeft, BookOpen, FlaskConical, Bot, Crown, Timer, Flame, Gem, HeartPulse, Layers, RotateCcw, Shield, Skull, Sparkles, Swords, Users, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { CONTENT } from './content';
@@ -115,6 +115,11 @@ export function CardWiki() {
         </Button>
         <BookOpen className="size-5 text-amber-300" />
         <h1 className="text-base font-semibold">Wiki · {CONTENT.run.title}</h1>
+        <Button size="sm" variant="outline" asChild className="md:order-last md:ml-auto">
+          <Link to="/cards/sandbox">
+            <FlaskConical /> Sandbox
+          </Link>
+        </Button>
         <nav className="flex flex-wrap gap-1.5 md:ml-4" aria-label="Mục wiki">
           {TABS.map((t) => (
             <button

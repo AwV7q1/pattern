@@ -1279,3 +1279,27 @@ test('migration: the event moves the run to another chassis after two fights on 
   assert.equal(run.history.at(-1)!.migrated, target.id);
   assert.ok(runs.isValidRun(content, run));
 });
+
+// ---------------------------------------------------------------- sandbox
+
+test('sandbox: forceIntent picks the intent (and its variant for the build), uninstall takes a module out', () => {
+  let s = rules.newBattle(content, 1, { enemy: 'swarm' });
+  const list = rules.intentsNow(content, s);
+  const spike = list.findIndex((i) => i.id === 'spike');
+  assert.equal(rules.currentIntent(content, rules.forceIntent(content, s, spike)).id, 'spike');
+  s = playIn(s, 'autoscaler');
+  const reacted = rules.currentIntent(content, rules.forceIntent(content, s, spike));
+  assert.equal(reacted.label, list[spike].variants!.find((v) => v.when.hasModule?.includes('autoscaler'))!.label);
+  assert.equal(rules.forceIntent(content, s, 99), s);
+
+  const uid = rules.modulesOf(s)[0].uid;
+  const out = rules.uninstall(content, s, uid);
+  assert.equal(rules.modulesOf(out).length, 0);
+  assert.equal(rules.uninstall(content, out, uid), out);
+});
+
+test('sandbox: a weighted enemy is forced through its pick', () => {
+  const s = rules.newBattle(content, 1, { enemy: 'click_farm' });
+  const list = rules.intentsNow(content, s);
+  for (let i = 0; i < list.length; i++) assert.equal(rules.currentIntent(content, rules.forceIntent(content, s, i)).id, list[i].id);
+});

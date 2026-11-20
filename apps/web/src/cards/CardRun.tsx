@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, ArrowUp, ArrowRightLeft, BookOpen, FlaskConical, CircleHelp, Coffee, Coins, Crown, HeartPulse, LibraryBig, Medal, Plus, RotateCcw, Skull, Store, Trash2, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useUi } from '@/app/ui-store';
@@ -270,9 +270,16 @@ function ChassisScreen({ onPick }: { onPick: (id: string) => void }) {
           <ChassisCard key={c.id} chassis={c} on={chosen === c.id} onClick={() => setChosen(c.id)} />
         ))}
       </div>
-      <Button onClick={() => onPick(chosen)}>
-        Bắt đầu với {CONTENT.chassis.find((c) => c.id === chosen)?.name}
-      </Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button onClick={() => onPick(chosen)}>
+          Bắt đầu với {CONTENT.chassis.find((c) => c.id === chosen)?.name}
+        </Button>
+        <Button variant="outline" asChild>
+          <Link to={`/cards/sandbox?chassis=${chosen}`}>
+            <FlaskConical /> Thử trong sandbox
+          </Link>
+        </Button>
+      </div>
     </div>
   );
 }

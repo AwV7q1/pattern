@@ -17,12 +17,12 @@ function Spark({ label, values, limit, fmt, worst }: { label: string; values: nu
   const peak = Math.max(...values);
   const over = limit != null && peak > limit;
   return (
-    <div className="rounded-lg border bg-background/40 p-2">
-      <div className="flex items-baseline justify-between text-[11px]">
+    <div className="min-w-0 rounded-lg border bg-background/40 p-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-1 text-[11px]">
         <span className="text-muted-foreground">{label}</span>
         <span className={cn('font-mono', over ? 'text-rose-300' : 'text-emerald-300')}>đỉnh {fmt(peak)}</span>
       </div>
-      <svg width={W} height={H} className="mt-1 block" role="img" aria-label={`${label}: ${values.map(fmt).join(', ')}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 block h-auto w-full" role="img" aria-label={`${label}: ${values.map(fmt).join(', ')}`}>
         {limit != null && <line x1={0} x2={W} y1={y(limit)} y2={y(limit)} stroke="rgb(251 113 133 / 0.6)" strokeDasharray="3 3" />}
         <polyline fill="none" stroke="rgb(125 211 252)" strokeWidth={1.5} points={values.map((v, i) => `${x(i)},${y(v)}`).join(' ')} />
         {values.map((v, i) => (

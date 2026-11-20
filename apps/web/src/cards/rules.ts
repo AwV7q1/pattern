@@ -636,6 +636,25 @@ function removeModule(content: Content, state: BattleState, uid: number) {
   if (!nodeOf(designOf(content, state), 'cache') && state.cache) delete state.cache.placed;
 }
 
+/** Take an installed module out (sandbox). */
+export function uninstall(content: Content, prev: BattleState, uid: number): BattleState {
+  if (!modulesOf(prev).some((m) => m.uid === uid)) return prev;
+  const state = clone(prev);
+  removeModule(content, state, uid);
+  return state;
+}
+
+/** Make the attacker play intent `index` of its list this turn, with the variant the build as it is now draws (sandbox). */
+export function forceIntent(content: Content, prev: BattleState, index: number): BattleState {
+  const list = intentsNow(content, prev);
+  if (index < 0 || index >= list.length) return prev;
+  const state = clone(prev);
+  if (enemyDef(content, state).pattern === 'weighted') state.enemy.pick = index;
+  else state.enemy.step = Math.floor(state.enemy.step / list.length) * list.length + index;
+  chooseVariant(content, state);
+  return state;
+}
+
 /** Key space of the battle's traffic: 10k keys with web-like popularity (zipf 1). */
 export const CACHE_KEYS = 10_000;
 export const CACHE_ZIPF = 1;

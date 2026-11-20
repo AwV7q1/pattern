@@ -12,6 +12,7 @@ import { LevelEditor } from '@/features/levels/LevelEditor';
 import { INTERVIEW_HOME, InterviewRoute } from '@/features/interview/InterviewPages';
 import { CardRun } from '@/cards/CardRun';
 import { CardWiki } from '@/cards/CardWiki';
+import { CardSandbox } from '@/cards/CardSandbox';
 import { GlossaryPage } from '@/learn/Glossary';
 
 export const router = createBrowserRouter([
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: 'play/*', element: <GameRoute /> },
       { path: 'cards', element: <CardRun /> },
       { path: 'cards/wiki', element: <CardWiki /> },
+      { path: 'cards/sandbox', element: <CardSandbox /> },
       { path: 'interview', element: <Navigate to={INTERVIEW_HOME} replace /> },
       { path: 'interview/:promptId', element: <InterviewRoute /> },
       { path: 'levels/new', element: <LevelEditor /> },

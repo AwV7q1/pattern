@@ -304,6 +304,16 @@ Lính cũng có bộ chuyển động riêng (`moves/minions.tsx`). Lính xuất
 | Node Nhiễm Độc | Lơ lửng, nhỏ giọt | Bật nắp, giọt độc bay vòng cung | Vết nứt loé, giọt độc chảy | Nắp bật, chảy thành vũng |
 | Trạm C2 | Sóng nhấp nháy | Đèn rực sáng, sóng tín hiệu bay ra | Mất sóng, đèn chập chờn | Đèn tắt, cột đổ |
 
+## Sandbox
+
+`/cards/sandbox` (`CardSandbox.tsx`; có nút từ màn chọn kiến trúc và từ Wiki): thử build mà không cần run hay bộ bài.
+
+- Chọn khung, bấm linh kiện để lắp (bấm lại để nâng cấp; ổ đầy thì chọn module để thay), bấm × để gỡ. Có cả vài lá không cần ổ nhưng tồn tại cả trận (Scale Out API, WAF, SWR, chuẩn hoá cache key, Tarpit).
+- Chọn botnet, đòn và tầng (traffic của bot và người dùng theo `actScale`); ô "Cache đã ấm" bỏ lượt khởi động của Redis.
+- "Chạy 1 lượt" chạy engine thật trên build hiện tại (Error Budget và máu địch đặt rất cao để không kết thúc). Sơ đồ hiện tải cao nhất của từng node trong lượt; bảng bên phải giữ mọi lượt đã chạy để so sánh giữa các build, kèm postmortem.
+
+Build được lưu dưới dạng danh sách bước (`{ card, socket, replace }`, thay theo id lá chứ không theo uid) và dựng lại từ đầu mỗi lần đổi, nên gỡ một module ở giữa vẫn ra đúng hệ thống. Hai hàm luật dành cho sandbox: `forceIntent` (ép địch dùng một đòn, chọn biến thể theo build hiện tại) và `uninstall`.
+
 ## Di trú kiến trúc
 
 Từ tầng 2 có thể gặp sự cố "Kế hoạch tái kiến trúc": chuyển run sang một khung khác (`migrateTarget`, cố định theo seed và tầng, luôn khác khung hiện tại), hoặc giữ nguyên và nhận 35 vàng. Màn sự cố đặt hai khung cạnh nhau để so sánh.
